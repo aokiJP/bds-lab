@@ -1,0 +1,6 @@
+{
+  "bds": "stable",
+  "preview": false,
+  "beta": true,
+  "experiments": ["gametest"]
+}

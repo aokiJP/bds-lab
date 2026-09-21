@@ -1,0 +1,217 @@
+{
+  "at": "2026-09-21T23:29:36.413Z",
+  "version": "1.26.51.1",
+  "addon": "spectator_probe",
+  "ok": true,
+  "total": 13,
+  "passed": 13,
+  "results": [
+    {
+      "name": "入力まわりの API が実機に在る",
+      "why": "この実機の版で何が使えるかを毎回記録する",
+      "file": "_environment.spec.mjs",
+      "tag": "sim",
+      "ok": true,
+      "flaky": false,
+      "detail": "",
+      "hint": null,
+      "notes": [
+        "inputInfo.getMovementVector: function",
+        "inputPermissions.setPermissionCategory: function",
+        "camera.setFov: function"
+      ],
+      "ms": 201
+    },
+    {
+      "name": "SimulatedPlayer の入力は inputInfo に載らない",
+      "why": "載らないことを毎回確かめる。載るなら移動系も sim で検証できる",
+      "file": "_environment.spec.mjs",
+      "tag": "sim",
+      "ok": true,
+      "flaky": false,
+      "detail": "",
+      "hint": null,
+      "notes": [
+        "movementVector=0,0（0,0 なら移動系は real でしか確かめられない）"
+      ],
+      "ms": 500
+    },
+    {
+      "name": "パックが読める",
+      "why": "最初の関門。例外なく PROBE loaded が出る",
+      "file": "spectator_probe.spec.mjs",
+      "tag": "sim",
+      "ok": true,
+      "flaky": false,
+      "detail": "",
+      "hint": null,
+      "notes": [],
+      "ms": 0
+    },
+    {
+      "name": "（観測）SimulatedPlayer は、パック本体から見えるか",
+      "why": "本体（起動時に読まれる側）と eval 版（検証用パックの中）で、見えるプレイヤーの数が違うかを毎回残す",
+      "file": "spectator_probe.spec.mjs",
+      "tag": "sim",
+      "ok": true,
+      "flaky": false,
+      "detail": "",
+      "hint": null,
+      "notes": [
+        "status の行が 2 本（2 本なら、本体と eval 版の両方が答えている）",
+        "PROBE status enabled=true - players=1 visible=0 polls=81 calls=8 yes=0 other=0 no=78",
+        "PROBE status enabled=true Sim players=1 visible=1 polls=23 calls=8 yes=0 other=6 no=72",
+        "enabled=true"
+      ],
+      "ms": 249
+    },
+    {
+      "name": "入力系イベント 42 本を、この実機で全部購読できる",
+      "why": "購読できなかったものは 0 本（after 35 + before 7）",
+      "file": "spectator_probe.spec.mjs",
+      "tag": "sim",
+      "ok": true,
+      "flaky": false,
+      "detail": "",
+      "hint": null,
+      "notes": [
+        "loaded: PROBE loaded v0.1.0 events=42/42 unavailable=0"
+      ],
+      "ms": 0
+    },
+    {
+      "name": "入力系のイベントで、購読も除外もしていないものが無い",
+      "why": "新しい版で増えたイベントの見落とし防止（probe:coverage）",
+      "file": "spectator_probe.spec.mjs",
+      "tag": "sim",
+      "ok": true,
+      "flaky": false,
+      "detail": "",
+      "hint": null,
+      "notes": [
+        "unlisted_events=0"
+      ],
+      "ms": 104
+    },
+    {
+      "name": "スペクテイターにすると、ゲームモードの変化が記録される",
+      "why": "playerGameModeChange の after と before、ポーリングの state.gameMode",
+      "file": "spectator_probe.spec.mjs",
+      "tag": "sim",
+      "ok": true,
+      "flaky": false,
+      "detail": "",
+      "hint": null,
+      "notes": [],
+      "ms": 399
+    },
+    {
+      "name": "報告の「スペクテイターでの回数」が、ログの gm=Spectator の行数と一致する",
+      "why": "数え落とし・二重計上が無い（イベントと、変化を全部ログに出す項目が対象）",
+      "file": "spectator_probe.spec.mjs",
+      "tag": "sim",
+      "ok": true,
+      "flaky": false,
+      "detail": "",
+      "hint": null,
+      "notes": [
+        "突き合わせた行: 74、食い違い: 0",
+        "spectator_yes=12",
+        "other_mode_only=1",
+        "never=65"
+      ],
+      "ms": 2071
+    },
+    {
+      "name": "報告は、スペクテイターで届いたものと他のモードでだけ届いたものを区別する",
+      "why": "Creative→Spectator の切り替えで、after は ✔（届いたときは Spectator）、before は △（届いたときはまだ Creative）",
+      "file": "spectator_probe.spec.mjs",
+      "tag": "sim",
+      "ok": true,
+      "flaky": false,
+      "detail": "",
+      "hint": null,
+      "notes": [
+        "after: yes spec=1 other=0 / before: other spec=0 other=1",
+        "spectator_yes=7",
+        "other_mode_only=1",
+        "never=70"
+      ],
+      "ms": 549
+    },
+    {
+      "name": "報告は既定で短く、full で全部出る",
+      "why": "読む側が毎回 78 行を読まされない。減らした分は捨てずに full に残す",
+      "file": "spectator_probe.spec.mjs",
+      "tag": "sim",
+      "ok": true,
+      "flaky": false,
+      "detail": "",
+      "hint": null,
+      "notes": [
+        "既定 8 行 / full 78 行（PROBE report done yes=7 other=1 no=70 na=0 shown=8/78 short）",
+        "spectator_yes=7",
+        "other_mode_only=1",
+        "never=70"
+      ],
+      "ms": 698
+    },
+    {
+      "name": "入力許可 11 カテゴリの、無効と有効の両方が届き、終わったら全部有効に戻る",
+      "why": "probe:perm。playerInputPermissionCategoryChange と isPermissionCategoryEnabled",
+      "file": "spectator_probe.spec.mjs",
+      "tag": "sim",
+      "ok": true,
+      "flaky": false,
+      "detail": "",
+      "hint": null,
+      "notes": [
+        "届いたイベント 22 件（11 カテゴリ × 2 = 22 件が最小）"
+      ],
+      "ms": 6249
+    },
+    {
+      "name": "probe:dump が全項目を返し、読めなかったものは理由が分かる",
+      "why": "値が読めたかどうかを、実機の版ごとに残す",
+      "file": "spectator_probe.spec.mjs",
+      "tag": "sim",
+      "ok": true,
+      "flaky": false,
+      "detail": "",
+      "hint": null,
+      "notes": [
+        "読めなかった項目: なし",
+        "gameMode=Spectator client={\"platform\":\"Desktop\",\"locale\":\"en_US\",\"maxRenderDistance\":6,\"graphics\":\"Fancy\",\"controlScheme\":\"LockedPlayerRelativeStrafe\",\"inputMode\":\"KeyboardAndMouse\",\"ping\":\"?\"}"
+      ],
+      "ms": 403
+    },
+    {
+      "name": "（観測）SimulatedPlayer の操作が、Creative と Spectator で何を届かせるか",
+      "why": "結果に書くだけ。sim は本物のクライアントではないので、real の代わりにはならない",
+      "file": "spectator_probe.spec.mjs",
+      "tag": "sim",
+      "ok": true,
+      "flaky": false,
+      "detail": "",
+      "hint": null,
+      "notes": [
+        "Creative で届いた: evt.after.entityStartSneaking×1 evt.after.entityStopSneaking×1 evt.after.itemUse×1 evt.before.itemUse×1 evt.after.playerInventoryItemChange×1 state.isJumping×2 state.isSneaking×2 state.isOnGround×3 state.isFalling×4",
+        "Spectator で届いた: evt.after.entityStartSneaking×1 evt.after.entityStopSneaking×1 evt.after.itemUse×1 evt.before.itemUse×1 evt.after.playerInventoryItemChange×1 state.isSneaking×2",
+        "spectator_yes=6",
+        "other_mode_only=0",
+        "never=72"
+      ],
+      "ms": 3950
+    }
+  ],
+  "scriptErrors": [],
+  "realPending": [
+    "本物のクライアントで、スペクテイター中の入力が届く"
+  ],
+  "how": "eval",
+  "diff": {
+    "newlyFailed": [],
+    "newlyFixed": [],
+    "stillFailing": []
+  }
+}

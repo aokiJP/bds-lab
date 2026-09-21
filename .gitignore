@@ -1,0 +1,10 @@
+node_modules/
+vendor/*
+!vendor/bedrock-server.zip
+worlds/
+dist/
+.bds-lab/
+.DS_Store
+*.log
+refs/
+github.token

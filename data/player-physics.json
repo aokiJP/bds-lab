@@ -1,0 +1,138 @@
+{
+  "source": "BDS 1.26.51.1 SimulatedPlayer（@minecraft/server-gametest 1.0.0-beta）に test/physics/scenarios.js のテープを流して測った",
+  "howMeasured": "node tools/live/physics.mjs --bds <dir> --record。記録は test/physics/expected.json（手で編集しない）。この定数は記録に合わせて決めたもので、記録と突き合わせるのは node tools/live/physics.mjs",
+  "note": "SimulatedPlayer はサーバーの中のプレイヤー。本物のクライアントの入力（player_auth_input）で同じになるかは protocol 関門が通ってから確かめる",
+  "player": {
+    "width": 0.6,
+    "height": 1.8,
+    "walkSpeed": 0.1,
+    "sprintSpeed": 0.13,
+    "airSpeed": 0.02,
+    "airSprintSpeed": 0.026,
+    "inputScale": 0.98,
+    "airDrag": 0.91,
+    "defaultSlip": 0.6,
+    "gravity": 0.08,
+    "verticalDrag": 0.98,
+    "jumpVelocity": 0.42,
+    "sprintJumpBoost": 0.2,
+    "collisionOrder": "yxz",
+    "stepHeight": 0.5625,
+    "climbSpeed": 0.2
+  },
+  "ground": {
+    "type": "minecraft:grass_block"
+  },
+  "blocks": {
+    "minecraft:grass_block": {
+      "shape": "full",
+      "slip": 0.6
+    },
+    "minecraft:stone": {
+      "shape": "full",
+      "slip": 0.6
+    },
+    "minecraft:gold_block": {
+      "shape": "full",
+      "slip": 0.6
+    },
+    "minecraft:diamond_block": {
+      "shape": "full",
+      "slip": 0.6
+    },
+    "minecraft:emerald_block": {
+      "shape": "full",
+      "slip": 0.6
+    },
+    "minecraft:oak_planks": {
+      "shape": "full",
+      "slip": 0.6
+    },
+    "minecraft:cobblestone": {
+      "shape": "full",
+      "slip": 0.6
+    },
+    "minecraft:glass": {
+      "shape": "full",
+      "slip": 0.6
+    },
+    "minecraft:ice": {
+      "shape": "full",
+      "slip": 0.98
+    },
+    "minecraft:packed_ice": {
+      "shape": "full",
+      "slip": 0.98
+    },
+    "minecraft:blue_ice": {
+      "shape": "full",
+      "slip": 0.989
+    },
+    "minecraft:smooth_stone_slab": {
+      "shape": "slab",
+      "slip": 0.6
+    },
+    "minecraft:oak_stairs": {
+      "shape": "stairs",
+      "slip": 0.6
+    },
+    "minecraft:oak_fence": {
+      "shape": "fence",
+      "slip": 0.6
+    },
+    "minecraft:white_carpet": {
+      "shape": "carpet",
+      "slip": 0.6
+    },
+    "minecraft:soul_sand": {
+      "shape": "soul_sand",
+      "slip": 0.6,
+      "accelFriction": 1.225000023841858
+    },
+    "minecraft:slime": {
+      "shape": "full",
+      "slip": 0.8,
+      "stickyWalk": true,
+      "bounce": "slime"
+    },
+    "minecraft:honey_block": {
+      "shape": "honey",
+      "slip": 0.8,
+      "stickyWalk": true,
+      "honey": true
+    },
+    "minecraft:ladder": {
+      "shape": "ladder",
+      "slip": 0.6,
+      "climbable": true
+    }
+  },
+  "findings": [
+    "歩き: 毎 tick v = v×0.546 + 0.098（0.546 = float(0.6)×float(0.91) を float に丸めたもの。終速 0.21586）",
+    "走り: 加速 0.13×0.98、空中 0.026×0.98。歩きの空中は 0.02×0.98",
+    "入力は長さ 1 に揃えてから ×0.98（Java 版と違い、斜めで速くならない）",
+    "摩擦は『動く前に接地していたか』で決まる（跳んだ tick は 0.546、着地した tick は 0.91）",
+    "摩擦を掛けて加速を足すのは 1 回の丸め（FMA）。別々に丸めると走りで 1 ulp ずれる",
+    "位置は float32 の当たり判定の箱が本体。横は箱の中心、縦は箱の底。箱は min = 位置 − 幅/2、max = 位置 + 幅/2 で作る（min + 幅 ではない。1 ulp ずれる tick が 37 → 9 に減った）",
+    "ジャンプ初速 0.42、走り跳びは向きへ +0.2。縦は v = (v − 0.08) × 0.98",
+    "ジャンプを押しっぱなしなら、着地した tick の次にまた跳ぶ（待ち時間なし）",
+    "置いた直後は空中扱い（接地は『下向きに動こうとしてぶつかった』ときだけ）。最初の 1 tick は空中の加速で動く",
+    "箱どうしは面が触れているだけなら重ならない（壁の面に止まった箱で、その壁の上に乗らない）",
+    "移動の向きは本物の sin/cos（向きの計算で使う sin の表ではない）",
+    "地面の加速は ×（ふつうの床の摩擦³ ÷ その床の摩擦³）。比は途中で丸めずに計算する（青氷で 1 回丸めると 2 ulp ずれる）",
+    "氷・氷塊 0.98、青氷 0.989、金・ダイヤ・エメラルド・オークの板材・丸石・ガラスは 0.6（すべて高さ 1 の立方体）",
+    "本物のクライアント（player_auth_input）で測った走りの決まり: 走るキーを離しても、前を押している限り走りつづける（審判の isSprinting が真のまま）。前を離すと止まる。SimulatedPlayer の記録には出ない（driver が走りを直接切り替えるため）。再現は src/play/agent/controls.js、確かめは tools/live/realcheck.mjs の checkSprintLatch",
+    "前の二度押しで走り出す: 地面で前を押し始めると 7 tick の時計が動き、時計が残っているうちに地面でもう一度押し始めると走る（押した tick ＋ 離した tick ≦ 6。p1 r5・p2 r4・p4 r1 は走る、p1 r6・p2 r5・p4 r3 は歩く）。二度目が空中なら走らない。一度目が空中の場合は未測定",
+    "未特定: 壁や部屋の角に当たった次の tick に、地面で向きを変えて走る（走り跳び）と、サーバーはその tick を走りとして扱わないことがある（+0.2 が無い・加速が歩き、または 1 tick 遅れて走り出す）。まっすぐな壁から 180° 向き直して走るだけなら一致する。src/play/agent/sim-env.js は「測っていない操作」として数える",
+    "走り跳びの 0.2 の後押しは、跳んだ tick に後ろを押していると付かない（前＋後ろ＋跳ぶ: サーバーは後押し無し、クライアントが付けると訂正。跳ぶ tick に後ろを離せば付く）。前＋後ろのままの横移動の速さはクライアントと同じ（訂正 0）。本物のクライアント 1 人・6 通り（2026-09-20、BDS 1.26.51.1）",
+    "段差: 地面にいて（前の tick に接地）横にぶつかったら、上へ 0.5625 → x → z → 下へ戻す。横に遠く進めればそちら（ハーフ・階段・カーペットを 1 tick で上る。縁から落ちかけて戻るときも台に戻る — edge_step_back）",
+    "形: ハーフ 0.5、階段（weirdo_direction 0 = +x・1 = −x・2 = +z・3 = −z が高い）、柵の柱 0.375〜0.625 × 高さ 1.5（柵どうし・全ブロックとつながる）、カーペット 0.0625、ソウルサンド 0.875、はちみつは横が 1/16 内側で上は 1、はしごは厚さ 3/16",
+    "ソウルサンド: 加速にだけ効く摩擦が 1.225 倍（減り方は 0.546 のまま）",
+    "スライム・はちみつの上: 前の tick の横の速さが ×(0.4 + |縦|×0.2)（縦 < 0.1 のとき。着地した次の tick にも効く）。スライム・はちみつの滑りやすさは 0.8",
+    "はちみつ: 跳ぶ力 0.6 倍（0.252）。はちみつのマスに体が入る（横の隙間）と 1 マスごとに横 ×0.4・落ちるのは 0.12 まで（面が触れているだけでは効かない）",
+    "スライムに空中から落ちると跳ね返る。小さな跳ね（0.08 以下）とジャンプで上書きされる跳ねは「当たる前の速さを反転」で合う。本当に跳ね上がる高さは 2〜15% 合わない（式は未解明 → サンドボックスは inconclusive）",
+    "はしご: 足のマスがはしごなら、落ちるのは 0.2 まで。横にぶつかっていたか跳んでいたら（SimulatedPlayer の jump() は地面で跳ぶ tick とその次の 1 tick だけ）0.2 で上る。地面で跳ぶ tick はジャンプの 0.42 が勝つ",
+    "はしごは張り付く面に支えのブロックが無いと外れる（置くときは支えを先に）"
+  ],
+  "blocksNote": "どれも test/physics/scenarios.js の floor_<種類> で測った（走って止まったときの減り方 = slip × 0.91、立った高さ = 形）。ここに無いブロックに触れたら inconclusive"
+}

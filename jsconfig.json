@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "paths": {
+      "@minecraft/server": [
+        "./types/minecraft/server.d.ts"
+      ],
+      "@minecraft/server-ui": [
+        "./types/minecraft/server-ui.d.ts"
+      ],
+      "@minecraft/server-gametest": [
+        "./types/minecraft/server-gametest.d.ts"
+      ]
+    }
+  },
+  "include": [
+    "specs/**/*.mjs",
+    "addons/**/*.js",
+    "src/**/*.mjs",
+    "types/**/*.d.ts"
+  ]
+}

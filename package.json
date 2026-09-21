@@ -1,0 +1,42 @@
+{
+  "name": "bds-lab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minecraft 統合版アドオンを実機の BDS で検証しながら作るテンプレート",
+  "type": "module",
+  "bin": {
+    "bds-lab": "bin/bds-lab.mjs"
+  },
+  "scripts": {
+    "start": "node bin/bds-lab.mjs start",
+    "test": "node bin/bds-lab.mjs check",
+    "status": "node bin/bds-lab.mjs status",
+    "api": "node bin/bds-lab.mjs api",
+    "fix": "node bin/bds-lab.mjs inspect --fix",
+    "help": "node bin/bds-lab.mjs help",
+    "all": "node bin/bds-lab.mjs all",
+    "auto": "node bin/bds-lab.mjs auto",
+    "dev": "node bin/bds-lab.mjs dev",
+    "check": "node bin/bds-lab.mjs check",
+    "real": "node bin/bds-lab.mjs real",
+    "prompt": "node bin/bds-lab.mjs prompt",
+    "archive": "node bin/bds-lab.mjs archive",
+    "cycle": "node bin/bds-lab.mjs cycle",
+    "ship": "node bin/bds-lab.mjs ship",
+    "publish": "node bin/bds-lab.mjs publish",
+    "refs": "node bin/bds-lab.mjs refs",
+    "docs": "node bin/bds-lab.mjs docs",
+    "skill": "node bin/bds-lab.mjs skill",
+    "doctor": "node bin/bds-lab.mjs doctor",
+    "selftest": "node bin/bds-lab.mjs selftest",
+    "tokens": "node docs/tokens.mjs",
+    "import": "node bin/bds-lab.mjs import",
+    "inspect": "node bin/bds-lab.mjs inspect",
+    "update": "node bin/bds-lab.mjs update",
+    "bds:release": "node bin/bds-lab.mjs bds-release"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
