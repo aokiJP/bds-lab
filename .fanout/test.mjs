@@ -177,6 +177,11 @@ export async function run() {
       const inWt = spawnSync(process.execPath, [path.join(wt, '.fanout', 'fanout.mjs'), 'scope', 'eff'], { cwd: wt, encoding: 'utf8' });
       ok(inWt.status === 0 && /✔ eff/.test(inWt.stdout), `worktree の中の scope（計画は親のもの）: ${inWt.stdout}${inWt.stderr}`);
       const r = node('status'); ok(r.status === 0 && /✔ eff: fanout\/eff（1 commit）/.test(r.stdout) && /gee: 枝なし/.test(r.stdout), r.stdout + r.stderr);
+      // clean: an unmerged lane is kept (unless --force); once merged, its worktree and branch go
+      const c1 = node('clean'); ok(c1.status === 1 && /eff: fanout\/eff がまだ統合されていません/.test(c1.stdout) && fs.existsSync(wt), c1.stdout + c1.stderr);
+      sh('git', ['merge', '-q', '--no-ff', '-m', 'merge eff', 'fanout/eff']);
+      const c2 = node('clean'); ok(c2.status === 0 && /✔ eff: 作業フォルダと枝を消しました/.test(c2.stdout) && !fs.existsSync(wt), c2.stdout + c2.stderr);
+      ok(spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/fanout/eff'], { cwd: dir }).status !== 0, '枝も消える');
     });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   console.log(`${failed ? '✘' : '✔'} fanout selftest: ${pass} 通過、${failed} 失敗`);

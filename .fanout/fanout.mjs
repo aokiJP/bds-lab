@@ -9,6 +9,7 @@
 //   node .fanout/fanout.mjs worktree <レーン>     そのレーンの作業フォルダを土台から作る（枝 fanout/<レーン>、計画に記録）
 //   node .fanout/fanout.mjs record <レーン> <枝>  子が作った枝を計画に記録
 //   node .fanout/fanout.mjs order               統合の順番（after に従う）
+//   node .fanout/fanout.mjs clean [--force]      統合したレーンの作業フォルダと枝を消す（全体のテストの前に: 残すとラボの試験が拾う）
 //   node .fanout/fanout.mjs models              レーンごとに使うモデル（Agent の model に渡す）と、その理由（Opus 4 割・Sonnet 6 割）
 //   node .fanout/fanout.mjs size [行数 ...]      いちばん安く並行できるレーン数（計画があればその仕事量から）と費用の見積もり
 //   node .fanout/fanout.mjs brief               どの作業でも最初に読む進め方（SessionStart のフックが毎回これを文脈に入れる）
@@ -388,6 +389,24 @@ export function laneWorktree(top, plan, lane) {
   return { path: wt, branch, made };
 }
 
+/** the lanes' worktrees and branches go (pure apart from git): a writing lane's only once its branch is merged into HEAD
+ *  (else kept and said, unless force); a reading lane's always (it has no commits). → [{lane, removed, why}] */
+export function cleanLanes(top, plan, { force = false } = {}) {
+  const main = path.dirname(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], top).out), out = [];
+  for (const l of plan.lanes ?? []) {
+    const wt = path.join(main, '.claude', 'worktrees', `fanout-${l.name}`), branch = l.branch ?? `fanout/${l.name}`;
+    const hasBranch = git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], main).ok;
+    if (!fs.existsSync(wt) && !hasBranch) { out.push({ lane: l.name, removed: false, why: 'なし' }); continue; }
+    const merged = !hasBranch || l.readonly || git(['merge-base', '--is-ancestor', branch, 'HEAD'], main).ok;
+    if (!merged && !force) { out.push({ lane: l.name, removed: false, why: `${branch} がまだ統合されていません（捨てるなら --force）` }); continue; }
+    if (fs.existsSync(wt)) { const r = git(['worktree', 'remove', '--force', wt], main); if (!r.ok) { out.push({ lane: l.name, removed: false, why: r.err }); continue; } }
+    if (hasBranch) git(['branch', '-D', branch], main);
+    out.push({ lane: l.name, removed: true, why: merged ? '統合済み' : '--force' });
+  }
+  git(['worktree', 'prune'], main);
+  return out;
+}
+
 // ---- install into this repository ----
 const AGENTS_MARK = '<!-- fanout:rules -->';
 function install(top) {
@@ -504,6 +523,11 @@ async function main([cmd, ...rest]) {
       break;
     }
     case 'order': console.log(order(loadPlan(top)).join('\n')); break;
+    case 'clean': {
+      const r = cleanLanes(top, loadPlan(top), { force: rest.includes('--force') });
+      for (const x of r) { if (!x.removed && x.why !== 'なし') process.exitCode = 1; console.log(`${x.removed ? '✔' : x.why === 'なし' ? '・' : '✘'} ${x.lane}: ${x.removed ? `作業フォルダと枝を消しました（${x.why}）` : x.why}`); }
+      break;
+    }
     case 'models': {
       const plan = loadPlan(top), ft = baseText(top, plan), a = assignModels(plan, ft);
       for (const l of plan.lanes) { const m = a.get(l.name); console.log(`${l.name.padEnd(14)} ${m.model.padEnd(7)} ${m.why}`); }

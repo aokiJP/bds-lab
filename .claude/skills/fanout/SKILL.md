@@ -53,7 +53,7 @@ Agent({ description: "lane <レーン>", prompt: <出力の全文>, model: <mode
 1. `node .fanout/fanout.mjs order` の順に `git merge --no-ff <枝>`。衝突は司令塔が直す（両方の意図を残す。どちらかを捨てるなら人に聞く）。
 2. 第 2 波（after のあるレーン）があれば、ここまでを commit して新しい土台にし、plan の base を更新 → 3 から。
 3. 「依頼」の反映、共有ファイル（README・CHANGES・テストの登録）の更新。
-4. plan の finalTests を全部回す。落ちたら直す（テストを緩めない）。
+4. `node .fanout/fanout.mjs clean`（統合したレーンの作業フォルダと枝を消す。残っているとラボの試験が .claude/worktrees の中の写しまで拾って落ちる）→ plan の finalTests を全部回す。落ちたら直す（テストを緩めない）。
 5. `node .fanout/fanout.mjs actions-off --check` が ✔。
 6. commit。push は人が頼んだ枝にだけ。plan.json は消す（.gitignore 済み）。
 
