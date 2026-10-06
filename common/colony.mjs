@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -388,12 +388,30 @@ async function voxelCmd({ pos, flags }, out) {
 // ---------------------------------------------------------------- borrowing: harvest, borrowed, diff, borrow (common/borrow.mjs)
 const UNITS_DIR = () => path.join(TOP, 'bds', 'addons');
 const bdsNow = () => process.env.LAB_BORROW_BDS || (() => { try { return fs.readFileSync(path.join(TOP, 'bds', 'vendor', 'bds-version.txt'), 'utf8').trim(); } catch { return null; } })();
-// the lab itself, as a child (its own output kept): import, check, sim, test. Then a turn of the event loop: a Ctrl+C that
-// stopped the child is handled there (the unit being judged removed), before the next step starts
-async function labRun(args, timeout = 600_000) {
-  const r = spawnSync(process.execPath, [path.join(TOP, 'lab.mjs'), ...args], { cwd: TOP, encoding: 'utf8', timeout, killSignal: 'SIGKILL', maxBuffer: 64e6, env: { ...process.env, LAB_NOTRACE: '1', LAB_CALLER_CWD: TOP, LAB_GO_WHY: 'off' } });
-  await new Promise((res) => setImmediate(res));
-  return { ok: r.status === 0, lines: `${r.stdout ?? ''}${r.stderr ?? ''}`.split('\n').filter((l) => l.trim()) };
+// the lab itself, as a child (its own output kept): import, check, sim, test. Asynchronous, so that a kill of this process
+// (SIGTERM reaches only it, not the child) is handled at once by onStop, which stops the child and waits for it — a blocking
+// call would let the child run on (minutes) and keep the lab's folders, and the unit being judged, until it ended
+const KIDS = new Set();
+let stopping = false;
+function labRun(args, timeout = 600_000) {
+  if (stopping) return Promise.resolve({ ok: false, lines: ['stopped'] });
+  return new Promise((res) => {
+    let text = '', done = false;
+    const c = spawn(process.execPath, [path.join(TOP, 'lab.mjs'), ...args], { cwd: TOP, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, LAB_NOTRACE: '1', LAB_CALLER_CWD: TOP, LAB_GO_WHY: 'off' } });
+    KIDS.add(c);
+    const add = (d) => { text += d; if (text.length > 64e6) text = text.slice(-32e6); };
+    c.stdout.on('data', add); c.stderr.on('data', add);
+    const kill = setTimeout(() => { try { c.kill('SIGKILL'); } catch { /* gone */ } }, timeout);
+    const end = (code) => { if (done) return; done = true; clearTimeout(kill); KIDS.delete(c); res({ ok: code === 0, lines: text.split('\n').filter((l) => l.trim()) }); };
+    c.on('error', (e) => { text += `\n${e.message}`; end(-1); });
+    c.on('close', (code) => end(code));
+  });
+}
+// stop the children labRun started (SIGTERM, then SIGKILL after a few seconds) and wait until they are gone
+async function stopKids() {
+  stopping = true;
+  const gone = [...KIDS].map((c) => new Promise((res) => { if (c.exitCode !== null || c.signalCode !== null) return res(); c.once('close', res); try { c.kill('SIGTERM'); } catch { res(); } setTimeout(() => { try { c.kill('SIGKILL'); } catch { /* gone */ } }, 5000).unref(); }));
+  await Promise.race([Promise.all(gone), new Promise((r) => setTimeout(r, 8000))]);
 }
 // an .mcaddon of .mcpack files (no manifest.json at its top: a common shape) is an addon too, by the packs inside → info
 async function asAddon(file, info) {
@@ -443,7 +461,7 @@ async function judge(file, { unit, request, meta = {}, simOnly = false, allowRis
 const dropUnit = (unit) => { if (unit && /^borrowed_[a-z0-9_]+$/.test(unit)) fs.rmSync(path.join(UNITS_DIR(), unit), { recursive: true, force: true }); };
 // Ctrl+C or a kill while a unit is judged: that unit and its download go, the current unit is put back, then the exit
 function onStop(state) {
-  const h = (sig) => { try { dropUnit(state.unit); if (state.dir) fs.rmSync(state.dir, { recursive: true, force: true }); restoreCurrent(state.was); } finally { process.exit(sig === 'SIGINT' ? 130 : 143); } };
+  const h = async (sig) => { try { await stopKids(); dropUnit(state.unit); if (state.dir) fs.rmSync(state.dir, { recursive: true, force: true }); restoreCurrent(state.was); } finally { process.exit(sig === 'SIGINT' ? 130 : 143); } };
   process.once('SIGINT', h); process.once('SIGTERM', h);
   return () => { process.off('SIGINT', h); process.off('SIGTERM', h); };
 }
