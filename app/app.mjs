@@ -674,6 +674,23 @@ async function runCmd(args) {
     // 1. the APK set (not needed when the prepared snapshot already has the game: `app prepare`, lib/warm.mjs)
     if (o.opts['--apk']) apkUse(o.opts['--apk']);
     let list = apkPaths();
+    // (app redroid debug: this run starts before its device is up — APP_DEVICE_READY_FILE says when the device is ready, or why
+    // it will not be; the BDS gets ready meanwhile. Without the APKs pulled last time, or with ones whose version is not known
+    // (APP_DEVICE_APKS_LATER: debug pulls them again into the same folder), the device first: they come from it — read only
+    // after its word, never while debug replaces them)
+    const readyFile = process.env.APP_DEVICE_READY_FILE || null, ppid = process.ppid;
+    const RD = readyFile ? await import('./redroid/ready.mjs') : null;
+    let deviceWord = null;
+    const deviceReady = async () => {
+      if (!readyFile || deviceWord) return;
+      log(`      端末の準備を待っています（app redroid debug: ${rel(readyFile)}）`);
+      deviceWord = await RD.waitReady(readyFile, { timeoutMs: Number(process.env.APP_DEVICE_READY_MS) || 20 * 60_000, gone: () => process.ppid !== ppid });
+      st.timing.deviceWait = deviceWord.ms;
+      if (!deviceWord.ok) fail(`端末の準備に失敗しました: ${deviceWord.why || '理由は書かれていません'}`, '端末の側（app redroid debug）の行を見てください（この run の BDS は止めます）');
+      if (deviceWord.serial && deviceWord.serial !== D.SERIAL) fail(`準備ができた端末（${deviceWord.serial}）が、この run の端末（${D.SERIAL}）と違います`, 'APP_SERIAL を確かめてください');
+      log(`      端末の準備ができました（${(deviceWord.ms / 1000).toFixed(1)} 秒待ちました）`);
+    };
+    if (readyFile && (!list || process.env.APP_DEVICE_APKS_LATER === '1')) { await deviceReady(); list = apkPaths(); }
     const ready = readySnapshot({ list, account, wipe: o.flags.has('--wipe') });
     const warmOk = Boolean(ready && !ready.diff.length);
     if (!list && !warmOk) {
@@ -692,9 +709,9 @@ async function runCmd(args) {
     stage(`[1/5] APK ${info.versionName} (${info.versionCode}) ${info.abis.join(',')}${list ? '' : '（準備済みの端末に入っているもの）'}`);
 
     // 2. the emulator: started now, waited for after the BDS is up (both get ready at once)
-    stage(`[2/5] エミュレータ${warmOk ? `（準備済みの状態 ${W.SNAPSHOT} から）` : ''}`);
+    stage(readyFile ? '[2/5] 端末（app redroid debug が用意しています。BDS を先に）' : `[2/5] エミュレータ${warmOk ? `（準備済みの状態 ${W.SNAPSHOT} から）` : ''}`);
     const elog = (s) => log('      ' + s, /^W /.test(s));
-    emu = await ensureEmulator({ window: o.flags.has('--window'), wipe: o.flags.has('--wipe'), writableSystem: account && vendingWanted(o.opts['--vending']), ready, noWait: true, log: elog });
+    emu = readyFile ? { adb: adbReady() ?? fail('adb がありません', 'ANDROID_HOME の platform-tools か APP_ADB'), started: false, warm: false } : await ensureEmulator({ window: o.flags.has('--window'), wipe: o.flags.has('--wipe'), writableSystem: account && vendingWanted(o.opts['--vending']), ready, noWait: true, log: elog });
     adb = emu.adb; adb.log = (s) => fs.appendFileSync(path.join(runDir, 'adb.txt'), s + '\n');
     // (a device whose screencap leaves the game out: its pictures from the emulator, as prepare found)
     if (emu.warm && ready?.stamp?.shot === 'emu') adb.shotVia = 'emu';
@@ -732,10 +749,12 @@ async function runCmd(args) {
         await setupAccount(adb, { vending: o.opts['--vending'], log: (s) => { log('      ' + s, /^W /.test(s)); if (/^W /.test(s)) st.notes.push(s.slice(2)); } });
       }
     };
-    // (a cold boot is minutes: the device first, as before; from the snapshot: the BDS starts while it comes back)
-    if (!emu.warm) await deviceUp();
+    // (a cold boot is minutes: the device first, as before; from the snapshot or app redroid debug's device: the BDS starts
+    // while it comes back)
+    if (!emu.warm && !readyFile) await deviceUp();
 
     // 3. the BDS build for this app version (another protocol = "outdated" and no join)
+    if (readyFile && RD.readReady(readyFile)?.ok === false) await deviceReady();   // (the device failed already: no BDS for it)
     if (bdsWant === 'keep') stage('[3/5] BDS: いまのまま');
     else {
       const cands = bdsWant === 'auto' ? K.bdsCandidates(info.versionName, knownBds()) : [bdsWant];
@@ -769,7 +788,8 @@ async function runCmd(args) {
     const joinTo = (h, p) => (process.env.APP_JOIN_URI || 'minecraft://connect/?serverUrl={host}&serverPort={port}').replaceAll('{host}', h).replaceAll('{port}', String(p));
     let joinUri = joinTo(host, port);
 
-    if (emu.warm) await deviceUp();
+    await deviceReady();
+    if (emu.warm || readyFile) await deviceUp();
 
     // 5. root on the device (the game's content log is in its private folder; held keys go through the input device): before
     // logcat, since adbd restarts for it. Then logcat from here on, and the steps
