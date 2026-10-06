@@ -113,11 +113,11 @@ export async function run() {
     fs.writeFileSync(path.join(dir, 'AGENTS.md'), '# repo\n');
     sh('git', ['add', '-A']); sh('git', ['commit', '-qm', 'base']);
 
-    await t('install: 拒否から Agent / Skill を外し、Actions を手動だけに、AGENTS.md に規則（2 回目は足さない）', () => {
+    await t('install: 拒否から Agent / Skill を外し、Actions はそのまま（--actions-off で手動だけ）、AGENTS.md に規則（2 回目は足さない）', () => {
       const r = node('install'); ok(r.status === 0, r.stderr);
       const s = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8'));
       eq(s.permissions.deny, ['WebFetch']); ok(s.permissions.allow.includes('Bash(node .fanout/fanout.mjs:*)'));
-      ok(!F.hasAutoTrigger(fs.readFileSync(path.join(dir, '.github', 'workflows', 'v.yml'), 'utf8')));
+      ok(F.hasAutoTrigger(fs.readFileSync(path.join(dir, '.github', 'workflows', 'v.yml'), 'utf8')), '既定では自動の契機を残す');
       eq([s.model, s.env.CLAUDE_CODE_SUBAGENT_MODEL], ['opus', 'sonnet']);
       eq(s.hooks.SessionStart, [{ hooks: [{ type: 'command', command: 'node .fanout/fanout.mjs brief' }] }]);
       node('install');
@@ -128,7 +128,8 @@ export async function run() {
       const af = path.join(dir, 'AGENTS.md'), cur = fs.readFileSync(af, 'utf8');
       fs.writeFileSync(af, cur.slice(0, cur.indexOf('<!-- fanout:rules -->')) + '<!-- fanout:rules -->\n古い規則\n');
       ok(/新しくした/.test(node('install').stdout)); ok(!/古い規則/.test(fs.readFileSync(af, 'utf8')) && fs.readFileSync(af, 'utf8').split('fanout:rules').length === 2);
-      ok(node('actions-off', '--check').status === 0);
+      ok(node('actions-off', '--check').status === 1);
+      ok(/手動だけに/.test(node('install', '--actions-off').stdout)); ok(node('actions-off', '--check').status === 0);
     });
     await t('new: commit していない変更があれば断る → commit 後に計画の雛形', () => {
       ok(node('new', 'x').status === 1);

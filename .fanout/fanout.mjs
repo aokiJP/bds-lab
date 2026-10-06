@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // fanout: AI 並行開発の土台。司令塔（1 セッション）が計画を 1 枚の JSON に書き、子（サブエージェント）は決まった
 // プロンプトで自分の範囲だけを直す。人がプロンプトを書かない・範囲の外を触らせない・Actions を使わない、を仕組みで守る。
-//   node .fanout/fanout.mjs install            このリポジトリに入れる（settings の調整・Actions の自動契機を外す・AGENTS.md に規則）
+//   node .fanout/fanout.mjs install [--actions-off]   このリポジトリに入れる（settings の調整・AGENTS.md に規則。--actions-off: Actions を手動だけに）
 //   node .fanout/fanout.mjs new "<目標>"        計画の雛形 .fanout/plan.json（土台 = いまの HEAD）
 //   node .fanout/fanout.mjs check               計画の検査（担当の重なり・共有ファイル・存在しない関数・レーン数）
 //   node .fanout/fanout.mjs prompt <レーン>      子に渡すプロンプト（.fanout/LANE.md から作る。人は書かない）
@@ -14,7 +14,7 @@
 //   node .fanout/fanout.mjs size [行数 ...]      いちばん安く並行できるレーン数（計画があればその仕事量から）と費用の見積もり
 //   node .fanout/fanout.mjs brief               どの作業でも最初に読む進め方（SessionStart のフックが毎回これを文脈に入れる）
 //   node .fanout/fanout.mjs status              レーンごとの枝・commit 数・範囲の検査
-//   node .fanout/fanout.mjs actions-off [--check]   .github/workflows を手動（workflow_dispatch）だけにする
+//   node .fanout/fanout.mjs actions-off [--check]   .github/workflows を手動（workflow_dispatch）だけにする（使うときだけ。既定は自動の契機も可）
 //   node .fanout/fanout.mjs selftest            この道具自身のテスト（一時フォルダの git で）
 // 依存なし（node 18+ と git）。終了コード: 0 = 通った / 1 = 直すものがある。
 import fs from 'node:fs';
@@ -409,7 +409,7 @@ export function cleanLanes(top, plan, { force = false } = {}) {
 
 // ---- install into this repository ----
 const AGENTS_MARK = '<!-- fanout:rules -->';
-function install(top) {
+function install(top, { actionsOffToo = false } = {}) {
   const said = [];
   // settings: the orchestrator needs Agent (subagents), worktrees, Skill and questions — a repo that denies them gets them back
   const sf = path.join(top, '.claude', 'settings.json');
@@ -437,9 +437,9 @@ function install(top) {
   fs.mkdirSync(path.dirname(sf), { recursive: true });
   fs.writeFileSync(sf, JSON.stringify(s, null, 2) + '\n');
   said.push(`.claude/settings.json: ${removed.length ? `拒否から外した ${removed.join(' ')}、` : ''}許可に fanout と git の作業コマンド`);
-  // Actions: manual only
-  const a = actionsOff(top);
-  said.push(`.github/workflows: ${a.filter((x) => x.changed).map((x) => x.file).join(' ') || '（自動で走るものはありませんでした）'} を手動だけに`);
+  // Actions: left as they are (automatic triggers are allowed). Manual only is opt-in: `install --actions-off` or `actions-off`
+  if (actionsOffToo) { const a = actionsOff(top); said.push(`.github/workflows: ${a.filter((x) => x.changed).map((x) => x.file).join(' ') || '（自動で走るものはありませんでした）'} を手動だけに（--actions-off）`); }
+  else said.push('.github/workflows: そのまま（自動の契機も可。手動だけにするなら install --actions-off）');
   // AGENTS.md: the rules, once
   const af = path.join(top, 'AGENTS.md'), rules = fs.readFileSync(path.join(HERE, 'RULES.md'), 'utf8');
   const cur = fs.existsSync(af) ? fs.readFileSync(af, 'utf8') : '';
@@ -484,7 +484,7 @@ async function main([cmd, ...rest]) {
   const top = cmd === 'selftest' ? null : topOf();
   const fail = (msg) => { console.error(`✘ ${msg}`); process.exitCode = 1; };
   switch (cmd) {
-    case 'install': for (const l of install(top)) console.log(`✔ ${l}`); console.log('次: commit してから /fanout "<目標>"'); break;
+    case 'install': for (const l of install(top, { actionsOffToo: rest.includes('--actions-off') })) console.log(`✔ ${l}`); console.log('次: commit してから /fanout "<目標>"'); break;
     case 'new': { if (!rest[0]) return fail('目標を書いてください: node .fanout/fanout.mjs new "<目標>"'); const p = newPlan(top, rest.join(' ')); console.log(`✔ .fanout/plan.json（土台 ${p.base.slice(0, 10)}）: lanes を埋めて check`); break; }
     case 'check': {
       const plan = loadPlan(top), bad = checkPlan(plan, (f) => { const r = git(['show', `${plan.base}:${f}`], top); return r.ok ? r.out : null; });

@@ -3,6 +3,7 @@ name: maint
 # a stale kb.json and version lists, newer releases of BDS / playwright-core / apkeep …). Read-only: findings go to the run
 # summary; nothing is committed (maintain --pr commits refreshed common/data with the units it fixed).
 on:
+  schedule: [{ cron: '41 3 * * 1' }]
   workflow_dispatch:
 permissions: { contents: read }
 jobs:

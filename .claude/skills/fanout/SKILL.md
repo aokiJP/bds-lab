@@ -9,7 +9,6 @@ description: このリポジトリの作業の既定の進め方。目標 1 行�
 
 ## 0. 始める前の確認（どれかが ✘ なら直してから。直せなければ人に聞いて止まる）
 - `git status --porcelain` が空（土台を固めるため。変更があれば人に「commit してよいか」を聞く）
-- `node .fanout/fanout.mjs actions-off --check` が ✔（✘ なら `actions-off` して commit）
 - `.fanout/plan.json` が無い（前の回が残っていたら人に聞く）
 
 ## 1. 計画（ここで頭を使う。子はここに書いたことしかしない）
@@ -54,8 +53,8 @@ Agent({ description: "lane <レーン>", prompt: <出力の全文>, model: <mode
 2. 第 2 波（after のあるレーン）があれば、ここまでを commit して新しい土台にし、plan の base を更新 → 3 から。
 3. 「依頼」の反映、共有ファイル（README・CHANGES・テストの登録）の更新。
 4. `node .fanout/fanout.mjs clean`（統合したレーンの作業フォルダと枝を消す。残っているとラボの試験が .claude/worktrees の中の写しまで拾って落ちる）→ plan の finalTests を全部回す。落ちたら直す（テストを緩めない）。
-5. `node .fanout/fanout.mjs actions-off --check` が ✔。
-6. commit。push は人が頼んだ枝にだけ。plan.json は消す（.gitignore 済み）。
+5. commit。push は人が頼んだ枝にだけ。plan.json は消す（.gitignore 済み）。
+6. push したら、自動で走る GitHub Actions（verify ほか）の結果を見て、落ちていれば直す。
 
 ## 7. 人への報告（短く）
 レーンごとの結果（完了 / 捨てた / 理由）、統合した commit、finalTests の結果、未確認・要実測のこと。

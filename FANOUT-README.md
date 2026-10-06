@@ -10,8 +10,8 @@
 ```
 ai-fanout-kit.zip をリポジトリの直下に展開して（既にあるファイルは上書きしない）、
 node .fanout/fanout.mjs selftest が ✔ になることを確かめ、node .fanout/fanout.mjs install を実行し、
-node .fanout/fanout.mjs actions-off --check が ✔ になることを確かめてから、変更をまとめて 1 つ commit して。
-commit メッセージ: 「AI 並行開発キット（fanout）を入れる: 計画 1 枚・決まったプロンプト・範囲の検査・Actions は手動だけ」。
+変更をまとめて 1 つ commit して。
+commit メッセージ: 「AI 並行開発キット（fanout）を入れる: 計画 1 枚・決まったプロンプト・範囲の検査」。
 ほかのファイルは変えないで。終わったら install の出力をそのまま見せて。
 ```
 
@@ -55,7 +55,7 @@ Claude Code に次の 1 行を書くだけです。
 | プロンプトの書き漏れ・書き違い | プロンプトは `.fanout/LANE.md` から計画で埋めるだけ。埋まらない欄があると出さない |
 | 子が止まらずに広げていく | プロンプトに止まる条件（担当の外が要る / 同じ失敗 3 回）と、報告の形を固定 |
 | 共有ファイル（README・CHANGES・設定）がぶつかる | 共有ファイルは子に触らせず、司令塔だけが触る |
-| GitHub Actions の分を使ってしまう | `install` が全ワークフローを手動（workflow_dispatch）だけにする。`actions-off --check` で確かめる |
+| 子が GitHub Actions を勝手に動かす | 子は Actions を起動せず、.github も触らない（司令塔だけ）。自動の契機（push など）はそのまま使える。手動だけにしたいリポジトリは `install --actions-off`（`actions-off --check` で確かめる） |
 | 土台が動いてしまう | `new` は commit していない変更があると断り、土台の SHA を計画に固定する |
 
 ## コマンド

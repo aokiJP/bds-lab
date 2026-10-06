@@ -5,6 +5,10 @@ name: ai-make
 # variables OPENAI_BASE_URL / OPENAI_MODEL for a compatible server); optional variables LAB_MODEL, LAB_CI_PLAYTEST (rounds, 0 = off).
 # Only the owner, members and collaborators can start it (it spends API tokens). Logic: common/ci.mjs.
 on:
+  issues:
+    types: [opened, labeled]
+  issue_comment:
+    types: [created]
   workflow_dispatch:
     inputs:
       request: { description: 'what to make, or the change (empty with a unit: harden it by AI playtest)', required: false }

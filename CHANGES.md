@@ -15,7 +15,7 @@
 - 試験: tests/rd-*-offline.mjs（8 本、偽の docker / adb で）。
 
 ### GitHub Actions
-- すべてのワークフローを手動（workflow_dispatch）だけにした（push・schedule・issues では走らない）。`node .fanout/fanout.mjs actions-off --check` で確かめる。
+- 自動の契機は v1.23.0 のまま（verify は push と pull_request、redroid は app/redroid の push、auto・latest・bundle・maint は schedule、ai-make は issue）。redroid の作業中に一度すべて手動だけにしたが、戻した。fanout の `install` は Actions を変えない（手動だけにしたいときは `install --actions-off`）。
 
 ### AI の並行開発（fanout）
 - `/fanout "<目標>"`（.claude/skills/fanout/SKILL.md）と `.fanout/fanout.mjs`: 計画 1 枚（担当のファイル・関数）、計画から作るプロンプト、土台から作る作業フォルダ、担当の外を見つける検査（scope）、統合の順。説明は FANOUT-README.md。
@@ -35,7 +35,7 @@
 - AGENTS.md: v1.23.0 の「Other」の行（colony harvest・host）に fanout の規則を足した。.gitignore: 借りたアドオン（`bds/addons/borrowed_*/`）と fanout の計画・作業フォルダの両方。
 - 別の zip（bds-lab-extras）のファイルはこの版にも入れた（extras.json つき。bds-lab のコマンドからは呼ばれない）。
 - 試験: tests/rd-local-offline の偽のトークンが share の秘密の検査に当たってリリースが作れなかった → 文字列を分けた。tests/cli-offline の app token の試験が、環境に本人の GOOGLE_* があると落ちた → この呼び出しでは空にする。
-- 確かめたこと: 全オフライン試験 49 本（`node lab.mjs auto gate --all`、rd-*-offline の 8 本を含む）・`node .fanout/fanout.mjs selftest`（16）・`actions-off --check`・share の検証（配布物を単独で展開して gate）。v1.23.0 の配布 zip は履歴の v1.23.0 から 1 バイトも違わず作り直せる。
+- 確かめたこと: 全オフライン試験 49 本（`node lab.mjs auto gate --all`、rd-*-offline の 8 本を含む）・`node .fanout/fanout.mjs selftest`（16）・share の検証（配布物を単独で展開して gate）。v1.23.0 の配布 zip は履歴の v1.23.0 から 1 バイトも違わず作り直せる。
 - まだ確かめていないこと: redroid の秒数の実測（binder のある手元の Linux で `node lab.mjs app redroid bench`）、本物の端末・本物のサイト・本物の貸し手での動き（v1.23.0 から）。
 
 ## v1.23.0 (2026-10-06)

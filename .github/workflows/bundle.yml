@@ -1,6 +1,8 @@
 name: bundle
 # daily: follow the newest BDS and refresh the Release "template" (the work zip with BDS inside)
 on:
+  schedule:
+    - cron: '0 3 * * *'
   workflow_dispatch:
 permissions:
   contents: write

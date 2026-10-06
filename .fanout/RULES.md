@@ -6,4 +6,4 @@
 - 計画は `.fanout/plan.json` の 1 枚だけ。`node .fanout/fanout.mjs check` が通らない計画では子を立てない。人の承認は計画に 1 回。
 - 子（レーン）は自分専用の worktree でだけ作業し、担当（owns）の外を変えない。push・マージ・PR はしない。共有ファイル（AGENTS.md・README・CHANGES・.github・.claude・.fanout・package.json ほか plan.shared）は司令塔だけが触る。
 - 統合は司令塔だけ: `node .fanout/fanout.mjs status` が全部 ✔ → `order` の順にマージ → 全体のテスト → push。
-- GitHub Actions は手動（workflow_dispatch）だけ。自動の契機を足さない（`node .fanout/fanout.mjs actions-off --check`）。
+- GitHub Actions は自動の契機（push・pull_request・schedule ほか）も使ってよい。子（レーン）は Actions を起動しない・ワークフローを変えない（.github は司令塔だけ）。

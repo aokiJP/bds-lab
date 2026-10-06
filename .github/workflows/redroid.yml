@@ -34,6 +34,9 @@ on:
         description: make the device again even when the cache has one
         type: boolean
         default: false
+  push:
+    branches: [main, 'claude/redroid-*']
+    paths: ['app/redroid/**', '.github/workflows/redroid.yml']
 
 concurrency:
   group: redroid-${{ github.ref }}
