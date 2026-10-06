@@ -187,7 +187,15 @@ export function scopeProblems(plan, lane, changes, { oldText = () => null, newTe
       const defs = definitions(text).filter((d) => allowed.has(d.name));
       return nums.filter((n) => !defs.some((d) => n >= d.start && n <= d.end));
     };
-    const outOld = inside(oldText(c.file), c.oldLines), outNew = inside(newText(c.file), c.newLines);
+    // (an added top-level import of a file this lane owns whole — its new helper module — is allowed)
+    const nt = newText(c.file), ntLines = nt?.split('\n') ?? [];
+    const ownImport = (n) => {
+      const m = /^import\s.*\sfrom\s+['"](\.{1,2}\/[^'"]+)['"];?\s*$/.exec(ntLines[n - 1] ?? '');
+      if (!m) return false;
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(c.file), m[1]));
+      return owns.some((o) => !o.fns && matches(o.path, target));
+    };
+    const outOld = inside(oldText(c.file), c.oldLines), outNew = inside(nt, c.newLines.filter((n) => !ownImport(n)));
     if (outOld.length || outNew.length) bad.push(`${c.file}: 担当の関数（${[...allowed].join(', ')}）の外の行を変えています（土台 ${outOld.slice(0, 6).join(',') || '-'} / いま ${outNew.slice(0, 6).join(',') || '-'}）`);
   }
   return bad;

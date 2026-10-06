@@ -105,6 +105,14 @@ export async function run() {
       fs.rmSync(path.join(dir, 'README.md')); fs.writeFileSync(path.join(dir, 'other.mjs'), 'x');
       r = node('scope', 'eff'); ok(r.status === 1 && /other\.mjs: 担当の外/.test(r.stderr), r.stderr);
       fs.rmSync(path.join(dir, 'other.mjs'));
+      // a new helper the lane owns, imported at the top: allowed; an import of anything else at the top: outside
+      const p0 = F.loadPlan(dir); p0.lanes[0].owns.push('help.mjs'); fs.writeFileSync(path.join(dir, '.fanout', 'plan.json'), JSON.stringify(p0));
+      fs.writeFileSync(path.join(dir, 'help.mjs'), 'export const h = 1;\n');
+      fs.writeFileSync(a, "import { h } from './help.mjs';\n" + orig.replace('return 1;', 'return h;'));
+      r = node('scope', 'eff'); ok(r.status === 0, r.stderr);
+      fs.writeFileSync(a, "import { x } from './other.mjs';\n" + orig);
+      r = node('scope', 'eff'); ok(r.status === 1 && /担当の関数/.test(r.stderr), r.stderr);
+      fs.writeFileSync(a, orig); fs.rmSync(path.join(dir, 'help.mjs'));
     });
     await t('worktree の枝: record → status（commit 済みの枝を土台と比べる）', () => {
       // (a commit after the base, as the orchestrator's own: the lane's folder still starts at the base)
