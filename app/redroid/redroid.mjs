@@ -17,7 +17,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { profile, bootLoop, readyLoop, stages, asideName, later, q } from './wait.mjs';
+import { profile, bootLoop, readyLoop, stages, asideName, later, q, ADB_WAIT_MS, SLICE_MS, slice, breath, oldRunsLine, oldContainersLine, overlayOf } from './wait.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LAB = path.join(HERE, '.lab');
@@ -117,6 +117,8 @@ export function image({ ctx, tag = GAPPS_TAG, base = BASE_IMAGE } = {}) {
 // writable layer (nothing copied: the start is free)
 export function restore(src, mode, work) {
   const t0 = now();
+  // run folders an earlier background rm left (it failed or was stopped): removed in the background too, not waited for
+  if (work) later(oldRunsLine(work, process.getuid?.() !== 0));
   if (mode === 'direct') { fs.mkdirSync(src, { recursive: true }); return { data: src, ms: 0 }; }
   // the last device killed and its rm, and the last run's folder (its upper layer can be large), left to the background:
   // both moved out of the way first (the container renamed, the folder moved aside), so nothing the new start uses collides
@@ -142,13 +144,20 @@ function unmount(work) { if (work) sh('umount', [path.join(work, 'merged')], { s
  *  background under another name (asideName: the next `docker run --name` does not collide) */
 export function down({ name = NAME, port = PORT, quiet = false, wait = true } = {}) {
   sh(adbBin(), ['disconnect', `127.0.0.1:${port}`], { quiet: true });
+  // the overlay the device ran on (a resident device started from another --data leaves its own mounted): from its label
+  const from = sh('docker', ['inspect', '-f', '{{index .Config.Labels "bdslab.from"}}', name], { quiet: true, timeout: 20_000 }).stdout;
   const k = sh('docker', ['kill', name], { quiet: true, timeout: 60_000 });
   let r = k;
   if (!/no such container/i.test(k.stderr)) {
+    // (after the kill: nothing in the container holds it any more; sudo -n, a failure does not stop the rm)
+    const merged = overlayOf(from);
+    if (merged) sh('umount', [merged], { sudo: true, quiet: true, timeout: 20_000 });
     const aside = wait ? null : asideName(name);
     r = aside && sh('docker', ['rename', name, aside], { quiet: true, timeout: 60_000 }).status === 0 && later(`docker rm -f ${q(aside)} >/dev/null 2>&1`)
       ? { status: 0 } : sh('docker', ['rm', '-f', name], { quiet: true, timeout: 60_000 });
   }
+  // containers an earlier background rm left (<name>-old-…): removed in the background, not waited for
+  later(oldContainersLine(name));
   if (!quiet) console.log(r.status === 0 ? `  ${name} を止めました` : `  ${name} は動いていません`);
 }
 /** starts the device on a data folder and waits: → {runS, adbS, bootS, readyS} seconds from the start (docker run) + ms:
@@ -156,20 +165,32 @@ export function down({ name = NAME, port = PORT, quiet = false, wait = true } = 
  *  takes it, adb wait-for-device, then one loop on the device for boot_completed and one for the launcher (wait.mjs) */
 // (from: the prepared folder a restored copy came from — kept on the container as a label, so a resident device is reused only
 // for the same prepared device and image)
-export async function up({ data, from = data, image: img = GAPPS_TAG, name = NAME, port = PORT, timeoutMs = 240_000, extra = [], untilBoot = false } = {}) {
+export async function up({ data, from = data, image: img = GAPPS_TAG, name = NAME, port = PORT, timeoutMs = 240_000, extra = [], untilBoot = false, sliceMs = SLICE_MS } = {}) {
   down({ name, port, quiet: true });
   const t0 = now(), mark = {}, at = {}, left = () => Math.round(timeoutMs - (now() - t0)), serial = `127.0.0.1:${port}`;
   const run = sh('docker', ['run', '-d', '--privileged', '--name', name, '--label', `bdslab.from=${from ?? ''}`, '--label', `bdslab.image=${img}`, '-p', `127.0.0.1:${port}:5555`, ...(data ? ['-v', `${data}:/data`] : []), img, ...bootArgs(), ...extra], { timeout: 120_000 });
   if (run.status !== 0) throw new Error(`redroid が起きません（docker run）: ${run.stderr.trim().slice(0, 300)}`);
   at.run = now() - t0; mark.runS = secs(at.run);
   // (a step that fails — adbd not listening yet, the connection dropped — is tried again after a second, adb connect first)
+  // (every step blocks at most ADB_WAIT_MS / sliceMs (+5 s): between them timers and SIGTERM's clean-up get their turn)
   while (left() > 0 && !(untilBoot ? at.boot : at.ready)) {
+    await breath();
     if (at.adb == null) {
-      if (/connected/.test(sh(adbBin(), ['connect', serial], { quiet: true, timeout: 5000 }).stdout) && adb(port, ['wait-for-device'], { timeout: Math.max(1000, Math.min(15_000, left())) }).status === 0) { at.adb = now() - t0; mark.adbS = secs(at.adb); continue; }
-    } else if (at.boot == null) {
-      if (/^booted\r?$/m.test(ashell(port, bootLoop(left() / 1000), { timeout: left() + 5000 }).stdout)) { at.boot = now() - t0; mark.bootS = secs(at.boot); continue; }
-    // ready = the package manager and the launcher answer (an app can be started)
-    } else if (/^ready\r?$/m.test(ashell(port, readyLoop(left() / 1000), { timeout: left() + 5000 }).stdout)) { at.ready = now() - t0; mark.readyS = secs(at.ready); continue; }
+      if (/connected/.test(sh(adbBin(), ['connect', serial], { quiet: true, timeout: 5000 }).stdout)) {
+        const t1 = now();
+        if (adb(port, ['wait-for-device'], { timeout: Math.max(1000, Math.min(ADB_WAIT_MS, left())) }).status === 0) { at.adb = now() - t0; mark.adbS = secs(at.adb); continue; }
+        // "connected" but the transport offline or gone (docker-proxy took the port before adbd): drop it, connect again at once
+        sh(adbBin(), ['disconnect', serial], { quiet: true, timeout: 5000 });
+        if (now() - t1 >= 1000) continue;
+      }
+    } else {
+      // boot, then ready (the package manager and the launcher answer: an app can be started): one device-side loop per
+      // slice, sliced again while time is left
+      const step = at.boot == null ? 'boot' : 'ready', s = slice(left(), sliceMs), t1 = now();
+      const out = ashell(port, (step === 'boot' ? bootLoop : readyLoop)(s / 1000), { timeout: s + 5000 }).stdout;
+      if ((step === 'boot' ? /^booted\r?$/m : /^ready\r?$/m).test(out)) { at[step] = now() - t0; mark[`${step}S`] = secs(at[step]); continue; }
+      if (now() - t1 >= s - 250) continue;   // the slice ran out on the device (not a failure): the next one
+    }
     if (left() <= 0) break;
     await sleep(1000);
     if (at.adb != null) sh(adbBin(), ['connect', serial], { quiet: true, timeout: 5000 });

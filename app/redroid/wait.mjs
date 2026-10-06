@@ -41,3 +41,29 @@ export function later(line) {
 }
 /** a word for sh (pure) */
 export const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+
+/** adb wait-for-device's limit after a connect that said "connected": docker-proxy takes 127.0.0.1:<port> before adbd does,
+ *  so "connected" can leave a transport that is offline or gone, and wait-for-device then hangs. Short, then connect again */
+export const ADB_WAIT_MS = 3000;
+/** one device-side loop (bootLoop / readyLoop) at most this long: spawnSync blocks the event loop, so SIGTERM's clean-up
+ *  only runs between slices. up() runs slices until its own time is out */
+export const SLICE_MS = 20_000;
+/** the next slice: at most sliceMs, never more than the time left (pure) */
+export const slice = (leftMs, sliceMs = SLICE_MS) => Math.max(0, Math.min(sliceMs, leftMs));
+/** gives timers and signal handlers (SIGTERM) their turn between blocking steps */
+export const breath = () => new Promise((r) => setImmediate(r));
+
+/** a shell line removing every `<work>.old-*` (run folders an earlier background rm failed on or never finished) (pure) */
+export function oldRunsLine(work, sudo = false) {
+  return `${sudo ? 'sudo -n ' : ''}rm -rf --one-file-system ${q(work)}.old-* >/dev/null 2>&1`;
+}
+/** a shell line removing every container named `<name>-old-…` (asideName's, left by an rm that failed or was stopped) (pure) */
+export function oldContainersLine(name) {
+  const re = `name=^/?${String(name).replace(/[.^$*+?()[\]{}|\\]/g, '\\$&')}-old-`;
+  return `docker ps -aq --filter ${q(re)} | xargs -r docker rm -f >/dev/null 2>&1`;
+}
+/** the overlay a device started from a prepared folder ran on (its label bdslab.from) → the path to umount, or null (pure) */
+export function overlayOf(from) {
+  const f = String(from ?? '').trim();
+  return f && f !== '<no value>' ? `${f}.run/merged` : null;
+}
