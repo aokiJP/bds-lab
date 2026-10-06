@@ -121,7 +121,7 @@ export async function launch(adb, { timeoutMs = 240_000, shots = null, paceFile 
       if (s.drawn && !o.drawn) { o.drawn = true; m.drawnS = secs(now() - t0); }
       if (s.ready && !o.ready) { o.ready = true; m.logS = secs(now() - t0); o.n = 0; o.last = null; }
     }
-    const due = ocrDue({ atMs: now() - t0, windowSeen: Boolean(m.windowS), readySeen: o.ready, prevTitleMs: prevMs, lastOcrMs: o.last, n: o.n, off });
+    const due = ocrDue({ atMs: now() - t0, windowSeen: Boolean(m.windowS), readySeen: o.ready, prevTitleMs: prevMs, timeoutMs, lastOcrMs: o.last, n: o.n, off });
     // (no OCR on this machine: said at the window, as before, not at the gate)
     if (m.windowS && !off && (o.can ??= C.ocrAvailable()) === false) { m.titleS = null; m.note = 'OCR なし: タイトルは見ていません'; break; }
     if (due.ocr) {

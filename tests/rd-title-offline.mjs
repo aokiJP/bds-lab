@@ -21,8 +21,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-title-'));
 process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
 
 // ---- pace.mjs (pure) ----
-await t('gapMs: 1 s, then x1.5, up to 3 s', () => {
-  eq([0, 1, 2, 3, 9].map((n) => P.gapMs(n)), [1000, 1500, 2250, 3000, 3000]);
+await t('gapMs: 1 s, then x1.5, up to 1.5 s', () => {
+  eq([0, 1, 2, 3, 9].map((n) => P.gapMs(n)), [1000, 1500, 1500, 1500, 1500]);
 });
 await t('ocrDue: nothing before the window', () => {
   eq(P.ocrDue({ atMs: 50_000, windowSeen: false, prevTitleMs: 10_000 }), { ocr: false, gate: null });
@@ -34,12 +34,23 @@ await t('ocrDue: no titleS kept → from the window, at widening gaps', () => {
   eq(P.ocrDue({ atMs: 4000, windowSeen: true, lastOcrMs: 3000, n: 1 }).ocr, true);
   eq(P.ocrDue({ atMs: 5400, windowSeen: true, lastOcrMs: 4000, n: 2 }).ocr, false);
   eq(P.ocrDue({ atMs: 5500, windowSeen: true, lastOcrMs: 4000, n: 2 }).ocr, true);
-  eq(P.ocrDue({ atMs: 60_000, windowSeen: true, lastOcrMs: 57_100, n: 20 }).ocr, false, 'the gap stops at 3 s');
-  eq(P.ocrDue({ atMs: 60_000, windowSeen: true, lastOcrMs: 57_000, n: 20 }).ocr, true);
+  eq(P.ocrDue({ atMs: 60_000, windowSeen: true, lastOcrMs: 58_600, n: 20 }).ocr, false, 'the gap stops at 1.5 s');
+  eq(P.ocrDue({ atMs: 60_000, windowSeen: true, lastOcrMs: 58_500, n: 20 }).ocr, true);
 });
 await t('ocrDue: titleS kept → from 7/10 of it, not before', () => {
-  eq(P.ocrDue({ atMs: 34_900, windowSeen: true, prevTitleMs: 50_000 }), { ocr: false, gate: null });
-  eq(P.ocrDue({ atMs: 35_000, windowSeen: true, prevTitleMs: 50_000 }), { ocr: true, gate: 'prev' });
+  eq(P.ocrDue({ atMs: 6_900, windowSeen: true, prevTitleMs: 10_000 }), { ocr: false, gate: null });
+  eq(P.ocrDue({ atMs: 7_000, windowSeen: true, prevTitleMs: 10_000 }), { ocr: true, gate: 'prev' });
+});
+await t('gateMs / ocrDue: the gate at most 10 s (slow starts kept do not hold a fast one)', () => {
+  eq(P.gateMs(null), null); eq(P.gateMs(6000), 4200); eq(P.gateMs(60_000), 10_000); eq(P.gateMs(200_000), 10_000);
+  eq(P.ocrDue({ atMs: 9_900, windowSeen: true, prevTitleMs: 60_000 }), { ocr: false, gate: null });
+  eq(P.ocrDue({ atMs: 10_000, windowSeen: true, prevTitleMs: 60_000 }), { ocr: true, gate: 'prev' }, 'not 42 s');
+});
+await t('gateMs / ocrDue: a timeout shorter than gate + 10 s → no gate (from the window)', () => {
+  eq(P.gateMs(60_000, 30_000), 10_000); eq(P.gateMs(60_000, 20_000), 10_000);
+  eq(P.gateMs(60_000, 19_999), null); eq(P.gateMs(6000, 14_000), null); eq(P.gateMs(6000, 14_200), 4200);
+  eq(P.ocrDue({ atMs: 1000, windowSeen: true, prevTitleMs: 60_000, timeoutMs: 15_000 }), { ocr: true, gate: 'window' });
+  eq(P.ocrDue({ atMs: 1000, windowSeen: true, prevTitleMs: 60_000, timeoutMs: 30_000 }), { ocr: false, gate: null });
 });
 await t('ocrDue: the logcat line opens it before 7/10; REDROID_OCR_PACE=0 reads at every round', () => {
   eq(P.ocrDue({ atMs: 10_000, windowSeen: true, readySeen: true, prevTitleMs: 50_000 }), { ocr: true, gate: 'log' });
@@ -65,6 +76,17 @@ await t('keepTitle / prevTitleMs: only clean starts, the shortest of the last 5'
   eq(P.prevTitleMs(k), 50_000);
   eq(P.prevTitleMs({ titles: [70, 0, -1] }), 70_000);
   eq(P.readPace(path.join(tmp, 'none.json')), { titles: [] });
+});
+await t('readPace: titles not an array → nothing kept; not-number entries dropped', () => {
+  const f = path.join(tmp, 'bad-pace.json');
+  for (const [txt, want] of [['{"titles":"48"}', []], ['{"titles":{}}', []], ['{"titles":null}', []], ['"48"', []], ['null', []], ['[48]', []], ['{}', []], ['{"titles":[48,"30",null,{},true,-1,52.5]}', [48, -1, 52.5]]]) {
+    fs.writeFileSync(f, txt);
+    const k = P.readPace(f);
+    eq(k, { titles: want }, txt);
+    P.prevTitleMs(k); P.keepTitle(k, { titleS: 9, license: 'ok' });
+  }
+  fs.writeFileSync(f, '{"titles":"48"}'); eq(P.prevTitleMs(P.readPace(f)), null);
+  fs.writeFileSync(f, '{"titles":[48,"30",null]}'); eq(P.prevTitleMs(P.readPace(f)), 48_000);
 });
 
 // ---- launch against a fake device ----
@@ -154,7 +176,7 @@ await t('launch: titleS kept → no read before 7/10 of it, the same result', as
   eq(P.readPace(paceFile).titles, [9, 6, m.titleS]);
 });
 await t('launch: the REDROID_TITLE_LOG line opens the reads before 7/10', async () => {
-  const { m, reads } = await start({ pid: 0, win: 500, logline: 1500, title: 2000 }, { kept: { titles: [20] }, env: { REDROID_TITLE_LOG: 'lab title near' } });
+  const { m, reads } = await start({ pid: 0, win: 500, logline: 1500, title: 2000 }, { kept: { titles: [20] }, timeoutMs: 30_000, env: { REDROID_TITLE_LOG: 'lab title near' } });
   eq(m.ocr.gate, 'log'); ok(m.logS >= 1.5 && m.logS < 5, `logS ${m.logS}`);
   ok(reads[0] >= 1500 && reads[0] < 5000, `first read ${reads[0]}`);
   ok(m.titleS && m.titleS < 8, `titleS ${m.titleS}`); eq(m.license, 'ok');
@@ -163,6 +185,18 @@ await t('launch: a first-start screen is left (firstRun 1) and the title found; 
   const { m } = await start({ pid: 0, win: 500, title: 0, welcome: 1 }, { kept: { titles: [3] } });
   eq(m.firstRun, 1); eq(m.license, 'ok'); ok(m.titleS > 0, `titleS ${m.titleS}`);
   eq(P.readPace(paceFile), { titles: [3] });
+});
+await t('launch: a broken title-pace.json ({"titles":"48"}) → read from the window, not stopped', async () => {
+  for (const kept of [{ titles: '48' }, { titles: {} }]) {
+    const { m } = await start({ pid: 0, win: 500, title: 1500 }, { kept });
+    eq(m.license, 'ok'); eq(m.ocr.gate, 'window'); eq(m.ocr.prevS, null);
+    eq(P.readPace(paceFile), { titles: [m.titleS] });
+  }
+});
+await t('launch: titleS kept but the timeout shorter than gate + 10 s → no gate, the title found from the window', async () => {
+  const { m, reads } = await start({ pid: 0, win: 500, title: 2000 }, { kept: { titles: [60] }, timeoutMs: 15_000 });
+  eq(m.license, 'ok'); eq(m.ocr.gate, 'window'); ok(reads[0] < 2000, `first read ${reads[0]}`);
+  ok(m.titleS < 5, `titleS ${m.titleS}`);
 });
 await t("launch: Play's paywall → license no, the screen not read", async () => {
   const { m, reads } = await start({ pid: 0, win: 500, vending: 1500 }, { kept: { titles: [30] } });
