@@ -1,0 +1,21 @@
+{
+ "about": "The files put back from bds-lab-extras-v1.23.0.zip. node lab.mjs update and maint --fix never delete them as leftovers of an earlier release; share leaves this list out (the files themselves ship).",
+ "version": "1.23.0",
+ "files": [
+  "bedrock-binary/src/report/link-check.js",
+  "sandbox-be/src/play/agent/controls.js",
+  "sandbox-be/src/play/agent/gen.js",
+  "sandbox-be/src/play/agent/lanes.js",
+  "sandbox-be/src/play/agent/learner.js",
+  "sandbox-be/src/play/agent/map.js",
+  "sandbox-be/src/play/agent/options.js",
+  "sandbox-be/src/play/agent/planner.js",
+  "sandbox-be/src/play/agent/prior.js",
+  "sandbox-be/src/play/agent/sim-env.js",
+  "sandbox-be/src/play/discover.js",
+  "sandbox-be/src/play/physics-compare.js",
+  "sandbox-be/src/play/pvp/combat.js",
+  "sandbox-be/src/play/pvp/duel.js",
+  "sandbox-be/src/play/pvp/policies.js"
+ ]
+}
