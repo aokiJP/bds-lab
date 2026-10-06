@@ -152,11 +152,40 @@ function verify(file, out) {
     const list = VERIFY.filter((t) => fs.existsSync(path.join(dir, t)));
     const r = spawnSync(process.execPath, [[dir, REPO].map((d) => path.join(d, 'common', 'run-tests.mjs')).find((f) => fs.existsSync(f)), '--json', '--cwd', dir, '--timeout', '600000', ...list], { cwd: dir, encoding: 'utf8', maxBuffer: 256e6, env: { ...process.env, LAB_DOTENV: 'off', LAB_NETENV: 'off', FORCE_COLOR: '0', LAB_SHARE_IN_VERIFY: '1' } });
     let rows = null; try { rows = JSON.parse(r.stdout); } catch { /* the runner itself failed */ }
-    if (!Array.isArray(rows)) { bad.push(`the test runner in the release: ${(r.stderr || r.stdout || '').trim().split('\n').at(-1) || 'exit ' + r.status}`); rows = []; }
+    const log = file + '.verify.log';
+    // the text goes to a child through stdin (not argv: E2BIG), which blanks every line the secret scan hits (a line past 20000
+    // characters is scanned in overlapping windows: findIn only looks at the first 20000); own = .env values + secret-named env values
+    const scrub = (text) => {
+      const sc = spawnSync(process.execPath, ['--input-type=module', '-e', `import fs from 'node:fs';
+        import { findIn, ownSecrets } from ${JSON.stringify(pathToFileURL(path.join(REPO, 'common', 'secret-scan.mjs')).href)};
+        const t = fs.readFileSync(0, 'utf8'), own = ownSecrets(process.argv[1]);
+        for (const [k, v] of Object.entries(process.env)) if (/KEY|TOKEN|SECRET|PASS|PASSWORD|EMAIL|AUTH|COOKIE/i.test(k) && String(v).length >= 6) own.push(String(v));
+        const lines = t.split('\\n'), W = 20000, S = 15000, scan = [], from = [];
+        lines.forEach((l, i) => { if (l.length <= W) { scan.push(l); from.push(i); } else for (let o = 0; o < l.length; o += S) { scan.push(l.slice(o, o + W)); from.push(i); } });
+        const hit = new Set(findIn(scan.join('\\n'), own).filter((h) => !h.warn).map((h) => from[h.line - 1]));
+        process.stdout.write(lines.map((l, i) => hit.has(i) ? '***' : l).join('\\n'));`, TOP()], { input: text, encoding: 'utf8', maxBuffer: 256e6 });
+      return sc.status === 0 && sc.stdout ? sc.stdout : '*** (the output was not written: the secret scan did not run)\n';
+    };
+    if (!Array.isArray(rows)) {
+      bad.push(`the test runner in the release: ${(r.stderr || r.stdout || '').trim().split('\n').at(-1) || 'exit ' + r.status}`); rows = [];
+      fs.rmSync(log, { force: true });
+      const tail = (t) => String(t ?? '').split('\n').slice(-300).join('\n');
+      fs.writeFileSync(log, scrub(`=== the test runner: stderr ===\n${tail(r.stderr)}\n\n=== the test runner: stdout ===\n${tail(r.stdout)}\n`));
+      out(`  the test runner's output: ${log}`);
+    }
     for (const x of rows) {
       out(`  ${x.ok ? '✔' : '✘'} ${x.t}${x.ok ? '' : ': ' + (x.lines.filter((l) => /^(✘|FAIL )/.test(l)).slice(0, 2).join(' | ') || x.lines.at(-1))}`);
       if (!x.ok) bad.push(x.t);
     }
+    // the failed tests' whole output next to the zip (<zip>.verify.log), so a failure can be looked into after the fact; all
+    // passed: none (an earlier one is removed). Read through the secret scan first: a hit line becomes ***
+    const failed = rows.filter((x) => !x.ok);
+    if (failed.length) {
+      fs.rmSync(log, { force: true });
+      const text = failed.map((x) => `=== ${x.t} ===\n${(x.lines ?? []).join('\n')}\n`).join('\n');
+      fs.writeFileSync(log, scrub(text));
+      out(`  the failed tests' output: ${log}`);
+    } else if (!bad.some((x) => x.startsWith('the test runner'))) fs.rmSync(log, { force: true });
     const st = spawnSync(process.execPath, ['lab.mjs', 'help'], { cwd: dir, encoding: 'utf8', timeout: 60000, env: { ...process.env, LAB_DOTENV: 'off', LAB_NETENV: 'off' } });
     if (!/topics:/.test(st.stdout ?? '')) bad.push(`node lab.mjs help in the release: ${(st.stdout + st.stderr).trim().split('\n').at(-1)}`);
     return bad;
