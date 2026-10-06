@@ -25,6 +25,7 @@ export const DEFAULT_POLICY = {
   reflectEvery: 8,        // every n ticks the AI rereads its ledger and lessons and rewrites its own backlog
   upkeepHours: 24,        // maintain (newest Minecraft, every unit) at most this often
   issueLabel: 'auto',     // open GitHub issues with this label are requests the AI takes (labels need triage rights: trusted)
+  gateOn: 'local',        // an engine change's gate: local (here) | auto (a lender's host with the most minutes left: node lab.mjs host) | <owner/repo>; where no host can take it, here
   kinds: { repair: true, upkeep: true, issue: true, release: true, backlog: true, lab: true, playtest: true, harden: true, reflect: true, invent: true, share: true, forge: true },
   // an engine change (`lab:` backlog items) is kept only when every one of these still passes (and passed before it)
   gate: ['tests/docs-offline.mjs', 'tests/dev-offline.mjs', 'tests/kit-offline.mjs', 'tests/make-offline.mjs', 'tests/ci-offline.mjs', 'tests/auto-offline.mjs', 'tests/update-offline.mjs', 'tests/share-offline.mjs', 'tests/sim-offline.mjs', 'tests/status-offline.mjs', 'tests/deploy-offline.mjs', 'tests/c2s-offline.mjs', 'tests/upkeep-front-offline.mjs', 'tests/ts-offline.mjs', 'tests/bb-offline.mjs', 'tests/schema-offline.mjs', 'tests/pytb-offline.mjs', 'tests/sample-offline.mjs', 'tests/import-offline.mjs', 'tests/skills-offline.mjs', 'tests/rp-offline.mjs', 'tests/forge-offline.mjs', 'tests/cli-offline.mjs', 'tests/scratch-offline.mjs', 'tests/lint-offline.mjs', 'tests/colony-offline.mjs', 'tests/ui-offline.mjs'],

@@ -51,3 +51,5 @@ auto/.lock
 bds/addons/*/lab.mjs
 end/plugins/*/lab.mjs
 ll/mods/*/lab.mjs
+# borrowed addons (colony harvest / borrow): someone else's, run and fixed here only — never committed or handed out
+bds/addons/borrowed_*/

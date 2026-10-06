@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import zlib from 'node:zlib';
+import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -319,6 +320,227 @@ try {
   ok(r.code === 1 && /usage: node lab\.mjs colony show <post>/.test(r.t), 'colony show with no post number: its usage, exit 1', r.t);
 } finally {
   srv.close();
+}
+
+// ---------------------------------------------------------------- borrowing other people's addons (common/borrow.mjs, colony harvest)
+const B = await imp('common/borrow.mjs');
+{
+  const a = B.rng('s1'), b = B.rng('s1'), c = B.rng('s2'), xs = [a(), a(), a()];
+  ok(JSON.stringify(xs) === JSON.stringify([b(), b(), b()]) && JSON.stringify(xs) !== JSON.stringify([c(), c(), c()]) && xs.every((x) => x >= 0 && x < 1), 'a seeded order: the same seed gives the same numbers, another seed others');
+  const sh = B.shuffle([1, 2, 3, 4, 5, 6], B.rng('k'));
+  ok(JSON.stringify([...sh].sort()) === '[1,2,3,4,5,6]' && JSON.stringify(sh) === JSON.stringify(B.shuffle([1, 2, 3, 4, 5, 6], B.rng('k'))), 'shuffle: a permutation, the same for the same seed', JSON.stringify(sh));
+  ok(JSON.stringify(B.statedVersion({ 対応バージョン: '統合版 1.21.50 以降' })) === '[1,21,50]' && JSON.stringify(B.statedVersion({ バージョン: '1.20' })) === '[1,20,0]' && B.statedVersion({ 難易度: '普通' }) === null, 'the version a post states (its info table)');
+  const btn = (kind, dest, hosted = true) => ({ kind, dest, hosted });
+  ok(B.prefilter({ isJava: true, buttons: [btn('zip')] }) === 'Java Edition の記事' && /ボタンが無い（本文/.test(B.prefilter({ buttons: [] })) && /欲しい種類/.test(B.prefilter({ buttons: [btn('mcworld')] }))
+    && /知らないサイト/.test(B.prefilter({ buttons: [btn('mcaddon', 'https://x.example/f', false)] })) && /古い版向け（1\.16\.0/.test(B.prefilter({ buttons: [btn('mcaddon')], info: { 対応バージョン: '1.16' } })) && B.prefilter({ buttons: [btn('mcaddon')], info: {} }) === null,
+    'prefilter: Java, no button, the wrong kind, an unknown host, an old version; a fine post passes');
+  const rules = B.rulesOf('<div class="entry"><p>楽しいアドオンです。</p><p>二次配布は禁止です。</p><p>改変はOK、クレジットを書いてください</p></div><div class="comment-area"><p>二次配布していいですか</p></div>');
+  ok(JSON.stringify(rules) === JSON.stringify(['二次配布は禁止です。', '改変はOK、クレジットを書いてください']), 'the rules a post states (二次配布・改変・クレジット), not the comments under it', JSON.stringify(rules));
+  const recs = [{ post: '1', sha256: 'aa', packs: [{ uuid: 'U1', version: '1.0.0' }], result: 'kept', stage: 'real', bds: '1.26.52.3' }, { post: '2', result: 'dropped', stage: 'scan', bds: '1.26.52.3' }, { post: '3', result: 'dropped', stage: 'real', bds: '1.26.52.3' }, { post: '4', result: 'dropped', stage: 'brief', bds: '1.26.60.1' }];
+  const idx = B.seenIndex(recs);
+  ok(B.seenAs(idx, { post: '1' })?.by === 'post' && B.seenAs(idx, { post: '9', sha256: 'aa' })?.by === 'sha256' && B.seenAs(idx, { post: '9', packs: [{ uuid: 'u1', version: '1.0.0' }] })?.by === 'pack' && B.seenAs(idx, { post: '9', packs: [{ uuid: 'u1', version: '1.0.1' }] }) === null,
+    'seen: by the post, by the same file posted again (sha256), by the same pack (UUID and version)');
+  ok(JSON.stringify(B.retryable(recs, '1.26.60.1').map((r) => r.post)) === '["3"]', '--retry: only what a newer BDS may change (not a risk), not already tried on this BDS', JSON.stringify(B.retryable(recs, '1.26.60.1')));
+  // --retry: the post's own records do not count, the same content as another post does (even when the retried post's record
+  // about it is the last one)
+  const idx2 = B.seenIndex([...recs, { post: '5', sha256: 'aa', result: 'dropped', stage: 'real', bds: '1.21.0.0' }]);
+  ok(B.seenAs(idx2, { sha256: 'aa' }, { except: '5' })?.rec.post === '1' && B.seenAs(B.seenIndex([recs[0]]), { sha256: 'aa' }, { except: '1' }) === null && B.seenAs(idx2, { packs: [{ uuid: 'U1', version: '1.0.0' }] }, { except: '1' }) === null,
+    '--retry: its own post set aside, the same file or pack under another post is still a copy');
+  // a borrowed unit known without its mark (still being judged, the mark lost): by its name or the original kept in it
+  const bx = path.join(T, 'bx');
+  for (const d of ['borrowed_7', 'mine', 'kept']) fs.mkdirSync(path.join(bx, 'bds', 'addons', d), { recursive: true });
+  fs.mkdirSync(path.join(bx, 'bds', 'addons', 'kept', '.borrowed'));
+  ok(B.borrowedAs(path.join(bx, 'bds', 'addons', 'borrowed_7'))?.pending && B.borrowedAs(path.join(bx, 'bds', 'addons', 'kept'))?.pending && B.borrowedAs(path.join(bx, 'bds', 'addons', 'mine')) === null
+    && JSON.stringify(B.borrowedUnits(bx).map((u) => u.rel)) === '["bds/addons/borrowed_7","bds/addons/kept"]', 'a borrowed unit without its mark: by its name (borrowed_…) or its kept original (.borrowed/)');
+  ok(B.borrowedPath('bds/addons/borrowed_5/bp/x.js') && B.borrowedPath('ll/mods/mine/.borrowed/o.zip') && !B.borrowedPath('bds/addons/mine/bp/x.js') && !B.borrowedPath('docs/borrowed_5.md'), 'borrowedPath: the same, for a list of files');
+  // share: a borrowed unit never ships, even named a sample by mistake
+  const lab0 = path.join(T, 'sharelab');
+  fs.mkdirSync(path.join(lab0, 'common', 'data'), { recursive: true }); fs.mkdirSync(path.join(lab0, 'bds', 'addons', 'borrowed_1'), { recursive: true });
+  fs.writeFileSync(path.join(lab0, 'common', 'data', 'samples.json'), JSON.stringify({ bds: ['borrowed_1'] }));
+  fs.writeFileSync(path.join(lab0, 'bds', 'addons', 'borrowed_1', 'imported.json'), JSON.stringify({ borrowed: { url: 'https://x/1/' } }));
+  const SH = await imp('common/share.mjs');
+  let threw = ''; try { SH.collect(lab0); } catch (e) { threw = e.message; }
+  ok(/借りたアドオンは配りません: bds\/addons\/borrowed_1/.test(threw), 'share: a borrowed unit stops the release (collect)', threw);
+  // one with no mark yet (being judged), named a sample: stopped by its name
+  fs.rmSync(path.join(lab0, 'bds', 'addons', 'borrowed_1', 'imported.json')); fs.mkdirSync(path.join(lab0, 'bds', 'addons', 'borrowed_1', 'bp'), { recursive: true }); fs.writeFileSync(path.join(lab0, 'bds', 'addons', 'borrowed_1', 'bp', 'manifest.json'), '{}');
+  threw = ''; try { SH.collect(lab0); } catch (e) { threw = e.message; }
+  ok(/借りたアドオンは配りません: bds\/addons\/borrowed_1/.test(threw), 'share: a borrowed unit with no mark yet is stopped too (its name)', threw);
+}
+// the site's addon index, posts and files for harvest: each kind of post harvest must tell apart
+const manifest = (name, uuid, deps, script = true) => Buffer.from(JSON.stringify({ format_version: 2, header: { name, uuid: `${uuid}-0000-4000-8000-000000000001`, version: [1, 0, 0], min_engine_version: [1, 21, 0] }, modules: [{ type: script ? 'script' : 'data', ...(script ? { language: 'javascript', entry: 'scripts/main.js' } : {}), uuid: `${uuid}-0000-4000-8000-000000000002`, version: [1, 0, 0] }], dependencies: deps }));
+const addonOf = (name, uuid, deps, js) => Z.writeZip([{ name: `${name} BP/manifest.json`, data: manifest(name, uuid, deps) }, { name: `${name} BP/scripts/main.js`, data: Buffer.from(js) }]);
+const GOOD_JS = "import { world } from '@minecraft/server';\nworld.afterEvents.playerSpawn.subscribe((e) => { if (e.initialSpawn) e.player.sendMessage('welcome'); });\n";
+const FILES = {
+  13001: addonOf('Welcome', 'a0000001', [{ module_name: '@minecraft/server', version: '2.0.0' }], GOOD_JS),
+  13002: addonOf('OldBeta', 'a0000002', [{ module_name: '@minecraft/server', version: '1.2.0-beta' }], GOOD_JS),
+  13003: addonOf('Phone Home', 'a0000003', [{ module_name: '@minecraft/server', version: '2.0.0' }, { module_name: '@minecraft/server-net', version: '1.0.0-beta' }], GOOD_JS),
+  13009: addonOf('Crashy', 'a0000009', [{ module_name: '@minecraft/server', version: '2.0.0' }], "import { world } from '@minecraft/server';\nworld.afterEvents.chatSend.subscribe((e) => { e.sender.sendMessage('hi'); });\n"),
+  13010: addonOf('Greeter', 'a0000010', [{ module_name: '@minecraft/server', version: '2.0.0' }], GOOD_JS.replace('welcome', 'hello')),
+  13011: addonOf('Ruled', 'a0000011', [{ module_name: '@minecraft/server', version: '2.0.0' }], GOOD_JS.replace('welcome', 'ruled')),
+};
+FILES[13004] = FILES[13001];   // the same file posted again under another post
+FILES[13013] = Z.writeZip([{ name: 'Data BP/manifest.json', data: manifest('Data', 'a0000013', [], false) }, { name: 'Data BP/items/x.json', data: Buffer.from('{}') }]);   // no script
+FILES[13012] = FILES[13010].subarray(0, FILES[13010].length - 40);   // cut short
+// an .mcaddon of .mcpack files (no manifest.json at its top: a common shape) — an addon all the same
+FILES[13014] = Z.writeZip([{ name: 'Nested BP.mcpack', data: Z.writeZip([{ name: 'manifest.json', data: manifest('Nested', 'a0000014', [{ module_name: '@minecraft/server', version: '2.0.0' }]) }, { name: 'scripts/main.js', data: Buffer.from(GOOD_JS.replace('welcome', 'nested')) }]) }]);
+FILES[13015] = addonOf('Mine', 'a0000015', [{ module_name: '@minecraft/server', version: '2.0.0' }], GOOD_JS.replace('welcome', 'mine'));   // its unit is here already
+const HPOST = (id, { cat = 23, buttons = '', info = '', body = '' } = {}) => `<!DOCTYPE html><html><head><meta property="og:title" content="Addon ${id}"><meta property="article:published_time" content="2026-09-30T12:00:00+09:00"></head>
+<body class="single postid-${id} categoryid-${cat}"><a href="https://minecraft-mcworld.com/author/0123456789abcdef0123/" title="職人${id} の投稿"><img src="a.png">職人${id}</a><table>${info}</table>${body}${buttons}<div class="comment-area"><p>二次配布していいですか</p></div></body></html>`;
+const HPOSTS = {
+  13001: HPOST(13001, { buttons: BTN(13001, 1, 'ダウンロード (mcpack/mcaddon) [DL:9]') }),
+  13002: HPOST(13002, { buttons: BTN(13002, 1, 'ダウンロード (mcpack/mcaddon) [DL:9]') }),
+  13003: HPOST(13003, { buttons: BTN(13003, 1, 'ダウンロード (mcpack/mcaddon) [DL:9]') }),
+  13004: HPOST(13004, { buttons: BTN(13004, 1, 'ダウンロード (mcpack/mcaddon) [DL:9]') }),
+  13005: HPOST(13005, { cat: 26, buttons: BTN(13005, 2, 'ダウンロード (zip) [DL:9]') }),
+  13006: HPOST(13006, {}),
+  13007: HPOST(13007, { info: '<tr><th>対応バージョン</th><td>1.16</td></tr>', buttons: BTN(13007, 1, 'ダウンロード (mcpack/mcaddon) [DL:9]') }),
+  13008: HPOST(13008, { buttons: BTN(13008, 3, 'ダウンロード (mcworld) [DL:9]') }),
+  13009: HPOST(13009, { buttons: BTN(13009, 1, 'ダウンロード (mcpack/mcaddon) [DL:9]') }),
+  13010: HPOST(13010, { buttons: BTN(13010, 1, 'ダウンロード (mcpack/mcaddon) [DL:9]') }),
+  13011: HPOST(13011, { body: '<p>二次配布・転載は禁止です。</p><p>動画での紹介はOK</p>', buttons: BTN(13011, 1, 'ダウンロード (mcpack/mcaddon) [DL:9]') }),
+  13012: HPOST(13012, { buttons: BTN(13012, 1, 'ダウンロード (mcpack/mcaddon) [DL:9]') }),
+  13013: HPOST(13013, { buttons: BTN(13013, 1, 'ダウンロード (mcpack/mcaddon) [DL:9]') }),
+  13014: HPOST(13014, { buttons: BTN(13014, 1, 'ダウンロード (mcpack/mcaddon) [DL:9]') }),
+  13015: HPOST(13015, { buttons: BTN(13015, 1, 'ダウンロード (mcpack/mcaddon) [DL:9]') }),
+};
+const IDS = Object.keys(HPOSTS).map(Number);
+const hhits = [];
+const hsrv = http.createServer((q, s) => {
+  const u = new URL(q.url, 'http://x'); hhits.push(u.pathname + u.search);
+  const send = (code, body, h = {}) => { s.writeHead(code, h); s.end(body); };
+  if (u.pathname === '/wp-json/wp/v2/posts') {
+    // 4 posts a page, 3 pages, newest first (the order harvest's seed shuffles)
+    const per = Number(u.searchParams.get('per_page')) || 20, page = Number(u.searchParams.get('page')) || 1, all = [...IDS].reverse(), size = 4;
+    if (u.searchParams.get('categories') !== '20,22,23') return send(400, '[]');
+    const got = all.slice((page - 1) * size, page * size);
+    if (!got.length) return send(400, '[]');
+    return send(200, JSON.stringify(got.map((id) => ({ id, link: `https://minecraft-mcworld.com/${id}/`, date: '2026-10-01T00:00:00', title: { rendered: `Addon ${id}` }, categories: [23] }))), { 'content-type': 'application/json', 'x-wp-total': String(all.length), 'x-wp-totalpages': String(Math.ceil(all.length / size)), 'x-per': String(per) });
+  }
+  const m = /^\/(\d+)\/$/.exec(u.pathname);
+  if (m && HPOSTS[m[1]]) return send(200, HPOSTS[m[1]], { 'content-type': 'text/html' });
+  if (u.pathname === '/dl/' && FILES[u.searchParams.get('postid')]) return send(200, FILES[u.searchParams.get('postid')], { 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename="addon-${u.searchParams.get('postid')}.mcaddon"` });
+  send(404, 'not here');
+});
+await new Promise((r) => hsrv.listen(0, '127.0.0.1', r));
+const UNITS = path.join(TOP, 'bds', 'addons'), curFile = path.join(TOP, 'bds', '.lab', 'addon'), cur0 = fs.existsSync(curFile) ? fs.readFileSync(curFile, 'utf8') : null;
+const hlab = (args, extra = {}) => new Promise((res) => { const c = spawn(process.execPath, [path.join(TOP, 'lab.mjs'), 'colony', ...args], { cwd: T, env: { ...env, COLONY_ORIGIN: `http://127.0.0.1:${hsrv.address().port}`, LAB_BORROW_BDS: '1.26.52.3', ...extra } }); let t = ''; c.stdout.on('data', (d) => { t += d; }); c.stderr.on('data', (d) => { t += d; }); c.on('close', (code) => res({ code, t })); });
+const units = () => fs.readdirSync(UNITS).filter((d) => /^borrowed_13\d{3}$/.test(d));
+const steps = (t) => t.split('\n').filter((l) => /^(TRY|DROP|KEEP) /.test(l)).map((l) => l.split(' ').slice(0, 2).join(' ').replace(/\s+/g, ' '));
+try {
+  for (const u of units()) fs.rmSync(path.join(UNITS, u), { recursive: true, force: true });
+  // the same seed, two fresh labs (their own seen record and page cache): the same order, request for request
+  const seenA = path.join(T, 'seen-a.jsonl'), seenB = path.join(T, 'seen-b.jsonl');
+  const h0 = hhits.length;
+  let a = await hlab(['harvest', '--n', '1', '--seed', 'fixed', '--max-requests', '7', '--sim-only'], { LAB_BORROW_SEEN: seenA, LAB_COLONY_DIR: path.join(T, 'colony-a') });
+  const usedA = hhits.length - h0;
+  for (const u of units()) fs.rmSync(path.join(UNITS, u), { recursive: true, force: true });
+  const h1 = hhits.length;
+  const b = await hlab(['harvest', '--n', '1', '--seed', 'fixed', '--max-requests', '7', '--sim-only'], { LAB_BORROW_SEEN: seenB, LAB_COLONY_DIR: path.join(T, 'colony-b') });
+  const usedB = hhits.length - h1;
+  ok(steps(a.t).length > 0 && JSON.stringify(steps(a.t)) === JSON.stringify(steps(b.t)) && JSON.stringify(hhits.slice(h0, h0 + usedA)) === JSON.stringify(hhits.slice(h1, h1 + usedB)), 'harvest --seed: the same seed, the same posts in the same order (two labs, request for request)', `${a.t}\n----\n${b.t}`);
+  ok(usedA <= 7 && new RegExp(`アクセス ${usedA}/7`).test(a.t), `harvest --max-requests: never more than the budget, and the count is said (${usedA})`, a.t);
+  for (const u of units()) fs.rmSync(path.join(UNITS, u), { recursive: true, force: true });
+  // --fresh: each post's page asked for once (the page read for the prefilter is the one the download uses)
+  const hf = hhits.length;
+  const fr = await hlab(['harvest', '--n', '1', '--seed', 'fixed', '--max-requests', '7', '--sim-only', '--fresh'], { LAB_BORROW_SEEN: path.join(T, 'seen-f.jsonl'), LAB_COLONY_DIR: path.join(T, 'colony-f') });
+  const pages = hhits.slice(hf).filter((x) => /^\/\d+\/$/.test(x));
+  ok(pages.length > 0 && new Set(pages).size === pages.length, 'harvest --fresh: a post\'s page is asked for once (not again for its download)', `${pages.join(' ')}\n${fr.t}`);
+  for (const u of units()) fs.rmSync(path.join(UNITS, u), { recursive: true, force: true });
+  // stopped while a unit is judged (Ctrl+C, a kill): marked as borrowed from its import on; then that unit and its download
+  // go and the current unit is put back
+  {
+    const seenK = path.join(T, 'seen-k.jsonl'), CDK = path.join(T, 'colony-k');
+    fs.writeFileSync(seenK, JSON.stringify({ at: '2026-01-01T00:00:00Z', site: 'colony', post: '13010', title: 'x', result: 'dropped', stage: 'real', reason: 'old', bds: '1.21.0.0' }) + '\n');
+    fs.mkdirSync(path.dirname(curFile), { recursive: true }); fs.writeFileSync(curFile, 'wand');
+    const k = spawn(process.execPath, [path.join(TOP, 'lab.mjs'), 'colony', 'harvest', '--retry', '--n', '1', '--seed', 'k', '--sim-only'], { cwd: T, env: { ...env, COLONY_ORIGIN: `http://127.0.0.1:${hsrv.address().port}`, LAB_BORROW_BDS: '1.26.52.3', LAB_BORROW_SEEN: seenK, LAB_COLONY_DIR: CDK } });
+    let kt = ''; k.stdout.on('data', (d) => { kt += d; }); k.stderr.on('data', (d) => { kt += d; });
+    for (let i = 0; i < 1200 && !/check（/.test(kt) && k.exitCode === null; i++) await new Promise((res) => setTimeout(res, 100));
+    let pend = null; try { pend = JSON.parse(fs.readFileSync(path.join(UNITS, 'borrowed_13010', 'imported.json'), 'utf8')).borrowed; } catch { /* not there */ }
+    k.kill('SIGTERM');
+    const code = await new Promise((res) => (k.exitCode !== null ? res(k.exitCode) : k.on('close', res)));
+    ok(pend?.pending === true && pend.post === '13010' && /\/13010\/$/.test(pend.url), 'harvest: a unit being judged is marked as borrowed from its import on (the guards stop it)', `${JSON.stringify(pend)}\n${kt}`);
+    ok(code === 143 && !fs.existsSync(path.join(UNITS, 'borrowed_13010')) && !fs.existsSync(path.join(CDK, '13010')) && fs.readFileSync(curFile, 'utf8') === 'wand', 'harvest stopped by a signal: the unit being judged and its download gone, the current unit put back', `exit ${code}\n${kt}`);
+  }
+  // a unit already here under a post's name (kept before, maybe fixed since): never replaced
+  fs.mkdirSync(path.join(UNITS, 'borrowed_13015'), { recursive: true }); fs.writeFileSync(path.join(UNITS, 'borrowed_13015', 'mine.txt'), 'my fixes');
+  // a whole harvest: every kind of post told apart; kept ones marked, dropped ones gone with their reason recorded
+  const seen = path.join(T, 'seen.jsonl'), CD = path.join(T, 'colony-h');
+  const r = await hlab(['harvest', '--n', '10', '--seed', 'all', '--max-requests', '60', '--sim-only'], { LAB_BORROW_SEEN: seen, LAB_COLONY_DIR: CD });
+  const rec = B.readSeen(seen), by = (id) => rec.filter((x) => String(x.post) === String(id)).at(-1);
+  const kept = rec.filter((x) => x.result === 'kept').map((x) => Number(x.post)).sort();
+  ok(r.code === 0 && /残した 4 \/ 落とした 11/.test(r.t) && /候補を見尽くしました/.test(r.t) && kept.length === 4 && kept.includes(13010) && kept.includes(13011) && kept.includes(13014) && (kept.includes(13001) !== kept.includes(13004)),
+    'harvest: every post looked at, the four working addons kept (the one posted twice once; the .mcaddon of .mcpack files too)', `${JSON.stringify(rec.map((x) => [x.post, x.result, x.stage]))}\n${r.t}`);
+  const st = (id) => by(id) && `${by(id).result}:${by(id).stage}`;
+  ok(st(13002) === 'dropped:brief' && st(13003) === 'dropped:scan' && st(13005) === 'dropped:prefilter' && st(13006) === 'dropped:prefilter' && st(13007) === 'dropped:prefilter' && st(13008) === 'dropped:prefilter' && st(13009) === 'dropped:sim' && (st(13012) ?? 'dropped:file') === 'dropped:file' && st(13013) === 'dropped:kind',
+    'harvest: a beta of another BDS (brief), a risky one (scan), Java / no button / an old version / a world (before downloading), a crash at load (sim), a cut file, no script (kind)', JSON.stringify(rec.map((x) => [x.post, x.stage, x.reason])));
+  ok(st(13015) === 'dropped:exists' && fs.readFileSync(path.join(UNITS, 'borrowed_13015', 'mine.txt'), 'utf8') === 'my fixes' && !hhits.some((x) => /^\/dl\/.*postid=13015\b/.test(x)), 'harvest: a unit already here under that name is left as it is (nothing downloaded for it)', JSON.stringify(by(13015)));
+  ok([st(13001), st(13004)].sort().join() === 'dropped:seen,kept:sim' && /同じ中身を見ています（記事 130(01|04)、sha256）/.test([by(13001), by(13004)].find((x) => x.result === 'dropped').reason), 'harvest: the same file posted again is seen by its sha256 and never kept twice', JSON.stringify([by(13001), by(13004)]));
+  const raw = fs.readFileSync(seen, 'utf8');
+  ok(!/sendMessage|import \{/.test(raw) && rec.every((x) => x.at && x.result && x.stage && x.bds === '1.26.52.3') && rec.filter((x) => x.result === 'kept').every((x) => /^[0-9a-f]{64}$/.test(x.sha256) && x.packs.length === 1 && x.packs[0].uuid),
+    'the seen record: numbers, hashes, pack ids and reasons — no content', raw.slice(0, 600));
+  const u11 = path.join(UNITS, 'borrowed_13011'), mark = JSON.parse(fs.readFileSync(path.join(u11, 'imported.json'), 'utf8')).borrowed, bj = JSON.parse(fs.readFileSync(path.join(u11, 'borrowed.json'), 'utf8'));
+  const origF = path.join(u11, mark.original);
+  ok(mark.url.endsWith('/13011/') && mark.author === '職人13011' && mark.rules.includes('二次配布・転載は禁止です。') && !mark.rules.some((x) => /していいですか/.test(x)) && /^PASS sim 2\/2/.test(bj.verdict.sim) && bj.verdict.note,
+    'a kept unit: where it came from, its author, the rules the post states (not the comments), the verdict', JSON.stringify({ mark, verdict: bj.verdict }));
+  ok(fs.existsSync(origF) && (fs.statSync(origF).mode & 0o222) === 0 && B.originalOf(u11) === origF && /借りたアドオン/.test(fs.readFileSync(path.join(u11, 'TASK.md'), 'utf8')), 'the original file kept read-only beside it, its sha256 checked; TASK.md says it is borrowed');
+  ok(!fs.existsSync(path.join(UNITS, 'borrowed_13002')) && !fs.existsSync(path.join(UNITS, 'borrowed_13009')) && !fs.existsSync(path.join(CD, '13002')), 'dropped: the unit and the download gone, only the record stays');
+  // again: nothing seen is asked for again (no page, no download)
+  const h2 = hhits.length;
+  const again = await hlab(['harvest', '--n', '2', '--seed', 'other', '--max-requests', '30', '--sim-only'], { LAB_BORROW_SEEN: seen, LAB_COLONY_DIR: CD });
+  const asked = hhits.slice(h2).map((x) => /^\/(\d+)\/$/.exec(x)?.[1] ?? /postid=(\d+)/.exec(x)?.[1]).filter(Boolean);
+  ok(!asked.some((id) => by(id)), 'harvest again: no post seen before is asked for again (page or file)', `${asked.join(' ')}\n${again.t}`);
+  // borrowed, diff, the guards
+  let o = await hlab(['borrowed']);
+  ok(/bds\/addons\/borrowed_13011 .*by 職人13011/.test(o.t) && /決まり: 二次配布・転載は禁止です。/.test(o.t), 'colony borrowed: each one, its rules and verdict', o.t);
+  o = await hlab(['diff', 'borrowed_13011']);
+  ok(o.code === 0 && /元のまま/.test(o.t), 'colony diff: as it came', o.t);
+  fs.appendFileSync(path.join(u11, 'bp', 'scripts', 'main.js'), "// fixed here\n");
+  o = await hlab(['diff', '13011']);
+  ok(o.code === 0 && /^\+\/\/ fixed here$/m.test(o.t) && /bp:/.test(o.t), 'colony diff <post>: what was changed since (git diff against the original)', o.t);
+  const labOut = (args) => new Promise((res) => { const c = spawn(process.execPath, [path.join(TOP, 'lab.mjs'), ...args], { cwd: TOP, env: { ...env } }); let t = ''; c.stdout.on('data', (d) => { t += d; }); c.stderr.on('data', (d) => { t += d; }); c.on('close', (code) => res({ code, t })); });
+  for (const cmd of ['ship', 'publish']) { o = await labOut(['bds', cmd, '-a', 'borrowed_13011']); ok(o.code !== 0 && /借りたアドオンは配りません/.test(o.t) && /13011/.test(o.t), `${cmd}: a borrowed unit is stopped before anything is written`, o.t); }
+  o = await labOut(['bds', 'bundle']);
+  ok(o.code !== 0 && /bundle: 借りたアドオンは配りません/.test(o.t) && /--skip-borrowed/.test(o.t) && !fs.existsSync(path.join(TOP, 'dist', 'bds-lab-1.26.52.3.zip')), 'bundle: stopped while borrowed units are here (--skip-borrowed leaves them out)', o.t);
+  // a newer BDS: --retry takes again only what it may change
+  const h3 = hhits.length;
+  o = await hlab(['harvest', '--retry', '--n', '5', '--seed', 'r', '--max-requests', '20', '--sim-only'], { LAB_BORROW_SEEN: seen, LAB_COLONY_DIR: CD, LAB_BORROW_BDS: '1.26.60.1' });
+  const retried = [...new Set(hhits.slice(h3).map((x) => /^\/(\d+)\/$/.exec(x)?.[1] ?? /postid=(\d+)/.exec(x)?.[1]).filter(Boolean))].sort();
+  ok(JSON.stringify(retried) === '["13002","13009"]' && /--retry/.test(o.t), '--retry after a BDS update: the brief and sim drops again, not the risky, the old or the foreign', `${retried}\n${o.t}`);
+  // --retry still knows a copy: the post posted twice, its drop made retryable, is the same file as the kept one
+  {
+    const keptOne = kept.includes(13001) ? '13001' : '13004', copy = keptOne === '13001' ? '13004' : '13001', seenR = path.join(T, 'seen-r.jsonl');
+    fs.writeFileSync(seenR, fs.readFileSync(seen, 'utf8') + JSON.stringify({ at: new Date().toISOString(), site: 'colony', post: copy, title: 'x', result: 'dropped', stage: 'real', reason: 'then', bds: '1.21.0.0', sha256: by(keptOne).sha256, packs: by(keptOne).packs }) + '\n');
+    o = await hlab(['harvest', '--retry', '--n', '5', '--seed', 'r', '--max-requests', '20', '--sim-only'], { LAB_BORROW_SEEN: seenR, LAB_COLONY_DIR: CD, LAB_BORROW_BDS: '1.26.60.1' });
+    ok(new RegExp(`DROP ${copy} .*seen: 同じ中身を見ています（記事 ${keptOne}、sha256）`).test(o.t) && !fs.existsSync(path.join(UNITS, `borrowed_${copy}`)), '--retry: a post that is a copy of a kept one is still dropped as seen (only its own record set aside)', o.t);
+  }
+  // diff on someone else's zip: no name in it writes outside the folder it is unpacked into (../, absolute, a nested pack's)
+  {
+    const sd = path.join(UNITS, 'borrowed_m_slip'), tag = `slip-${process.pid}`, uuid = 'a0000077';
+    const outside = [path.join(os.tmpdir(), `${tag}-1.txt`), path.join(os.tmpdir(), `${tag}-2.txt`), path.join(os.tmpdir(), `${tag}-3`), path.join(T, `${tag}-4.txt`)];
+    const bp = Z.writeZip([{ name: 'manifest.json', data: manifest('Slip', uuid, []) }, { name: `../../../${tag}-2.txt`, data: Buffer.from('x') }]);
+    const orig = Z.writeZip([{ name: 'Slip BP.mcpack', data: bp }, { name: `../../${tag}-1.txt`, data: Buffer.from('x') }, { name: `../../${tag}-3.mcpack`, data: Z.writeZip([{ name: 'a.txt', data: Buffer.from('x') }]) }, { name: `${path.join(T, `${tag}-4.txt`)}`, data: Buffer.from('x') }]);
+    fs.mkdirSync(path.join(sd, 'bp'), { recursive: true }); fs.mkdirSync(path.join(sd, '.borrowed'));
+    fs.writeFileSync(path.join(sd, 'bp', 'manifest.json'), manifest('Slip', uuid, [])); fs.writeFileSync(path.join(sd, '.borrowed', 'slip.mcaddon'), orig);
+    fs.writeFileSync(path.join(sd, 'imported.json'), JSON.stringify({ borrowed: { site: 'manual', original: '.borrowed/slip.mcaddon', sha256: crypto.createHash('sha256').update(orig).digest('hex') } }));
+    o = await hlab(['diff', 'borrowed_m_slip']);
+    ok(o.code === 0 && /bp: 元のまま|元のまま/.test(o.t) && !outside.some((f) => fs.existsSync(f)), 'colony diff: names that point outside (../, absolute, inside a nested pack) are never written', `${o.t}\n${outside.filter((f) => fs.existsSync(f)).join(' ')}`);
+    for (const f of outside) fs.rmSync(f, { recursive: true, force: true });
+    fs.writeFileSync(path.join(sd, 'imported.json'), JSON.stringify({ borrowed: { site: 'manual', original: '../../../package.json' } }));
+    o = await hlab(['diff', 'borrowed_m_slip']);
+    ok(o.code !== 0 && /not in borrowed_m_slip\/\.borrowed/.test(o.t), 'colony diff: an edited mark pointing outside the unit\'s .borrowed/ is not followed', o.t);
+    fs.rmSync(sd, { recursive: true, force: true });
+  }
+  // by hand: a file from another site, the same verdict and mark (borrowed_m_…: never a harvested post's name)
+  const own = path.join(T, 'other-site.mcaddon'); fs.writeFileSync(own, addonOf('Hand', 'a0000099', [{ module_name: '@minecraft/server', version: '2.0.0' }], GOOD_JS.replace('welcome', 'hand')));
+  o = await hlab(['borrow', own, '--url', 'https://example.org/hand', '--author', 'Someone', '--name', 'hand', '--sim-only'], { LAB_BORROW_SEEN: seen });
+  const hm = fs.existsSync(path.join(UNITS, 'borrowed_m_hand', 'imported.json')) ? JSON.parse(fs.readFileSync(path.join(UNITS, 'borrowed_m_hand', 'imported.json'), 'utf8')).borrowed : {};
+  ok(o.code === 0 && /KEEP bds\/addons\/borrowed_m_hand/.test(o.t) && hm.site === 'manual' && hm.url === 'https://example.org/hand' && !hm.pending && B.readSeen(seen).at(-1).site === 'manual', 'colony borrow <file>: a file from elsewhere, the same verdict, marked as borrowed', o.t);
+  o = await hlab(['get', '13011'], { LAB_BORROW_SEEN: seen, LAB_COLONY_DIR: CD });
+  ok(/^W seen before \(\d{4}-\d\d-\d\d: kept/m.test(o.t), 'colony get on a post harvest saw: said, not refused', o.t);
+} finally {
+  hsrv.close();
+  for (const u of [...units(), 'borrowed_m_hand', 'borrowed_m_slip']) fs.rmSync(path.join(UNITS, u), { recursive: true, force: true });
+  if (cur0 === null) fs.rmSync(curFile, { force: true }); else fs.writeFileSync(curFile, cur0);
   fs.rmSync(T, { recursive: true, force: true });
 }
 console.log(`${fails ? 'FAIL' : 'PASS'} colony-offline ${n - fails}/${n}`);

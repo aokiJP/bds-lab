@@ -16,7 +16,7 @@ const rm = (p) => { const n = size(p); fs.rmSync(p, { recursive: true, force: tr
 const old = (p, ms) => { try { return Date.now() - fs.statSync(p).mtimeMs > ms; } catch { return false; } };
 const LABS = ['bds', 'end', 'll'];
 // the test suites' own temp folders (a killed run leaves them: once they filled a disk)
-const TEMP = /^(bdslab-|app-offline-|lan-offline-|latest-offline-|update-offline-|nc-(acc|bds|snap|worlds)-|nnc-|lab-import-|lab-colony-|mcw-(world|conv)-)/;
+const TEMP = /^(bdslab-|app-offline-|device-offline-|lan-offline-|latest-offline-|update-offline-|nc-(acc|bds|snap|worlds)-|nnc-|lab-import-|lab-colony-|mcw-(world|conv)-)/;
 const TOKEN_TEXT = /(aas_et\/[A-Za-z0-9_-]{20,}|oauth2_4\/[A-Za-z0-9_-]{20,})/;
 const SKIP_DIR = /^(\.git|node_modules|\.lab|\.lab-node|dist|runs)$/;
 

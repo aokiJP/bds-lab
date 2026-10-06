@@ -6,12 +6,12 @@
 //   lab-pad <fifo>        echo "A DOWN A" > <fifo>
 // A button is held 500 ms (hold<ms> changes it for the presses after it): the game samples its buttons once a frame, and
 // on the CI device (4 frames a second) a 90 ms press was missed again and again where a 600 ms one was taken at once
-// No C library (x86_64 system calls): a few kilobytes, so it can be put on a device by any means. Built by the lab (cc),
-// never committed as a binary.
-#include <linux/input.h>
-#include <linux/uinput.h>
+// No C library (the kernel's system calls, x86_64 or arm64): a few kilobytes, so it can be put on a device by any means.
+// Built by the lab for the device's CPU (cc here; for an arm64 phone the NDK, zig or a cross gcc/clang), never committed as
+// a binary. lab-uinput.h: the uinput interface without any system header (the same on both CPUs)
+#include "lab-uinput.h"
 
-typedef unsigned long u64;
+#if defined(__x86_64__)
 static long sys(long n, long a, long b, long c, long d) {
   long r;
   register long r10 __asm__("r10") = d;
@@ -20,16 +20,36 @@ static long sys(long n, long a, long b, long c, long d) {
 }
 #define SYS_read 0
 #define SYS_write 1
-#define SYS_open 2
 #define SYS_close 3
 #define SYS_ioctl 16
 #define SYS_nanosleep 35
 #define SYS_exit 60
+#define SYS_openat 257
 #define SYS_mknodat 259
+#elif defined(__aarch64__)
+static long sys(long n, long a, long b, long c, long d) {
+  register long x8 __asm__("x8") = n, x0 __asm__("x0") = a, x1 __asm__("x1") = b, x2 __asm__("x2") = c, x3 __asm__("x3") = d;
+  __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3) : "memory");
+  return x0;
+}
+#define SYS_read 63
+#define SYS_write 64
+#define SYS_close 57
+#define SYS_ioctl 29
+#define SYS_nanosleep 101
+#define SYS_exit 93
+#define SYS_openat 56
+#define SYS_mknodat 33
+#else
+#error "lab-pad: x86_64 or arm64 only"
+#endif
 #define AT_FDCWD -100
 #define O_RDONLY 0
 #define O_WRONLY 1
 #define O_NONBLOCK 04000
+// (a compiler may turn a loop that clears a struct into a call to memset: there is no C library to answer it)
+void *memset(void *d, int c, unsigned long n) { unsigned char *p = d; while (n--) *p++ = (unsigned char)c; return d; }
+void *memcpy(void *d, const void *s, unsigned long n) { unsigned char *p = d; const unsigned char *q = s; while (n--) *p++ = *q++; return d; }
 
 static int ufd;
 static long hold_ms = 500;
@@ -72,11 +92,15 @@ static void abs_axis(int code, int min, int max) {
 }
 
 // (the entry: the stack as the kernel left it — argc, then argv — handed to C, the stack aligned)
+#if defined(__x86_64__)
 __asm__(".globl _start\n_start:\n  mov %rsp, %rdi\n  and $-16, %rsp\n  call cstart\n  hlt\n");
+#else
+__asm__(".globl _start\n_start:\n  mov x0, sp\n  bl cstart\n  b .\n");
+#endif
 void cstart(long *sp) {
   long argc = sp[0]; char **argv = (char **)(sp + 1);
   if (argc != 2) { say("usage: lab-pad <fifo>\n"); sys(SYS_exit, 2, 0, 0, 0); }
-  ufd = (int)sys(SYS_open, (long)"/dev/uinput", O_WRONLY | O_NONBLOCK, 0, 0);
+  ufd = (int)sys(SYS_openat, AT_FDCWD, (long)"/dev/uinput", O_WRONLY | O_NONBLOCK, 0);
   if (ufd < 0) { say("lab-pad: /dev/uinput (root?)\n"); sys(SYS_exit, 1, 0, 0, 0); }
   sys(SYS_ioctl, ufd, UI_SET_EVBIT, EV_KEY, 0); sys(SYS_ioctl, ufd, UI_SET_EVBIT, EV_ABS, 0); sys(SYS_ioctl, ufd, UI_SET_EVBIT, EV_SYN, 0);
   for (unsigned i = 0; i < sizeof KEYS / sizeof KEYS[0]; i++) sys(SYS_ioctl, ufd, UI_SET_KEYBIT, KEYS[i].key, 0);
@@ -94,7 +118,7 @@ void cstart(long *sp) {
   say("lab-pad: controller up, commands from "); say(argv[1]); say("\n");
   static char buf[4096], word[64];
   for (;;) {
-    int f = (int)sys(SYS_open, (long)argv[1], O_RDONLY, 0, 0);
+    int f = (int)sys(SYS_openat, AT_FDCWD, (long)argv[1], O_RDONLY, 0);
     if (f < 0) { nap(500); continue; }
     int wl = 0;
     for (;;) {

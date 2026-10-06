@@ -398,6 +398,39 @@ node lab.mjs app run -a jsonui_demo --device redroid      # いつも（app ui �
 
 詳しく: [redroid/README.md](redroid/README.md)。
 
+## 自分の端末で（スマホ・タブレット: root あり・なし × USB・Wi-Fi）
+
+エミュレータの代わりに、自分の Android 端末で `app run` / `app ui` を通せます。ゲームは端末に Play ストアで入れたものを
+使い（ラボは APK もアカウントも入れません）、BDS はそのゲームの版に合わせます。
+
+```
+node lab.mjs app device                         # adb に見えている端末（登録していない端末では何も実行しません）
+node lab.mjs app device add phone               # 調べて登録 → 使う道とその理由、足りないこと
+node lab.mjs app run -a jsonui_demo --device phone
+```
+
+道は端末を調べて決まります（`node lab.mjs app device path <名前>` でいつでも調べ直せます）:
+
+| | USB でつなぐ | Wi-Fi でつなぐ |
+|---|---|---|
+| 参加 | 端末と PC が同じネットワーク（同じ Wi-Fi・USB テザリング・端末のホットスポット）なら、ゲームの LAN のワールドとして入ります。root も中継も要りません | 同じ |
+| root なし | 操作は adb の入力（ボタンは長押し）。コンテンツログは外部の保存先から、無ければ logcat から（参考） | 同じ |
+| root あり（adbd か su） | 操作はラボのコントローラー（uinput）。コンテンツログは内側の保存先からも | 同じ |
+
+- **Wi-Fi でつなぐ**: Android 11 以上は端末の「ワイヤレス デバッグ」→「ペア設定コードによるデバイスのペア設定」に出る
+  IP:ポートで `node lab.mjs app device pair <IP:ポート>`（6 桁のコードはその場で聞いて使うだけで、どこにも残しません）。
+  Android 10 以下は USB でつないで `app device tcpip <名前>`。ポートが変わっても、端末のシリアル番号で探してつなぎ直します
+- **同じネットワークにならないとき**: 端末の設定で USB テザリング（`app device tether <名前>` で adb から試せます。効かない
+  端末もあります）か、端末のホットスポットに PC をつなぐ。ゲスト用の Wi-Fi は端末同士を隔離していることがあります。
+  WSL2 は既定で別のネットワークです（Windows の `.wslconfig` に `networkingMode=mirrored`）。参加できないときは PC の
+  ファイアウォールで BDS の UDP（7551 と 19132 から）を許可（Windows: プライベート ネットワーク）
+- **root のコントローラー**: arm64 の端末用はこの PC で作ります（Android NDK・zig（`pip install ziglang`）・clang と
+  ld.lld のどれか）。作れなければ adb の入力で操作します
+- run の間だけ、画面を点けたまま・通知の帯をデモ表示・おやすみモードにし、終われば元に戻します（`APP_DEVICE_QUIET=0` で
+  変えない。途中で止めたら `app device restore <名前>`）。アプリを止めたり消したり、画面の形や回線を変えたりはしません
+  （`size` `density` `cutout` `network` の手順と `app ui --sizes` は使えません）。画面がロックされていたら、解除を待ちます
+- 押す位置を測る: `node lab.mjs app screen --device <名前>` / `app tap <x> <y> --device <名前>`
+
 ## 対応している OS
 
 | | macOS（Apple Silicon / Intel） | Windows 10/11 | Linux |
@@ -406,6 +439,7 @@ node lab.mjs app run -a jsonui_demo --device redroid      # いつも（app ui �
 | APK の取得（apkeep） | ✔ ラボが取得（Homebrew 不要、ハッシュ確認） | ✔ 公式版（ハッシュ確認） | ✔ 公式版（ハッシュ確認） |
 | エミュレータ | ✔ arm64 はそのまま速い | ✔ Windows ハイパーバイザー プラットフォームを有効に | ✔ KVM が要る |
 | redroid（`--device redroid`） | — | — | ✔ docker と binder が要る |
+| 自分の端末（`--device <名前>`） | —（BDS がコンテナの中で、LAN の放送が届きません） | ✔ ファイアウォールで BDS の UDP を許可 | ✔（WSL2 は mirrored のネットワークで） |
 | GitHub で動かす | — | — | ✔（ubuntu-latest） |
 
 ## 安全のために
@@ -415,6 +449,7 @@ node lab.mjs app run -a jsonui_demo --device redroid      # いつも（app ui �
   - 例外は `--account`（`app account`）を付けたときだけ: トークンをエミュレータの中のアカウント情報へ書き込みます。渡すのは sqlite3 の標準入力だけで、コマンドの引数・画面・ログには出しません（メールアドレスも出しません）。エミュレータの中身には残るので、終わったら `--wipe` か `app emu stop`
 - APK・`.so`・トークンは git にも、ラボの zip（`handoff` / `patch`）にも、GitHub の成果物にも入りません。成果物は、アップロードの前に `app guard` が中身まで調べます
 - GitHub の app ワークフローは書き込み権限を持たず、既定ブランチからしか動きません
+- 自分の端末: 登録した端末にだけ触ります。ペア設定コードは保存せず、APK もアカウントも入れません。変えた設定は終わりに戻し、置いたもの（コントローラー）も消します。画面とログは手元にだけ残ります。使い終わったら端末の「ワイヤレス デバッグ」を切ってください
 - 自分で買った Minecraft を、自分の検証のためにだけ使ってください。Google Play をデータセンター（GitHub）から頻繁に使うと、アカウントに制限がかかることがあります
 
 ## コマンド一覧
@@ -439,6 +474,8 @@ node lab.mjs app run -a jsonui_demo --device redroid      # いつも（app ui �
 | `node lab.mjs app run -a <名前> --device redroid` | エミュレータの代わりに redroid（コンテナの Android、VM なし。Linux）で。`app ui` も同じ。準備は下の「redroid」 |
 | `node lab.mjs app redroid doctor` / `setup` / `prep` / `down` / `seal` / `open` | redroid の端末: 足りないもの / イメージを作る / 準備済みの端末を作る（一度だけ） / 止める / 暗号化して 1 ファイルに / そこから戻す |
 | `node lab.mjs app ci --device redroid -a <名前>` | GitHub の redroid ワークフローで（`--mode run\|ui` `--bench` `--keep` `--fresh` `--wait` / `ci watch <番号> --device redroid`） |
+| `node lab.mjs app device` / `add <名前>` / `path <名前>` / `pair <IP:ポート>` / `connect <IP:ポート>` / `tcpip <名前>` / `tether <名前>` / `restore <名前>` / `forget <名前>` | 自分の端末を登録して、使う道（参加・操作・ログ）を決める（上の「自分の端末で」） |
+| `node lab.mjs app run -a <名前> --device <端末の名前>` | 自分の端末で（`app ui` も同じ） |
 | `node lab.mjs app guard <フォルダ>` | APK・.so・トークンが混ざっていないか |
 | `node lab.mjs app help` | 全部の書き方 |
 

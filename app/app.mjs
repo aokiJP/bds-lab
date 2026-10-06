@@ -31,6 +31,7 @@ import * as L from './lib/license.mjs';
 import * as Live from './lib/live.mjs';
 import * as SI from './lib/signin.mjs';
 import * as WD from './lib/world.mjs';
+import * as Dev from './lib/device.mjs';
 import { gridOverlay } from './lib/screen.mjs';
 import { autoOauthToken, browserCandidates, canShowWindow } from './lib/login.mjs';
 import { playwrightOauthToken } from './lib/playwright-login.mjs';
@@ -42,6 +43,10 @@ const BDS_LAB = process.env.APP_BDS_LAB || path.join(TOP, 'bds', 'lab.mjs');
 const BDS_DIR = path.dirname(BDS_LAB), BDS_LIVE = path.join(BDS_DIR, '.lab', 'live.json');
 const ADDONS = path.join(TOP, 'bds', 'addons');
 const MEMO = path.join(LAB, 'apk.json'), LOCK = path.join(LAB, 'run.lock'), PREP_LOG = path.join(LAB, 'prepare.txt');
+// the person's own devices (app device add): app/.lab/devices.json and devices/<name>.json (APP_DEVICES_DIR: tests)
+const DEVICES = process.env.APP_DEVICES_DIR || LAB;
+// (run / ui on one of them: set from --device <name> before the command runs)
+let REAL = null;
 
 K.loadEnv([process.env.APP_ENV_FILE, ENV_FILE, path.join(APPDIR, '.env.local'), path.join(TOP, '.env')]);
 
@@ -102,11 +107,13 @@ const HELP = `app: 本物の Minecraft アプリをエミュレータで動か�
         Google の公式の手順ではない）。--vending（APP_VENDING_APK、または APP_VENDING_URL + APP_VENDING_SHA256）: Play ストアを
         system のアプリとして先に入れる（emu --writable-system で起動しておく）     account check   いまの状態（値は出さない）
   screen [名前]              いまの画面を撮り、tap の位置を読む格子付きの画像も作る
-  tap <x> <y> | key <キー> | text <文字>   いまの画面を操作（位置を試すとき）
+  tap <x> <y> | key <キー> | text <文字>   いまの画面を操作（位置を試すとき）。自分の端末なら --device <名前>
   install                    起動中のエミュレータに APK を入れる
   secrets [--repo <owner/名前>] [--env <Environment>] [--from <.env.local>]   GitHub に Google の認証を登録（gh）
   guard [フォルダ]           そのフォルダに APK・.so・トークンが無いか
   run / ui … --device redroid   エミュレータの代わりに redroid（コンテナの Android、VM なし）で。準備: node lab.mjs app redroid help
+  run / ui … --device <名前>   自分の端末（スマホ・タブレット。root あり・なし × USB・Wi-Fi）で。登録・つなぎ方: node lab.mjs app device help
+  device [list|add|path|pair|connect|tcpip|tether|restore|forget]   自分の端末を登録して、使う道（参加・操作・ログ）を決める
   redroid doctor|setup|prep|run|ui|up|down|bench|report   redroid の端末（Linux: docker と binder）
   ci … --device redroid [--mode run|ui] [--bench] [--keep] [--fresh] [--wait]   GitHub の redroid ワークフローで（private なら準備済みの
         端末を暗号化キャッシュから。--keep: 作った端末をキャッシュへ、--fresh: 作り直す）。ci watch|fetch <番号> --device redroid
@@ -359,6 +366,12 @@ async function accountCmd(args) {
 }
 
 function liveAdb() {
+  // (--device <name>: a person's device, as it is — used only while it is there)
+  if (REAL) {
+    const r = new D.Adb({ bin: adbBin(), serial: REAL.serial });
+    if (r.run(['get-state'], { timeout: 5000 }).stdout.trim() !== 'device') fail(`端末 ${REAL.name}（${REAL.serial}）がつながっていません`, `node lab.mjs app device path ${REAL.name}（Wi-Fi が別のポートで戻ったときもつなぎ直します）`);
+    return r;
+  }
   const a = adbReady();
   if (!a?.booted()) fail('エミュレータが動いていません', '`node lab.mjs app emu`（画面を見ながらなら --window）か、`node lab.mjs app run -a <アドオン> --keep` の後で使います。');
   return a;
@@ -381,7 +394,7 @@ function liveInput(verb, args) {
     if (args.length !== 2 || [x, y].some((v) => !Number.isFinite(v) || v < 0)) fail('書き方: node lab.mjs app tap <x> <y>', '0〜1 は画面に対する割合（0.5 0.5 = 真ん中）');
     const sz = pngSize(adb.screencap());
     const px = [x > 1 ? Math.round(x) : Math.round(x * sz.w), y > 1 ? Math.round(y) : Math.round(y * sz.h)];
-    adb.tap(px[0], px[1], W.readStamp()?.tap);
+    adb.tap(px[0], px[1], REAL ? undefined : W.readStamp()?.tap);
     out(`OK (${px[0]}, ${px[1]}) を押しました。結果を見る: node lab.mjs app screen`);
   } else if (verb === 'key') {
     const k = KEYS[String(args[0] ?? '').toUpperCase()] ?? (/^\d+$/.test(args[0] ?? '') ? Number(args[0]) : null);
@@ -541,6 +554,8 @@ function advise(st) {
     else if (v[0] === 'do') n.push(`サーバー側だけ確かめる: node lab.mjs bds run "${bad.raw.slice(3)}"`);
     else if (v[0] === 'absent' || v[0] === 'expect') n.push('logcat-minecraft.txt / server.log のその行を見て、rp/ui などを直す');
     else n.push('logcat-minecraft.txt と server.log も見る');
+    // (a person's device that never found the LAN world: what usually stands between it and this machine)
+    if (st.realDevice && (v[0] === 'join' || (v[0] === 'until' && v[1] === 'joined'))) n.push(`LAN のワールドが見えないなら: PC のファイアウォールで BDS の UDP（7551 と 19132 から）を許可（Windows: プライベート ネットワーク）、Wi-Fi の端末同士の隔離（端末のホットスポットか USB テザリングに）、root があれば APP_DEVICE_REFLECT=1（node lab.mjs app device path ${st.realDevice}）`);
   }
   if (st.notes.some((x) => /ライセンス/.test(x))) n.push('ライセンスの画面なら README の「うまくいかないとき」');
   // Android itself not answering: the device is too slow for the game, whatever step it showed in
@@ -551,7 +566,9 @@ async function runCmd(args) {
   const o = parse(args, { flags: ['--no-fetch', '--wipe', '--window', '--keep', '-v', '--account', '--allow-client-errors'], opts: ['-a', '--addon', '--scenario', '--apk', '--bds', '--vending'] });
   const verbose = o.flags.has('-v') || !!process.env.APP_VERBOSE;
   if (o.rest.length) fail(`知らない指定 ${o.rest.join(' ')}`, 'node lab.mjs app run -a <アドオン> [--scenario <ファイル>] …（node lab.mjs app help）');
-  const account = o.flags.has('--account') || process.env.APP_ACCOUNT === '1';
+  // a person's own device: nothing is installed on it and it is never made again (the game is the one Play installed)
+  if (REAL) { const bad = [...['--wipe', '--window', '--account'].filter((f) => o.flags.has(f)), ...['--apk', '--vending'].filter((f) => o.opts[f])]; if (bad.length) fail(`本物の端末（${REAL.name}）では使いません: ${bad.join(' ')}`, 'ラボは本物の端末へ APK もアカウントも入れず、作り直しもしません（ゲームは Play ストアで入れたもの）'); }
+  const account = !REAL && (o.flags.has('--account') || process.env.APP_ACCOUNT === '1');
   if (o.opts['--vending'] && !account) fail('--vending は --account と一緒に使います', 'node lab.mjs app run -a <アドオン> --account --vending <apk>');
   const addon = needAddon(o.opts['-a'] ?? o.opts['--addon']);
   // automatic upkeep first (temp folders, stale locks, login leftovers, disk): quiet unless it repaired something
@@ -564,9 +581,10 @@ async function runCmd(args) {
   const { steps, errors } = parseScenario(fs.readFileSync(scenarioFile, 'utf8'));
   if (errors.length) { errors.forEach((e) => out(`E ${rel(scenarioFile)}:${e}`)); fail('手順の書き方に誤りがあります（上の行）', '書き方の一覧: node lab.mjs app help'); }
   if (!steps.length) fail(`${rel(scenarioFile)} に手順がありません`, 'node lab.mjs app init -a ' + addon);
+  if (REAL) { const bad = steps.filter((x) => ['size', 'density', 'cutout', 'network'].includes(x.verb)); if (bad.length) fail(`本物の端末では使わない手順があります: ${bad.map((x) => `${x.line} 行目 ${x.verb}`).join('、')}`, '画面の形と回線を変える手順はエミュレータで（--device emu）。本物の端末の設定は変えません'); }
   const unlock = takeLock();
 
-  const st = { ok: false, addon, app: null, bds: null, device: null, scenario: rel(scenarioFile), results: [], shots: [], notes: [], dialogs: [], fatal: null, next: [], started: Date.now(), ended: 0, timing: {} };
+  const st = { ok: false, addon, app: null, bds: null, device: null, scenario: rel(scenarioFile), results: [], shots: [], notes: [], dialogs: [], fatal: null, next: [], started: Date.now(), ended: 0, timing: {}, realDevice: REAL?.name ?? null };
   const runDir = path.join(RUNS, `${stampLocal()}-${addon}`);
   fs.mkdirSync(runDir, { recursive: true });
   // the screen gets the stages, a failing step and the result; every line goes to run.txt (-v: the screen too)
@@ -596,6 +614,10 @@ async function runCmd(args) {
   const beat = setInterval(() => { if (Date.now() - lastNotice > 4 * 60_000) notice(`経過（${stageNow}）`, mon.last()); }, 30_000); beat.unref();
   const stage = (s) => { stageNow = s.slice(0, 40); log(s); notice(s, mon.now()); };
   let adb = null, emu = null, serverUp = false, lc = null, lcFd = null, launched = false, finished = false;
+  // a person's own device (--device <name>): { bin, serial, facts, path }, what the lab changed on it (held: the screen and
+  // notifications), and whether the game was running before the run (left as it was found). What the lab puts there — the
+  // controller, the reflector — is taken away at the end whatever happened (clearDevice)
+  let real = null, held = false, gameBefore = false;
 
   const finish = async () => {
     if (finished) return; finished = true;
@@ -640,16 +662,42 @@ async function runCmd(args) {
       if (parts.length) fs.writeFileSync(path.join(runDir, 'dropbox.txt'), parts.join('\n\n') + '\n');
     });
     // the game's own content logs (JSON UI errors go there when the content log is on): adb root works on Google APIs images
-    if (adb && launched) await tryDo(async () => {
+    if (adb && launched && !REAL) await tryDo(async () => {
       adb.run(['root'], { timeout: 20_000 }); await sleep(1500); adb.run(['wait-for-device'], { timeout: 30_000 });
       for (const [dev, name] of [[`/data/data/${K.PACKAGE}/games/com.mojang/logs`, 'logs-internal'], [`/sdcard/Android/data/${K.PACKAGE}/files/games/com.mojang/logs`, 'logs-external']]) {
         if (adb.shell(['ls', dev]).status === 0) { const dst = path.join(runDir, 'pulled', name); fs.mkdirSync(path.dirname(dst), { recursive: true }); adb.run(['pull', dev, dst], { timeout: 60_000 }); }
       }
     });
-    if (fs.existsSync(path.join(LAB, 'emulator.log'))) await tryDo(() => { const b = fs.readFileSync(path.join(LAB, 'emulator.log')); fs.writeFileSync(path.join(runDir, 'emulator.log'), b.subarray(Math.max(0, b.length - 2e6))); });
+    // a person's device: its external folder as the shell reads it; with root the private one through a copy the shell can
+    // read (removed after). adb root is never asked of a phone
+    if (adb && launched && REAL) await tryDo(async () => {
+      const ext = `/sdcard/Android/data/${K.PACKAGE}/files/games/com.mojang/logs`, pulled = path.join(runDir, 'pulled');
+      if (adb.shell(['ls', ext]).status === 0) { fs.mkdirSync(pulled, { recursive: true }); adb.run(['pull', ext, path.join(pulled, 'logs-external')], { timeout: 60_000 }); }
+      if (real?.facts.root) {
+        const tmpd = '/data/local/tmp/lab-logs', inner = `/data/data/${K.PACKAGE}/games/com.mojang/logs`;
+        // (as root in the form the device's su answered when it was looked at — adb.su — or as adbd itself)
+        const asRoot = (c) => adb.run(['shell', D.asRoot(adb, c)], { timeout: 30_000 });
+        if (asRoot(`rm -rf ${tmpd}; cp -r ${inner} ${tmpd} && chmod -R 755 ${tmpd}`).status === 0) { fs.mkdirSync(pulled, { recursive: true }); adb.run(['pull', tmpd, path.join(pulled, 'logs-internal')], { timeout: 60_000 }); }
+        asRoot(`rm -rf ${tmpd}`);
+      }
+    });
+    if (!REAL && fs.existsSync(path.join(LAB, 'emulator.log'))) await tryDo(() => { const b = fs.readFileSync(path.join(LAB, 'emulator.log')); fs.writeFileSync(path.join(runDir, 'emulator.log'), b.subarray(Math.max(0, b.length - 2e6))); });
     // stop what this run started
     if (serverUp && !keep) await tryDo(() => bds(['down'], { LAB_ADDON: addon }, 60_000));
     if (emu?.started && !keep) await tryDo(() => D.stopEmulator(adb, LAB));
+    // a person's device as it was found: the game stopped only if the run started it, the lab's controller gone, the screen
+    // and notification settings back (--keep: left as they are; app device restore puts them back)
+    if (REAL && adb && !keep) await tryDo(async () => {
+      // (a Wi-Fi link that dropped or moved to another port during the run — often why it failed — is followed first)
+      if (adb.run(['get-state'], { timeout: 5000 }).stdout.trim() !== 'device') { const on = await Dev.online(adb.bin, DEVICES, { ...REAL, serial: adb.serial }, { waitMs: 15_000 }); if (on.ok) adb.serial = on.serial; }
+      if (launched && !gameBefore) adb.shell(['am', 'force-stop', K.PACKAGE]);
+      D.clearDevice(adb);
+      if (held) {
+        const back = Dev.releaseDevice((c) => { const x = adb.run(['shell', c], { timeout: 20_000 }); return { status: x.status, out: x.stdout }; }, DEVICES, REAL.name, { hw: real?.facts.hw });
+        log(`      端末の設定を元に戻しました（${back.done.join('、') || 'なし'}）。ラボが置いたものも消しました`, false);
+        if (back.failed.length) st.notes.push(`端末の設定を戻せませんでした（${back.failed.join('、')}）: 端末をつないで node lab.mjs app device restore ${REAL.name}（戻す値は残してあります）`);
+      }
+    });
     st.ok = !st.fatal && !st.clientFail && st.results.every((r) => r.ok) && (st.results.length === steps.length || Boolean(st.sections?.length)) && alive;
     st.next = advise(st);
     st.ended = Date.now();
@@ -663,7 +711,8 @@ async function runCmd(args) {
     log(`${st.ok ? 'PASS' : 'FAIL'} ${rel(path.join(runDir, 'report.md'))}`);
     log(`     画面: ${rel(path.join(runDir, 'index.html'))}（${st.shots.length} 枚）`);
     st.next.forEach((n) => log(`     次: ${n}`));
-    if (keep) log('     BDS とエミュレータは動いたままです。止める: node lab.mjs bds down / node lab.mjs app emu stop');
+    if (keep) log(REAL ? `     BDS は動いたまま、端末 ${REAL.name} の設定もそのままです。止める: node lab.mjs bds down / 戻す: node lab.mjs app device restore ${REAL.name}` : '     BDS とエミュレータは動いたままです。止める: node lab.mjs bds down / node lab.mjs app emu stop');
+    if (REAL && Dev.linkOf(adb?.serial ?? '') === 'wifi') log(`     ${wifiNote.replace('<名前>', REAL.name)}`);
     unlock();
   };
   const onSignal = () => { st.fatal ??= '中断しました（Ctrl+C）'; finish().finally(() => process.exit(130)); };
@@ -671,44 +720,84 @@ async function runCmd(args) {
 
   try {
     log(`app run ${addon} → ${rel(runDir)}`);
-    // 1. the APK set (not needed when the prepared snapshot already has the game: `app prepare`, lib/warm.mjs)
-    if (o.opts['--apk']) apkUse(o.opts['--apk']);
-    let list = apkPaths();
-    const ready = readySnapshot({ list, account, wipe: o.flags.has('--wipe') });
-    const warmOk = Boolean(ready && !ready.diff.length);
-    if (!list && !warmOk) {
-      if (o.flags.has('--no-fetch')) fail('APK がありません', '`node lab.mjs app apk fetch` か `--apk <フォルダ>`（準備済みの端末なら node lab.mjs app prepare）');
-      if (!K.playCredentials().ready) {
-        if (!process.stdin.isTTY && !((await import('../common/secrets.mjs')).readSecret(TOP, 'GOOGLE_EMAIL') && (await import('../common/secrets.mjs')).readSecret(TOP, 'GOOGLE_PASSWORD'))) fail('APK がまだありません', '端末で `node lab.mjs app token` を一度実行するか（Google Play から取る）、`--apk <フォルダ>`（スマホから取り出したもの）');
-        log('[1/5] APK がまだありません。Google Play から取るための準備（一度だけ）をします');
-        await tokenCmd([]);
-      }
-      log('[1/5] APK: Google Play から取得します（1 GB 前後）');
-      await apkFetch();
+    let list = null, ready = null, warmOk = false, info;
+    if (REAL) {
+      // 1. the person's device: online, looked at again, its way (none yet: what to do, and nothing else is started)
+      stage(`[1/5] 端末 ${REAL.name}`);
+      real = await deviceNow(REAL, { log: (x) => log('      ' + x.trim()) });
+      const p = real.path;
+      st.path = `${p.key}: ${p.join === 'lan' ? `同じネットワーク（${p.via === 'tether' ? 'USB テザリング' : 'Wi-Fi'}、PC ${p.hostIp}）で LAN のワールドとして参加` : p.join === 'address' ? `アドレス ${p.hostIp} で参加（サインインしたゲーム）` : '参加の道なし'}・操作 ${p.control === 'pad' ? 'ラボのコントローラー' : 'adb の入力'}・コンテンツログ ${p.logs === 'any' ? '内側と外部の保存先' : '外部の保存先か logcat'}`;
+      p.why.forEach((w) => log(`      ・${w}`, false));
+      if (!p.ok) fail(`端末 ${REAL.name} ではまだ参加できません（${p.key}）`, `${p.todo.join(' / ')}（確かめ: node lab.mjs app device path ${REAL.name}）`);
+      info = { versionName: real.facts.game.versionName, versionCode: real.facts.game.versionCode, abis: [] };
+      st.app = { versionName: info.versionName, versionCode: info.versionCode };
+      stage(`[1/5] ゲーム ${info.versionName} (${info.versionCode})（端末 ${REAL.name} に Play ストアで入っているもの）`);
+    } else {
+      // 1. the APK set (not needed when the prepared snapshot already has the game: `app prepare`, lib/warm.mjs)
+      if (o.opts['--apk']) apkUse(o.opts['--apk']);
       list = apkPaths();
+      ready = readySnapshot({ list, account, wipe: o.flags.has('--wipe') });
+      warmOk = Boolean(ready && !ready.diff.length);
+      if (!list && !warmOk) {
+        if (o.flags.has('--no-fetch')) fail('APK がありません', '`node lab.mjs app apk fetch` か `--apk <フォルダ>`（準備済みの端末なら node lab.mjs app prepare）');
+        if (!K.playCredentials().ready) {
+          if (!process.stdin.isTTY && !((await import('../common/secrets.mjs')).readSecret(TOP, 'GOOGLE_EMAIL') && (await import('../common/secrets.mjs')).readSecret(TOP, 'GOOGLE_PASSWORD'))) fail('APK がまだありません', '端末で `node lab.mjs app token` を一度実行するか（Google Play から取る）、`--apk <フォルダ>`（スマホから取り出したもの）');
+          log('[1/5] APK がまだありません。Google Play から取るための準備（一度だけ）をします');
+          await tokenCmd([]);
+        }
+        log('[1/5] APK: Google Play から取得します（1 GB 前後）');
+        await apkFetch();
+        list = apkPaths();
+      }
+      info = list ? K.inspectApks(list) : { versionName: ready.stamp.versionName, versionCode: ready.stamp.installedCode ?? ready.stamp.apk, abis: ready.stamp.abis ?? [] };
+      st.app = { versionName: info.versionName, versionCode: info.versionCode, abis: info.abis };
+      stage(`[1/5] APK ${info.versionName} (${info.versionCode}) ${info.abis.join(',')}${list ? '' : '（準備済みの端末に入っているもの）'}`);
     }
-    const info = list ? K.inspectApks(list) : { versionName: ready.stamp.versionName, versionCode: ready.stamp.installedCode ?? ready.stamp.apk, abis: ready.stamp.abis ?? [] };
-    st.app = { versionName: info.versionName, versionCode: info.versionCode, abis: info.abis };
-    stage(`[1/5] APK ${info.versionName} (${info.versionCode}) ${info.abis.join(',')}${list ? '' : '（準備済みの端末に入っているもの）'}`);
 
-    // 2. the emulator: started now, waited for after the BDS is up (both get ready at once)
-    stage(`[2/5] エミュレータ${warmOk ? `（準備済みの状態 ${W.SNAPSHOT} から）` : ''}`);
+    // 2. the emulator: started now, waited for after the BDS is up (both get ready at once). A person's device: as it is
     const elog = (s) => log('      ' + s, /^W /.test(s));
-    emu = await ensureEmulator({ window: o.flags.has('--window'), wipe: o.flags.has('--wipe'), writableSystem: account && vendingWanted(o.opts['--vending']), ready, noWait: true, log: elog });
+    if (REAL) {
+      stage(`[2/5] 端末 ${REAL.name}（${real.path.key}、${linkJa(real.facts.link)} ${real.serial}）`);
+      emu = { started: false, warm: false, adb: new D.Adb({ bin: real.bin, serial: real.serial }) };
+    } else {
+      stage(`[2/5] エミュレータ${warmOk ? `（準備済みの状態 ${W.SNAPSHOT} から）` : ''}`);
+      emu = await ensureEmulator({ window: o.flags.has('--window'), wipe: o.flags.has('--wipe'), writableSystem: account && vendingWanted(o.opts['--vending']), ready, noWait: true, log: elog });
+    }
     adb = emu.adb; adb.log = (s) => fs.appendFileSync(path.join(runDir, 'adb.txt'), s + '\n');
+    // (its CPU — the controller is built for it — and how it is root: adbd itself, or su for each start)
+    if (REAL) { adb.abi = real.facts.abi; adb.su = real.facts.root === 'su' ? (real.facts.su ?? '-c') : false; }
     // (a device whose screencap leaves the game out: its pictures from the emulator, as prepare found)
     if (emu.warm && ready?.stamp?.shot === 'emu') adb.shotVia = 'emu';
     // (the way of pressing the game's buttons that prepare found working on this device: a held press on a slow one)
     if (ready?.stamp?.tap && ready.stamp.tap !== 'tap') adb.tapHow = ready.stamp.tap;
-    const emuStarted = readJson(path.join(LAB, 'emulator.json'))?.started ?? Date.now();
+    const emuStarted = REAL ? Date.now() : readJson(path.join(LAB, 'emulator.json'))?.started ?? Date.now();
     const deviceUp = async () => {
       spawnSync(adb.bin, ['start-server'], { timeout: 30_000, env: K.cleanEnv() });
-      if (!emu.warm) elog('起動を待っています（初回は 5〜10 分かかることがあります）');
-      await D.waitBoot(adb, { log: elog, warm: emu.warm });
+      if (!emu.warm && !REAL) elog('起動を待っています（初回は 5〜10 分かかることがあります）');
+      // (warm: only waits — the first boot's settings, animations off and stay-awake, are the emulator's; a person's device
+      // keeps its own)
+      await D.waitBoot(adb, { log: elog, warm: emu.warm || Boolean(REAL) });
       st.deviceAbis = adb.prop('ro.product.cpu.abilist').split(',').filter(Boolean);
       st.device = `${adb.prop('ro.product.model')} Android ${adb.prop('ro.build.version.release')} (${st.deviceAbis.join(',')})`;
       // the game's native code for another CPU than the device's own (arm64 on x86_64): it runs through ARM translation
       st.translated = Boolean(st.deviceAbis[0] && info.abis.length && !info.abis.includes(st.deviceAbis[0]));
+      if (REAL) {
+        // a person's device: the screen kept on and the notifications quiet while the lab uses it (the values before are kept
+        // first, put back at the end), nothing installed, no app stopped; a lock screen is the person's to unlock
+        st.device = `${real.facts.model ?? '?'}（${real.facts.maker ?? '?'}）Android ${real.facts.android ?? '?'} (${st.deviceAbis.join(',')})・${REAL.name}・${linkJa(real.facts.link)}・root ${real.facts.root ?? 'なし'}`;
+        gameBefore = adb.pid() > 0;
+        const sh = (c) => { const x = adb.run(['shell', c], { timeout: 20_000 }); return { status: x.status, out: x.stdout }; };
+        const h = Dev.holdDevice(sh, DEVICES, REAL.name, { hw: real.facts.hw }); held = true;
+        elog(`画面を点けたまま${process.env.APP_DEVICE_QUIET === '0' ? '' : '・通知の帯をデモ表示・おやすみモード'}にしました（終われば元に戻します）`);
+        if (h.locked) {
+          log('      端末の画面のロックを解除してください（解除されるまで待ちます）');
+          const t0 = Date.now(), lim = Number(process.env.APP_UNLOCK_MS) || 120_000;
+          while (Dev.isLocked(sh) && Date.now() - t0 < lim) await sleep(2000);
+          if (Dev.isLocked(sh)) fail('端末の画面がロックされたままです', '端末のロックを解除して、もう一度（ラボは PIN を打ちません）');
+        }
+        if (!Dev.reaches(sh, real.path.hostIp)) st.notes.push(`端末から PC（${real.path.hostIp}）へ ping が届きませんでした（Wi-Fi が端末同士を隔離している / PC のファイアウォール）: LAN のワールドが見えなければ、端末のホットスポットか USB テザリングに`);
+        return;
+      }
       // the device a live session holds (app hold → `run`): used as it is, the game running or not
       if (process.env.APP_LIVE_DEVICE === '1' && !emu.started) {
         if (adb.pid() > 0) launched = true;
@@ -744,7 +833,7 @@ async function runCmd(args) {
         if (r.ok) { st.bds = { version: v, exact: v === cands[0] }; break; }
         log(`      BDS ${v} は用意できません: ${r.lines.filter((l) => /ERR|cannot|E /.test(l)).slice(0, 1).join('') || r.lines.at(-1) || '?'}`);
       }
-      if (!st.bds) st.notes.push(`アプリ ${info.versionName} に合う BDS を用意できませんでした。いまの BDS で試しました（版が違うと参加できません。--bds <版> で指定できます）`);
+      if (!st.bds) st.notes.push(`アプリ ${info.versionName} に合う BDS を用意できませんでした。いまの BDS で試しました（版が違うと参加できません。--bds <版> で指定できます${REAL ? '。端末のゲームが古いなら Play ストアで更新' : ''}）`);
       else if (!st.bds.exact) st.notes.push(`BDS ${cands[0]} が無いので、同じ系列の ${st.bds.version} を使いました`);
       stage(`[3/5] BDS ${st.bds?.version ?? '（いまのまま）'}${st.bds && !st.bds.exact ? '（同じ系列）' : ''}`);
     }
@@ -765,7 +854,7 @@ async function runCmd(args) {
     // the port BDS really took (the lab moves on when 19132 is busy): the deep link must point there
     const port = Number(readJson(BDS_LIVE)?.port) || wantPort;
     if (port !== wantPort) st.notes.push(`ポート ${wantPort} が使用中だったので、${port} で起動しました`);
-    const host = process.env.APP_HOST || '10.0.2.2', lan = appTransport() === 'lan';
+    const host = process.env.APP_HOST || (REAL ? real.path.hostIp : '10.0.2.2'), lan = appTransport() === 'lan';
     const joinTo = (h, p) => (process.env.APP_JOIN_URI || 'minecraft://connect/?serverUrl={host}&serverPort={port}').replaceAll('{host}', h).replaceAll('{port}', String(p));
     let joinUri = joinTo(host, port);
 
@@ -773,30 +862,49 @@ async function runCmd(args) {
 
     // 5. root on the device (the game's content log is in its private folder; held keys go through the input device): before
     // logcat, since adbd restarts for it. Then logcat from here on, and the steps
-    const rooted = takeRoot(adb);
-    // the join through the device's own relay (127.0.0.1 → the BDS here): the game asks a Microsoft sign-in for any other
-    // server. APP_JOIN_VIA=direct: straight to APP_HOST (a signed-in game)
-    // a controller plugged into the device (1.26's new screens take it, not taps): every press of the steps goes through it
-    { const pd = D.startPad(adb, { labDir: LAB }); log(`      ${pd.note}`, !pd.ok); }
-    // (NetherNet over LAN, the default: the game finds the server by its discovery broadcasts on UDP 7551 — carried by the
-    // reflector, the game holds that port itself)
-    if (process.env.APP_JOIN_VIA !== 'direct' && !process.env.APP_JOIN_URI) {
-      // (7551 is the game's own: its LAN discovery broadcasts are caught and sent on, not listened for — lab-relay --reflect)
-      const listen = Number(process.env.APP_RELAY_PORT) || 19132, r = D.startRelay(adb, { labDir: LAB, listen, host, port, reflect: lan ? [7551] : [] });
-      if (r.ok) { joinUri = joinTo('127.0.0.1', listen); log(`      ${r.note}`, false); }
-      else st.notes.push(`端末の中継を使えません（${r.note}）: ${lan ? 'ゲームから LAN のワールドとして見えません' : `${host} へ直接参加します（ゲームが Microsoft のサインインを求めることがあります）`}`);
+    // (a person's device: root only when adbd is root already — adb root on a phone is refused and costs half a minute)
+    const rooted = REAL ? real.facts.root === 'adb' && takeRoot(adb) : takeRoot(adb);
+    if (REAL) {
+      // the same network: the game finds the BDS by its own LAN discovery (no relay). Presses: the lab's controller with
+      // root, else the shell's (buttons as long presses: the game samples them once a frame)
+      if (real.path.control === 'pad') {
+        const pd = D.startPad(adb, { labDir: LAB });
+        log(`      ${pd.note}`, !pd.ok);
+        if (!pd.ok) { adb.padLong = process.env.APP_PAD_LONG !== '0'; st.notes.push(`端末のコントローラーを使えません（${pd.note}）: adb の入力で操作しました`); }
+      } else { adb.padLong = process.env.APP_PAD_LONG !== '0'; log(`      操作: adb の入力（キーとタップ${adb.padLong ? '。ボタンは長押し' : ''}）`, false); }
+      // (APP_DEVICE_REFLECT=1, root: a Wi-Fi that drops broadcasts but not unicast — the game's LAN discovery also sent to the
+      // PC as unicast, by the reflector)
+      if (process.env.APP_DEVICE_REFLECT === '1' && real.facts.root && lan) { const r = D.startRelay(adb, { labDir: LAB, listen: null, host, port, reflect: [7551] }); log(`      ${r.note}`, !r.ok); if (!r.ok) st.notes.push(`反射を使えません（${r.note}）`); }
+    } else {
+      // the join through the device's own relay (127.0.0.1 → the BDS here): the game asks a Microsoft sign-in for any other
+      // server. APP_JOIN_VIA=direct: straight to APP_HOST (a signed-in game)
+      // a controller plugged into the device (1.26's new screens take it, not taps): every press of the steps goes through it
+      { const pd = D.startPad(adb, { labDir: LAB }); log(`      ${pd.note}`, !pd.ok); }
+      // (NetherNet over LAN, the default: the game finds the server by its discovery broadcasts on UDP 7551 — carried by the
+      // reflector, the game holds that port itself)
+      if (process.env.APP_JOIN_VIA !== 'direct' && !process.env.APP_JOIN_URI) {
+        // (7551 is the game's own: its LAN discovery broadcasts are caught and sent on, not listened for — lab-relay --reflect)
+        const listen = Number(process.env.APP_RELAY_PORT) || 19132, r = D.startRelay(adb, { labDir: LAB, listen, host, port, reflect: lan ? [7551] : [] });
+        if (r.ok) { joinUri = joinTo('127.0.0.1', listen); log(`      ${r.note}`, false); }
+        else st.notes.push(`端末の中継を使えません（${r.note}）: ${lan ? 'ゲームから LAN のワールドとして見えません' : `${host} へ直接参加します（ゲームが Microsoft のサインインを求めることがあります）`}`);
+      }
     }
-    adb.run(['logcat', '-c']);
+    // (a person's device: its log buffers are left as they are — read from now on, never cleared)
+    if (!REAL) adb.run(['logcat', '-c']);
     lcFd = fs.openSync(logcatFile, 'w');
-    lc = spawn(adb.bin, ['-s', adb.serial, 'logcat', '-v', 'threadtime'], { stdio: ['ignore', lcFd, lcFd], env: K.cleanEnv() });
+    lc = spawn(adb.bin, ['-s', adb.serial, 'logcat', '-v', 'threadtime', ...(REAL ? ['-T', '1'] : [])], { stdio: ['ignore', lcFd, lcFd], env: K.cleanEnv() });
     stage(`[5/5] 手順 ${rel(scenarioFile)}（${steps.length} 個）`);
     const { pngDecode } = await import(pathToFileURL(path.join(TOP, 'common', 'extra.mjs')).href);
     // where the pictures come from (APP_SHOT=auto, the default): the emulator's own view of its display when it shows the
     // same picture — the host makes that PNG, while the device's screencap costs the game seconds of CPU each (2.5 s on the
     // CI device) — else the device's. Both timed once, here
-    if (!process.env.APP_SHOT || process.env.APP_SHOT === 'auto') log(`      画面の撮り方: ${pickShot(adb, pngDecode).note}`);
-    const clientLog = rooted ? new C.ClientLog(adb, K.PACKAGE) : null;
-    if (!rooted) st.notes.push('端末で root になれないので、ゲームのコンテンツログ（クライアントだけのエラー）を読めませんでした（Google APIs のイメージで動かしてください）');
+    if (REAL) log('      画面の撮り方: 端末の screencap', false);
+    else if (!process.env.APP_SHOT || process.env.APP_SHOT === 'auto') log(`      画面の撮り方: ${pickShot(adb, pngDecode).note}`);
+    // (a person's device without root: the content log in the game's external folder, when the game writes it there)
+    const clientLog = rooted || REAL ? new C.ClientLog(adb, K.PACKAGE) : null;
+    // (a person's game has its own history: an earlier session's lines in the newest content log are not this run's)
+    if (REAL && clientLog) { try { clientLog.skipExisting(); } catch { /* none yet */ } }
+    if (!rooted && !REAL) st.notes.push('端末で root になれないので、ゲームのコンテンツログ（クライアントだけのエラー）を読めませんでした（Google APIs のイメージで動かしてください）');
     let baseline = null;   // the world with nothing open (`shot world`): what `recover` brings the screen back to
     const res = await runScenario(steps, {
       adb, runDir, decode: pngDecode, pkg: K.PACKAGE, baseDir: path.dirname(scenarioFile), logcatFile, clientLog,
@@ -806,7 +914,14 @@ async function runCmd(args) {
       stopped: () => { launched = false; },   // stop: not running is expected until the next launch
       alive: () => !launched || adb.pid() > 0,
       // Android's own "isn't responding" / "keeps stopping" dialog over the game: answered (lib/android.mjs), counted in st
-      dialog: () => adb.focus().dialog, answer: (d) => D.answerDialog(adb, d), dialogs: st.dialogs, focus: () => adb.focus().window,
+      dialog: () => adb.focus().dialog, dialogs: st.dialogs, focus: () => adb.focus().window,
+      // (a person's phone: a permission is theirs to give — waited for a minute, never tapped)
+      answer: (d) => {
+        if (!(REAL && d.kind === 'permission')) return D.answerDialog(adb, d);
+        log('      端末が権限を求めています: 端末で答えてください（ラボは押しません。60 秒待ちます）');
+        for (let k = 0; k < 30 && adb.focus().dialog?.kind === 'permission'; k++) spawnSync(process.platform === 'win32' ? 'timeout' : 'sleep', ['2']);
+        return adb.focus().dialog?.kind === 'permission' ? '答えがありません（端末で答えてください）' : '端末で答えました';
+      },
       ocr: C.ocrAvailable() ? (f) => C.ocrWords(f) : null, firstScreen: emu.warm ? ready?.stamp?.firstScreen ?? null : null,
       shotTaken: (name, buf) => {
         if (/^(ui-)?world(--[\w.-]+)?$/.test(name)) baseline = buf;
@@ -844,7 +959,15 @@ async function runCmd(args) {
     // the client's own errors (the game's content log: JSON UI, packs, scripts on the client), by section
     // (no file with the game's setting on: the client logged nothing — the game makes the file at its first line)
     st.client = { ...clientErrors(res.sections, { readable: Boolean(clientLog) }), found: Boolean(clientLog?.found), enabled: clientLog ? clientLog.setting() : null };
-    if (clientLog && !clientLog.found && st.client.enabled !== true) st.notes.push(`ゲームのコンテンツログのファイルがありませんでした（${st.client.enabled === false ? 'ゲームの設定 content_log_file:0' : 'ゲームの設定を読めません'}）: クライアントのエラーは読めていません`);
+    if (clientLog?.file) st.client.source = clientLog.file.startsWith('/sdcard') ? '外部の保存先（Android/data/com.mojang.minecraftpe/files/games/com.mojang/logs）' : '内側の保存先（/data/data/com.mojang.minecraftpe/games/com.mojang/logs）';
+    else if (REAL) {
+      // no content log file the lab can read (no root, the game's storage inside): the game's own lines in logcat instead
+      // (its tag, errors and warnings; a hint only — they do not fail the run)
+      const lines = fs.existsSync(logcatFile) ? C.logcatClient(fs.readFileSync(logcatFile, 'utf8')) : [];
+      st.client.source = `logcat（ゲームのタグの E / W 行 ${lines.length} 行: 参考。失敗にはしません）`;
+      if (lines.length) { fs.writeFileSync(path.join(runDir, 'logcat-client.txt'), lines.join('\n') + '\n'); st.client.logcat = lines.slice(0, 20); }
+    }
+    if (clientLog && !clientLog.found && st.client.enabled !== true && !REAL) st.notes.push(`ゲームのコンテンツログのファイルがありませんでした（${st.client.enabled === false ? 'ゲームの設定 content_log_file:0' : 'ゲームの設定を読めません'}）: クライアントのエラーは読めていません`);
     if (st.client.errors.length) {
       const allow = o.flags.has('--allow-client-errors') || process.env.APP_CLIENT_ERRORS === 'allow';
       st.notes.push(`ゲームのコンテンツログにエラーが ${st.client.errors.length} 行あります（クライアントにしか出ないエラー。報告の「クライアントのエラー」）${allow ? '（--allow-client-errors: 失敗にはしません）' : ''}`);
@@ -854,9 +977,9 @@ async function runCmd(args) {
     const j = st.results.findIndex((r) => r.verb === 'join' && r.ok);
     const sp = j >= 0 ? st.results.slice(j).find((r) => r.verb === 'until' && /^until joined\b/.test(r.raw) && r.ok) : null;
     if (sp) {
-      st.timing.join = sp.t1 - st.results[j].t0; st.timing.fromStart = sp.t1 - emuStarted;
+      st.timing.join = sp.t1 - st.results[j].t0; if (!REAL) st.timing.fromStart = sp.t1 - emuStarted;
       const target = Number(process.env.APP_JOIN_TARGET_MS) || 30_000;
-      log(`      参加: ${(st.timing.join / 1000).toFixed(1)} 秒（参加リンク → ワールド）、端末の起動から ${(st.timing.fromStart / 1000).toFixed(1)} 秒`);
+      log(`      参加: ${(st.timing.join / 1000).toFixed(1)} 秒（参加リンク → ワールド）${st.timing.fromStart ? `、端末の起動から ${(st.timing.fromStart / 1000).toFixed(1)} 秒` : ''}`);
       if (st.timing.join > target) st.notes.push(`参加に ${(st.timing.join / 1000).toFixed(1)} 秒かかりました（目標 ${target / 1000} 秒）${emu.warm ? '' : ': 準備済みの端末（node lab.mjs app prepare）なら、起動済みのゲームから参加します'}`);
     }
   } catch (e) {
@@ -1962,6 +2085,7 @@ async function uiCmd(args) {
   // other shapes (--sizes 1024x768,2400x1080 / --cutouts tall,hole; on GitHub the knobs APP_UI_SIZES / APP_UI_CUTOUTS)
   let vars = [];
   try { vars = U.variants({ sizes: o.opts['--sizes'] ?? process.env.APP_UI_SIZES ?? '', cutouts: o.opts['--cutouts'] ?? process.env.APP_UI_CUTOUTS ?? '' }); } catch (e) { fail(e.message, 'node lab.mjs app ui -a <アドオン> --sizes 1024x768,2400x1080 --cutouts tall,hole'); }
+  if (vars.length && REAL) fail(`本物の端末（${REAL.name}）では画面の形を変えません: --sizes / --cutouts（APP_UI_SIZES / APP_UI_CUTOUTS）`, 'ほかの形はエミュレータで（--device emu）');
   if (vars.length) head.push(`# ほかの形でも全部: ${vars.map((v) => v.id).join(' ')}`);
   const text = head.join('\n') + '\n' + U.suiteScenario({ screens: mine, start: start && k === 1, serverUi, vars });
   if (o.flags.has('--list')) { out(text); return; }
@@ -2358,20 +2482,266 @@ async function redroidCmd(args) {
   fail(`知らない redroid のコマンド ${sub}`, 'node lab.mjs app redroid help');
 }
 
+// ---- the person's own devices (phones, tablets: root or not, USB or Wi-Fi): lib/device.mjs ----
+// Only devices added here are ever touched: `list` shows what adb sees and runs nothing on a device that is not added.
+const DEVICE_HELP = `app device: 自分の Android 端末（スマホ・タブレット。root あり・なし × USB・Wi-Fi）で app run / ui
+  device [list]                     登録した端末と、いま adb に見えている端末（登録していない端末では何も実行しません）
+  device add <名前> [--serial <s>]  端末を調べて登録: つなぎ方・Android・CPU・root・ゲーム・画面・ネットワーク → 使う道と理由
+  device path <名前>                調べ直して、使う道・理由・足りないこと（端末から PC へ届くかも）
+  device pair <IP:ポート> [--connect <IP:ポート>]   Android 11 以上: 端末の「ワイヤレス デバッグ」→「ペア設定コードによる
+                                    デバイスのペア設定」の IP:ポート。6 桁のコードはその場で聞いて使うだけ（どこにも残しません）
+  device connect <IP:ポート>        Wi-Fi でつなぐ（ワイヤレス デバッグの画面の IP アドレスとポート）
+  device tcpip <名前>               Android 10 以下: USB でつないだ端末を Wi-Fi（5555）へ
+  device tether <名前> [off]        USB テザリングを adb から試す（効かない端末は、端末の設定で入れる）
+  device restore <名前> [--wifi-off]   端末の設定（画面の点けっぱなし・通知）とラボが置いたものを元に戻す（run が途中で
+                                    止まったとき。普段は run の終わりに自動）。--wifi-off: ワイヤレス デバッグも切る
+  device forget <名前> [--force]    登録を消す（戻していない設定があれば先に restore。端末が無いなら --force で値ごと）
+  使う: node lab.mjs app run|ui -a <アドオン> --device <名前>（APP_DEVICE=<名前> でも）
+  ・ゲームは端末に Play ストアで入れたもの（ラボは APK を入れません）。BDS はゲームの版に合わせます
+  ・参加は同じネットワーク（Wi-Fi・USB テザリング・端末のホットスポット）で LAN のワールドとして: root も中継も要りません
+  ・操作: root（adbd か su）があればラボのコントローラー（uinput: x86_64・arm64 用をここで作る。arm64 は NDK か zig か
+    clang+lld）、無ければ adb の入力（ボタンは長押し: APP_PAD_LONG=0 で短く）
+  ・run の間だけ: 画面を点けたまま・通知の帯をデモ表示・おやすみモード（APP_DEVICE_QUIET=0 で変えない）。終われば元に戻し、
+    置いたもの（コントローラー）も消します。端末の画面の形・回線を変える手順（size density cutout network）は使えません`;
+function adbBin() { return D.tools().adb ?? fail('adb がありません', 'Android SDK の platform-tools を入れる（node lab.mjs app setup）か、APP_ADB に adb の場所を書く'); }
+const linkJa = (l) => (l === 'wifi' ? 'Wi-Fi' : l === 'emulator' ? 'エミュレータ' : 'USB');
+function showPath(name, facts, p) {
+  out(`${name}: ${facts.model ?? '?'}（${facts.maker ?? '?'}）Android ${facts.android ?? '?'}・${facts.abi ?? '?'}・${linkJa(facts.link)}・root ${facts.root ?? 'なし'}・ゲーム ${facts.game?.versionName ?? 'なし'}${facts.screen ? `・画面 ${facts.screen.w}x${facts.screen.h}` : ''}`);
+  out(`  道: ${p.key}（${p.join === 'lan' ? `同じネットワーク（${p.via === 'tether' ? 'USB テザリング' : 'Wi-Fi'}）で LAN のワールドとして参加` : '参加できる道がまだありません'}・操作 ${p.control === 'pad' ? 'ラボのコントローラー' : 'adb の入力'}・コンテンツログ ${p.logs === 'any' ? '内側と外部の保存先' : '外部の保存先か logcat'}）`);
+  p.why.forEach((w) => out(`  ・${w}`));
+  p.todo.forEach((t) => out(`  → ${t}`));
+}
+function needDevice(name) {
+  if (!name) fail('端末の名前が要ります', `登録した端末: ${Object.keys(Dev.registry(DEVICES).devices).join(' ') || 'なし（node lab.mjs app device add <名前>）'}`);
+  return Dev.resolve(DEVICES, name) ?? fail(`端末 ${name} は登録されていません`, `登録: node lab.mjs app device add ${Dev.validName(name) ? name : '<名前>'}（いまの一覧: node lab.mjs app device list）`);
+}
+/** an added device online, looked at again (facts kept), and its way → { bin, serial, facts, path } */
+async function deviceNow(dev, { log = out } = {}) {
+  const bin = adbBin();
+  spawnSync(bin, ['start-server'], { timeout: 30_000, env: K.cleanEnv() });
+  const on = await Dev.online(bin, DEVICES, dev);
+  if (!on.ok) fail(on.note, dev.link === 'wifi' || Dev.linkOf(dev.serial) === 'wifi' ? `端末の「ワイヤレス デバッグ」を入れて、node lab.mjs app device connect <IP:ポート>（初めてなら device pair）` : 'USB でつなぎ直す（端末の USB デバッグを入れて許可）');
+  if (on.note) log(`  ${on.note}`);
+  const facts = Dev.probe(bin, on.serial);
+  Dev.writeFacts(DEVICES, dev.name, facts);
+  // (APP_TRANSPORT=raknet APP_HOST=<address>: the person's own way to the PC — Tailscale, a VPN — for a signed-in game)
+  const direct = process.env.APP_TRANSPORT === 'raknet' && process.env.APP_HOST ? process.env.APP_HOST : null;
+  return { bin, serial: on.serial, facts, path: Dev.choosePath(facts, Dev.hostAddrs(), { wsl: Dev.isWsl(), direct }) };
+}
+/** the pairing code: asked on the terminal (hidden), or the first line of what is piped in — used at once, never kept */
+async function pairingCode() {
+  if (process.stdin.isTTY || process.env.LAB_ASK_FILE) return ask('端末に出ている 6 桁のペア設定コード: ', { secret: true });
+  const chunks = []; for await (const c of process.stdin) chunks.push(c);
+  return Buffer.concat(chunks).toString('utf8').split(/\r?\n/)[0].trim();
+}
+const wifiNote = '使い終わったら端末の「ワイヤレス デバッグ」を切ってください（node lab.mjs app device restore <名前> --wifi-off でも切れます）';
+/** a device's own serial number (getprop ro.serialno: the one property read on a device that is not added yet) */
+const hwOf = (bin, serial) => String(spawnSync(bin, ['-s', serial, 'shell', 'getprop ro.serialno'], { encoding: 'utf8', timeout: 20_000, env: K.cleanEnv() }).stdout ?? '').trim() || null;
+/** a device added before, back on another address or port (wireless debugging picks one each time): found by its own serial
+ *  number and rebound; else the next step */
+function rebindKnown(bin, serial) {
+  const hw = hwOf(bin, serial) ?? /^adb-(.+?)-[^-.]+\._adb-tls-connect\._tcp/.exec(serial)?.[1] ?? null;
+  const back = hw && Object.keys(Dev.registry(DEVICES).devices).find((n) => Dev.readFacts(DEVICES, n)?.hw === hw);
+  if (back) { Dev.rebind(DEVICES, back, serial); out(`  登録した端末 ${back} を ${serial} につなぎ替えました`); }
+  else out(`次: node lab.mjs app device add <名前> --serial ${serial}`);
+}
+async function deviceCmd(args) {
+  const sub = args.shift() ?? 'list';
+  if (sub === 'help' || sub === '--help') return out(DEVICE_HELP);
+  if (sub === 'list' || sub === 'scan') {
+    const o = parse(args);
+    if (o.rest.length) fail(`知らない指定 ${o.rest.join(' ')}`, 'node lab.mjs app device list');
+    const bin = adbBin();
+    spawnSync(bin, ['start-server'], { timeout: 30_000, env: K.cleanEnv() });
+    const seen = Dev.listDevices(bin), reg = Dev.registry(DEVICES).devices, names = Object.keys(reg);
+    const known = (s) => names.find((n) => reg[n].serial === s.serial || (Dev.readFacts(DEVICES, n)?.hw && s.serial.startsWith(`adb-${Dev.readFacts(DEVICES, n).hw}-`)));
+    out(names.length ? '登録した端末:' : '登録した端末はありません（node lab.mjs app device add <名前>）');
+    for (const n of names) {
+      const d = reg[n], s = seen.find((x) => known(x) === n), f = Dev.readFacts(DEVICES, n);
+      out(`  ${n.padEnd(12)} ${s ? s.state === 'device' ? 'つながっています' : s.state : 'つながっていません'}  ${d.model ?? '?'} Android ${d.android ?? '?'}  ${linkJa(Dev.linkOf(s?.serial ?? d.serial))} ${s?.serial ?? d.serial}${f?.game ? `  ゲーム ${f.game.versionName}` : ''}${Dev.pendingRestore(DEVICES, n) ? '  ⚠ 設定を戻していません（device restore）' : ''}`);
+    }
+    const others = seen.filter((x) => !known(x));
+    if (others.length) {
+      out('adb に見えている、登録していない端末（何も実行していません）:');
+      others.forEach((x) => out(`  ${x.serial}  ${x.state}  ${linkJa(x.link)}${x.model ? `  ${x.model}` : ''}`));
+      if (others.some((x) => x.link !== 'emulator')) out('  登録: node lab.mjs app device add <名前> --serial <シリアル>');
+    }
+    return;
+  }
+  if (sub === 'add') {
+    const o = parse(args, { opts: ['--serial'] });
+    const name = o.rest[0] ?? fail('名前が要ります', 'node lab.mjs app device add <名前> [--serial <シリアル>]（名前: 英小文字・数字・- _）');
+    if (o.rest.length > 1) fail(`知らない指定 ${o.rest.slice(1).join(' ')}`, 'node lab.mjs app device add <名前> [--serial <シリアル>]');
+    if (!Dev.validName(name) || ['emu', 'redroid'].includes(name)) fail(`名前 ${name} は使えません`, '英小文字・数字・- _ で 32 文字まで（emu・redroid はラボの端末の名前）');
+    if (Dev.registry(DEVICES).devices[name]) fail(`${name} は登録済みです`, `調べ直す: node lab.mjs app device path ${name}（別の端末にするなら device forget ${name} の後で）`);
+    const bin = adbBin();
+    spawnSync(bin, ['start-server'], { timeout: 30_000, env: K.cleanEnv() });
+    const seen = Dev.listDevices(bin);
+    let serial = o.opts['--serial'];
+    if (!serial) {
+      const ready = seen.filter((d) => d.state === 'device' && d.link !== 'emulator');
+      if (ready.length !== 1) fail(ready.length ? `つながっている端末が ${ready.length} 台あります` : 'つながっている端末がありません', ready.length ? `--serial で選んでください: ${ready.map((d) => d.serial).join(' ')}` : 'USB でつなぐ（端末の開発者向けオプションで USB デバッグを入れて許可）か、Wi-Fi なら node lab.mjs app device pair <IP:ポート>');
+      serial = ready[0].serial;
+    }
+    const s = seen.find((d) => d.serial === serial);
+    if (!s) fail(`${serial} は adb に見えていません`, '見えている端末: node lab.mjs app device list');
+    if (s.link === 'emulator') fail(`${serial} はエミュレータです`, 'エミュレータは --device emu（既定）で使います');
+    if (s.state === 'unauthorized') fail(`${serial} がまだ adb を許可していません`, '端末の画面の「USB デバッグを許可しますか？」で許可してから、もう一度');
+    if (s.state !== 'device') fail(`${serial} は ${s.state} です`, 'つなぎ直してから、もう一度（node lab.mjs app device list）');
+    out(`${serial} を調べます（読むだけ: getprop・id・dumpsys package・wm size・ip addr。root の確かめで su を 1 回呼ぶことがあります）`);
+    const facts = Dev.probe(bin, serial);
+    try { Dev.addDevice(DEVICES, name, facts); } catch (e) { fail(e.message, 'node lab.mjs app device list'); }
+    const p = Dev.choosePath(facts, Dev.hostAddrs(), { wsl: Dev.isWsl() });
+    out(`OK 登録しました: ${name}`);
+    showPath(name, facts, p);
+    out(p.ok ? `次: node lab.mjs app run -a <アドオン> --device ${name}` : `次: 上の → をしてから node lab.mjs app device path ${name}`);
+    return;
+  }
+  if (sub === 'path') {
+    const o = parse(args);
+    const dev = needDevice(o.rest[0]);
+    const r = await deviceNow(dev);
+    showPath(dev.name, r.facts, r.path);
+    if (r.path.join === 'lan') {
+      const sh = (c) => { const x = spawnSync(r.bin, ['-s', r.serial, 'shell', c], { encoding: 'utf8', timeout: 20_000, env: K.cleanEnv() }); return { status: x.status, out: String(x.stdout ?? '') }; };
+      out(Dev.reaches(sh, r.path.hostIp) ? `  ・端末から PC（${r.path.hostIp}）へ ping が届きます` : `  ⚠ 端末から PC（${r.path.hostIp}）へ ping が届きません: Wi-Fi が端末同士を隔離している（ゲスト用など）か、PC のファイアウォールが ping を止めています。参加できなければ端末のホットスポットか USB テザリングに`);
+    }
+    out(r.path.ok ? `次: node lab.mjs app run -a <アドオン> --device ${dev.name}` : '次: 上の → をしてから、もう一度 device path');
+    if (!r.path.ok) process.exitCode = 1;
+    return;
+  }
+  if (sub === 'forget') {
+    const o = parse(args, { flags: ['--force'] });
+    const dev = needDevice(o.rest[0]);
+    const pending = Dev.pendingRestore(DEVICES, dev.name);
+    try { Dev.forgetDevice(DEVICES, dev.name, { force: o.flags.has('--force') }); } catch (e) { fail(e.message, `node lab.mjs app device restore ${dev.name}（端末をつないで）`); }
+    out(`OK ${dev.name} の登録を消しました（端末には何もしていません${pending ? '。戻していなかった設定の値も消しました: 端末の 画面の消灯・おやすみモード を確かめてください' : ''}）`);
+    return;
+  }
+  if (sub === 'pair') {
+    const o = parse(args, { opts: ['--connect'] });
+    const hp = o.rest[0] ?? fail('IP:ポートが要ります', '端末の 設定 → 開発者向けオプション → ワイヤレス デバッグ → ペア設定コードによるデバイスのペア設定 に出る IP アドレスとポート');
+    const bin = adbBin();
+    spawnSync(bin, ['start-server'], { timeout: 30_000, env: K.cleanEnv() });
+    const code = await pairingCode();
+    const r = Dev.pair(bin, hp, code);
+    if (!r.ok) fail(r.note, 'コードは数十秒で変わります: 端末の画面を開き直して、もう一度');
+    out(`OK ${r.note}`);
+    // the connection: the address given, else wireless debugging's own announcement (mDNS) on the same IP, else adb's
+    // automatic connect after pairing (a serial adb-<number>-<random>._adb-tls-connect._tcp)
+    const ip = hp.split(':')[0];
+    // (only what is at that IP: another phone's wireless debugging on the same network is not this one)
+    const mdns = () => Dev.parseMdns(spawnSync(bin, ['mdns', 'services'], { encoding: 'utf8', timeout: 15_000, env: K.cleanEnv() }).stdout).filter((x) => x.type === '_adb-tls-connect._tcp' && x.hostPort.startsWith(`${ip}:`));
+    let c = o.opts['--connect'] ? Dev.connect(bin, o.opts['--connect']) : null;
+    if (!c) { const m = mdns()[0]; if (m) c = Dev.connect(bin, m.hostPort); }
+    let serial = c?.ok ? c.serial : null;
+    for (let k = 0; !serial && k < 5; k++) {
+      const here = mdns().map((x) => x.name);
+      const d = Dev.listDevices(bin).find((x) => x.state === 'device' && (x.serial.startsWith(`${ip}:`) || here.some((n) => x.serial.startsWith(`${n}.`))));
+      if (d) serial = d.serial; else await sleep(1000);
+    }
+    if (!serial) { out('まだつながっていません: ワイヤレス デバッグの画面の「IP アドレスとポート」で node lab.mjs app device connect <IP:ポート>'); return; }
+    out(`OK つながりました: ${serial}`);
+    rebindKnown(bin, serial);
+    out(wifiNote);
+    return;
+  }
+  if (sub === 'connect') {
+    const o = parse(args);
+    const hp = o.rest[0] ?? fail('IP:ポートが要ります', 'ワイヤレス デバッグの画面の「IP アドレスとポート」（Android 10 以下は device tcpip の後の <IP>:5555）');
+    const bin = adbBin();
+    const c = Dev.connect(bin, hp);
+    if (!c.ok) fail(c.note, '初めての端末なら先に node lab.mjs app device pair <ペア設定の IP:ポート>');
+    out(`OK ${c.note}`);
+    rebindKnown(bin, c.serial);
+    out(wifiNote);
+    return;
+  }
+  if (sub === 'tcpip') {
+    const o = parse(args, { opts: ['--port'] });
+    const dev = needDevice(o.rest[0]);
+    if (Dev.linkOf(dev.serial) !== 'usb') fail(`${dev.name} は USB でつながっていません（${dev.serial}）`, 'adb tcpip は USB でつないだ端末から入れます（Android 11 以上なら device pair）');
+    const bin = adbBin();
+    const r = Dev.tcpip(bin, dev.serial, { port: Number(o.opts['--port']) || 5555 });
+    if (!r.ok) fail(r.note, 'Wi-Fi につないだ端末を USB でつないだまま、もう一度');
+    Dev.rebind(DEVICES, dev.name, r.serial);
+    out(`OK ${r.note}: ${dev.name} は Wi-Fi（${r.serial}）で使います。USB を抜いても使えます`);
+    out('使い終わったら: node lab.mjs app device restore ' + dev.name + ' --wifi-off（端末の adb を USB に戻します）');
+    return;
+  }
+  if (sub === 'tether') {
+    const o = parse(args);
+    const dev = needDevice(o.rest[0]);
+    const off = o.rest[1] === 'off';
+    if (o.rest[1] && !off) fail(`知らない指定 ${o.rest[1]}`, `node lab.mjs app device tether ${dev.name} [off]`);
+    if (Dev.linkOf(dev.serial) !== 'usb') fail(`${dev.name} は USB でつながっていません`, 'USB テザリングは USB でつないだ端末で');
+    const bin = adbBin(), facts = Dev.readFacts(DEVICES, dev.name) ?? {};
+    out(off ? 'USB の働きを元に戻します' : 'USB テザリングを adb から試します（USB が一瞬切れて、つながり直します）');
+    const r = await Dev.tether(bin, dev.serial, { on: !off, before: facts.usbBefore ?? null });
+    if (!off && r.was && !facts.usbBefore) Dev.writeFacts(DEVICES, dev.name, { ...facts, usbBefore: r.was });
+    if (!r.ok) fail(r.note, `入れた後に: node lab.mjs app device path ${dev.name}`);
+    out(`OK ${r.note}`);
+    if (!off) out(`次: node lab.mjs app device path ${dev.name}（PC 側にも USB のネットワークが出ていれば、同じネットワークになります）`);
+    return;
+  }
+  if (sub === 'restore') {
+    const o = parse(args, { flags: ['--wifi-off'] });
+    const dev = needDevice(o.rest[0]);
+    const bin = adbBin();
+    const on = await Dev.online(bin, DEVICES, dev, { waitMs: 3000 });
+    if (!on.ok) fail(on.note, 'つないでから、もう一度（戻す値は app/.lab/devices に残っています）');
+    const adb = new D.Adb({ bin, serial: on.serial }), facts = Dev.readFacts(DEVICES, dev.name) ?? {};
+    // (the phone at that address must be the one added: an address can be another phone's now — nothing is done on that one)
+    const hw = hwOf(bin, on.serial);
+    if (facts.hw && hw && facts.hw !== hw) fail(`${on.serial} にいるのは ${dev.name} ではありません（端末のシリアル ${hw}、登録は ${facts.hw}）`, `${dev.name} をつないでから、もう一度（node lab.mjs app device list）`);
+    adb.su = facts.root === 'su' ? (facts.su ?? '-c') : false;
+    const sh = (c) => { const x = adb.run(['shell', c], { timeout: 20_000 }); return { status: x.status, out: x.stdout }; };
+    const r = Dev.releaseDevice(sh, DEVICES, dev.name, { hw });
+    D.clearDevice(adb);
+    if (r.failed.length) {
+      out(`E 戻せなかった設定: ${r.failed.join('、')}${r.done.length ? `（戻したもの: ${r.done.join('、')}）` : ''}`);
+      out(`  → つないだまま、もう一度 node lab.mjs app device restore ${dev.name}（戻す値は app/.lab/devices に残っています）`);
+      process.exitCode = 1;
+    } else out(r.done.length ? `OK 戻しました: ${r.done.join('、')}。ラボが置いたもの（/data/local/tmp/lab-*）も消しました` : 'OK 戻す設定はありませんでした（ラボが置いたものは消しました）');
+    if (o.flags.has('--wifi-off')) {
+      // (afterwards the device is looked for on USB again: its USB serial is its own serial number)
+      const toUsb = () => { if (facts.hw) Dev.rebind(DEVICES, dev.name, facts.hw); };
+      if (Dev.linkOf(on.serial) !== 'wifi') out('（USB でつながっています: ワイヤレス デバッグはそのまま）');
+      else if (/:5555$/.test(on.serial)) {
+        const u = adb.run(['usb'], { timeout: 20_000 });
+        if (u.status === 0) { toUsb(); out('OK 端末の adb を USB に戻しました（Wi-Fi の 5555 は閉じました）'); } else { out(`E adb usb が失敗しました: ${String(u.stderr || u.stdout).trim().slice(0, 160)}（端末を再起動しても USB に戻ります）`); process.exitCode = 1; }
+      } else {
+        sh('settings put global adb_wifi_enabled 0'); toUsb();
+        out('OK ワイヤレス デバッグを切りました（この接続も切れます）');
+      }
+    }
+    return;
+  }
+  fail(`知らない device のコマンド ${sub}`, 'node lab.mjs app device help');
+}
+
 // ---- main ----
 const argv0 = process.argv.slice(2);
 const cmd = argv0.shift();
 // run / ui on the redroid device: --device redroid (or APP_DEVICE=redroid), handed to app/redroid as a whole
+// (--device <name>: a device the person added — app device add — instead of the emulator)
 let argv = argv0, onRedroid = false, badDevice = null;
 if (cmd === 'run' || cmd === 'ui') {
   const d = (await redroidMod()).deviceOf(argv0);
-  if (!['emu', 'redroid'].includes(d.device)) badDevice = String(d.device);
   argv = d.argv;
   onRedroid = d.device === 'redroid';
+  if (!['emu', 'redroid'].includes(d.device)) { REAL = Dev.resolve(DEVICES, String(d.device)); if (!REAL) badDevice = String(d.device); }
+}
+// screen / tap / key / text on a person's device: --device <name> (only when it is written: the emulator otherwise)
+if (['screen', 'tap', 'key', 'text'].includes(cmd) && argv0.includes('--device')) {
+  const i = argv0.indexOf('--device'), n = String(argv0[i + 1] ?? '');
+  argv = [...argv0.slice(0, i), ...argv0.slice(i + 2)];
+  if (n !== 'emu') { REAL = Dev.resolve(DEVICES, n); if (!REAL) badDevice = n || '（名前なし）'; }
 }
 try {
-  if (badDevice) fail(`--device ${badDevice} は使えません`, '--device emu（エミュレータ、既定）/ redroid（コンテナの Android: node lab.mjs app redroid help）');
+  if (badDevice) fail(`--device ${badDevice} は使えません`, `--device emu（エミュレータ、既定）/ redroid（コンテナの Android: node lab.mjs app redroid help）/ 登録した端末の名前（${Object.keys(Dev.registry(DEVICES).devices).join(' ') || 'まだありません: node lab.mjs app device add <名前>'}）`);
   if (onRedroid) await redroidCmd([cmd, ...argv]);
+  else if (cmd === 'device') await deviceCmd(argv);
   else if (!cmd || cmd === 'status' || cmd === 'doctor') statusCmd();
   else if (cmd === 'help' || cmd === '--help' || cmd === '-h') out(HELP);
   else if (cmd === 'setup') await setupCmd(argv);

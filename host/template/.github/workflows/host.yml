@@ -1,0 +1,60 @@
+name: bds-lab host
+# GitHub Actions time a lender lends to one person's bds-lab (docs/guide/host.md). The person — a collaborator here, signed
+# in to GitHub as themselves — pushes their lab to a lab/run-* branch and starts this by hand (workflow_dispatch); only the
+# jobs the default branch's .lab-host.json allows run, within its hours and until its date. The minutes count to this
+# repository's owner. No secret is used or needed: the Minecraft server comes from Mojang's own download on the runner. No
+# cache: nothing of one run (the server, a unit) is left in the lender's storage for the next.
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'gate | gate-all | test | go | sim | upkeep | dev-bds'
+        required: true
+        type: string
+      unit:
+        description: 'the unit (bds/addons/<name>) for test / go / sim'
+        required: false
+        type: string
+        default: ''
+      request:
+        description: "the lab's request id (r<date>-<time>-<hex>)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bds-lab-host
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      # the lender's rules as the default branch has them (not the pushed branch's copy)
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .host-main
+          sparse-checkout: .lab-host.json
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+      - name: the job
+        run: node lab.mjs host __job
+        env:
+          HOST_JOB: ${{ inputs.job }}
+          HOST_UNIT: ${{ inputs.unit }}
+          HOST_REQUEST: ${{ inputs.request }}
+          HOST_RULES: .host-main/.lab-host.json
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: host-result-${{ inputs.request }}
+          path: host-result/
+          if-no-files-found: ignore
+          retention-days: 7

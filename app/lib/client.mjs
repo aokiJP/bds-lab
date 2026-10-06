@@ -215,6 +215,9 @@ export const LOG_DIR = (pkg) => `/data/data/${pkg}/games/com.mojang/logs`;
 export const LOG_DIRS = (pkg) => [`/sdcard/Android/data/${pkg}/files/games/com.mojang/logs`, LOG_DIR(pkg)];
 /** a content log line's level (pure): [2026-10-03 09:00:00:123 ERROR] [UI] … → 'error' | 'warn' | 'info' | null */
 export function logLevel(line) { const m = /^\s*\[[^\]]*?\b(ERROR|WARN(?:ING)?|INFO|VERBOSE|INFORM)\]/i.exec(line) ?? /\b(ERROR|WARN(?:ING)?)\b/.exec(line); return m ? (/^ERR/i.test(m[1]) ? 'error' : /^WARN/i.test(m[1]) ? 'warn' : 'info') : null; }
+/** the game's own lines in a logcat (-v threadtime): its tag at error or warning level (pure) — what a device without a
+ *  readable content log file still says (a hint: the lab does not fail a run on them) */
+export const logcatClient = (text) => String(text).split('\n').filter((l) => /^\S+\s+\S+\s+\d+\s+\d+\s+[EW]\s+(MinecraftPE|Minecraft)\s*:/.test(l)).map((l) => l.trim());
 /** reads the content log file the game is writing, from where it was last read (root: the app's private folder) */
 export class ClientLog {
   constructor(adb, pkg) { this.adb = adb; this.pkg = pkg; this.file = null; this.pos = 0; this.all = []; this.found = false; this.enabled = null; }
@@ -229,6 +232,13 @@ export class ClientLog {
     const r = this.adb.run(['shell', `ls -t ${LOG_DIRS(this.pkg).map((d) => `${d}/*.txt`).join(' ')} 2>/dev/null | head -1`], { timeout: 15_000 });
     const n = r.stdout.trim().split('\n')[0]?.trim();
     return n && n.endsWith('.txt') ? n : null;
+  }
+  /** a person's device: what the newest content log holds already is an earlier session's, not this run's (read from here) */
+  skipExisting() {
+    const f = this.newest();
+    if (!f) return;
+    const n = Number(this.adb.run(['shell', `wc -c < '${f}' 2>/dev/null`], { timeout: 15_000 }).stdout.trim());
+    if (Number.isFinite(n) && n > 0) { this.file = f; this.pos = n; }
   }
   /** the lines added since the last read ([] when there is no content log yet) */
   read() {

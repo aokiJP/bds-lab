@@ -1,5 +1,54 @@
 # bds-lab の変更
 
+## v1.23.0 (2026-10-06)
+**自分の Android 端末（root あり・なし × USB・Wi-Fi）で app ラボを、他の人の配布アドオン（最新の BDS で動くものだけ）を借りて直して学ぶ道を、知り合いが貸してくれる GitHub Actions の時間でラボの試験を。**
+
+### 自分の端末で app ラボ（`node lab.mjs app device …`、`app run|ui --device <名前>`）
+- `app device` は adb に見えている端末を並べるだけで、**登録していない端末では何も実行しない**。`device add <名前>` が読むだけのコマンドで調べて（つなぎ方・Android・CPU・root（adbd か su）・ゲームの版・画面・ネットワーク）、使う道を決めて理由と足りないことを言う（`device path` で調べ直し）。
+- 参加はゲーム自身の LAN の見つけ方で: 端末と PC が同じネットワーク（Wi-Fi・USB テザリング・端末のホットスポット）なら root も中継も要らない。adb の転送は TCP だけでゲームは UDP なので、同じネットワークが無いときは何をすればよいかを先に言う（テザリング・ホットスポット・ゲスト Wi-Fi の隔離・WSL2 の mirrored・Microsoft のサインイン）。端末から PC へ ping が届くかも見る。
+- ゲームは端末に Play ストアで入れたもの（ラボは APK もアカウントも入れない）。BDS はその版に合わせる。
+- 操作: root があればエミュレータで確かめたラボのコントローラー（uinput）。**lab-pad を arm64 でも動くように**（x86_64 と arm64 のシステムコール、カーネルのヘッダーを使わない `app/relay/lab-uinput.h`: 試験でカーネルの値と突き合わせる）。arm64 用は Android NDK・zig（`pip install ziglang`）・cross gcc・clang+lld のどれかでこの PC で作る（lab-relay も NDK・zig・cross gcc で arm64 に）。root が無ければ adb の入力で、ボタンは長押し（ゲームは 1 フレームに 1 回ボタンを読む）。
+- run の間だけ画面を点けたまま・通知の帯をデモ表示・おやすみモード（`APP_DEVICE_QUIET=0` で変えない）。**変える前の値を先にファイルに書く**ので、途中で殺された run も次の run か `device restore` が元に戻す（読めなかった値には触らない）。ゲームは run が起動したときだけ止め、置いたものは消す。画面の形・回線を変える手順（size density cutout network、`ui --sizes`）は使わない。画面がロックされていれば解除を待つ（PIN は打たない）。
+- Wi-Fi: `device pair <IP:ポート>`（Android 11 以上。6 桁のコードはその場で聞いて使うだけで、どこにも残さない: 試験で全ファイルと出力を探す）・`device connect`・`device tcpip`（Android 10 以下）。ワイヤレス デバッグはつなぐたびにポートが変わるので、端末のシリアル番号（mDNS の名前にも入る）で探してつなぎ直す。`device tether`（USB テザリングを adb から試す）・`device restore [--wifi-off]`・`app screen|tap --device <名前>`。
+- 報告に「道」（root か・USB か Wi-Fi か・入り方・操作・ログ）と、コンテンツログを読んだ場所（外部の保存先・内側・読めなければ logcat のゲームの行: 参考）を書く。
+- 戻すところを固く: 戻せなかった設定（Wi-Fi が切れた等）は記録に残して `device restore` が続きから（全部戻ったときだけ記録を消し、失敗なら終了コード 1）。値は端末のシリアル番号つきで、別の端末には当てない。戻す値が残っている端末は `device forget` しない（端末が無いなら `--force` で値ごと）。読めなかった値・空の値には触らない。デモ表示は SystemUI がまだ受けるうちに先に抜ける。
+- 端末の su の形（Magisk などの `su -c`・AOSP の `su 0`）を覚えてその形で動かす。端末の logcat は消さず run の始まりから読み、run の前からあったコンテンツログはこの run のものにしない。許可のダイアログは押さない（人が押すのを待つ）。ラボが置いたものは run がどう終わっても消す。adb には秘密の環境変数を渡さない。
+- Wi-Fi: `device tcpip` は Wi-Fi（とホットスポット）のアドレスがあるときだけ切り替える（モバイル回線・VPN には切り替えない）。`device connect`・`pair` が登録していない端末で読むのはシリアル番号だけ。ペア設定のコードは adb の標準入力へ（プロセスの一覧にも出ない）。mDNS で探すのは同じ IP のものだけ。Wi-Fi から USB に戻った端末もシリアル番号で見つけ、`restore --wifi-off` の後は USB で探す。
+- 同じネットワークが無いときの案に、Tailscale・VPN などで届くなら `APP_TRANSPORT=raknet APP_HOST=<アドレス>`（アドレスで参加）。
+
+### 他の人のアドオンを借りる（`node lab.mjs colony harvest`）
+- アドオンのカテゴリから、**種（--seed）で決まる無作為な**ページと記事を、**一度も見ていないものだけ**取り、最新の BDS でそのまま動くものだけを `bds/addons/borrowed_<記事>` に残す: この BDS に無いモジュールの版が無い（brief）・パックの JSON（check）・下書きの試験（入口を 1 回ずつ）が本物の BDS で E 行なしに通る（sim は目安として記録。`--sim-only` はそう言う）。
+- 取る前にふるう: Java・ボタン無し・知らないファイルの置き場・古い版の記事。RISK のあるもの（HTTP の送信・/op・eval・難読化）は動かす前に落とし、スクリプトの無いものは `--any` のときだけ。アクセスは今の礼儀のまま、1 回の上限（`--max-requests 40`）を数えて言う。
+- **見た記録 `auto/borrowed-seen.jsonl`**: 記事の番号・ファイルの sha256・パックの UUID と版・残した/落とした・段階・理由（中身は入れない）。同じ記事も、同じファイルの再投稿も二度と取らない。`--retry` は新しい BDS で、落とした中で BDS が変われば変わりうるもの（brief・check・sim・real）だけを試し直す。
+- 残したものは作者のもの: imported.json の `borrowed`（記事・作者・**記事に書かれた決まり**（二次配布・改変・クレジット…、コメント欄は読まない））・borrowed.json（判定）・元のファイルを読み取り専用で（sha256 つき）。`colony borrowed`・`colony diff`（元からの差分）・`colony borrow <file>`（ほかのサイトから手で取ったファイルに同じ判定）。
+- **配る道はすべて止まる**: `share`（見本に入れても）・`ship`・`publish`・`bundle`（`--skip-borrowed` で除いて作る）・`host`。.gitignore にも入れた。本物の BDS で、動くもの（DONE までの判定）と読み込みで落ちるもの（real で落とす）を確かめた。
+- 判定の途中（数分）のユニットにも、取り込んだその時に借りたものの印を付ける。印のほか名前（`borrowed_…`）と元のファイル（`.borrowed/`）でも見分けるので、途中のものも配る道で止まる。Ctrl+C・kill で止めると、判定中のユニットとダウンロードを消し、今のユニットを戻す。
+- すでにある `borrowed_<記事>` は消さない（その記事は飛ばす: 手を入れたものかもしれない）。手で借りたものは `borrowed_m_<名前>`。記事の番号は数字だけを受け取る（消すフォルダの名前になるので）。
+- .mcpack を束ねた .mcaddon（上に manifest.json が無い、よくある形）もアドオンとして判定する。`--retry` でも別の記事の同じファイル・同じパックは見たものとする。`--fresh` でも記事のページは 1 回だけ取る。
+- `colony diff` は他の人の zip の名前（`../`・絶対パス・中の .mcpack の名前）で展開先の外へ書かない。印の original がユニットの `.borrowed/` の外を指していれば従わない。
+
+### GitHub の時間を借りる（`node lab.mjs host …`、docs/guide/host.md）
+- 貸し手は自分のアカウントに host/template から private のリポジトリを作り（`host template`）、あなたを collaborator に招き、`.lab-host.json`（1 か月の分・許す仕事・時間帯・最後の日・連絡先）を書く。ラボは**あなた自身の gh のログイン**で使う（アカウントを増やさない・貸し手にログインしない・鍵を受け取らない）。分は貸し手（リポジトリの持ち主）に付く。
+- `host add`（書き込めるか・決まりが正しいか・host.yml がひな形と同じか）→ `host run <job> [-a <unit>]`: ラボ（リリースと同じ中身、ラボ自身の CI は入れない）とユニットを `lab/run-<番号>` に送る → host.yml を始める → 待つ → 結果（JSON と伏せ字のログ）→ 請求される分を `auto/host-ledger.jsonl` へ → 枝を消す。途中で切れても `host results` が続きから受け取る。
+- 予算: 上限の **80%** で止める（今月の分 + この仕事の見込み）・同じホストで 1 つずつ・許す仕事・時間帯・期限の外では頼まない・月の区切りは貸し手の時間帯で。止まったら理由と、ほかのホストか自分の場の案を出す。
+- 送る前の検査: share と同じ秘密の検査、`.env`・鍵・BDS の zip・借りたアドオン・app ラボの結果・大きすぎるファイル → 何も送らずに止まり、ファイルを言う（秘密そのものは出さない）。ホストの側でも既定の枝の `.lab-host.json` で仕事・時間帯・期限を確かめる（host.yml: workflow_dispatch・`contents: read`・SHA 固定・入力は env だけ・actionlint）。
+- `host report`（貸し手への月の報告: 数だけ。`--issue` は確かめてから書く）。自動操縦: `auto policy gateOn=auto|<owner/repo>` でラボ自身への変更の gate をホストで（落ちたか使えなければ手元の gate が決める）、`auto gate --on`、`node lab.mjs auto` にホストごとの分。
+- 貸し手の側を固く: 403/404 は 2 回続けてから使わなくする（1 回目はその回だけ。また見えれば使う）。レート制限・組織の SSO・回線の不調は貸し手のせいにしない。書き込めない・アーカイブされた・`.lab-host.json` が無いか正しくない → 直るまで止める（前の決まりで続けない: 貸し手が止めたのかもしれない）。
+- 実行を「無くした」とするのは GitHub が「無い」と答えたときだけ。見つけた実行の番号は台帳に書き、次からはそれを見に行く。
+- ラボ自身の CI は `.lab-github/` に入れて送る（GitHub はそこから何も始めない。ラボの試験はそこも読む）: ホストで gate が通る（送る中身そのもので lint-offline を確かめる）。ホストの gate はあなたの `auto policy` の一覧。
+- ユニットのファイルも share が配らないものは送らない。`.env.*`・鍵（.pem .key .p12 .pfx・SSH の鍵）・認証のファイルで止める。秘密の検査は名前によらず小さな文字のファイル全部（.mcfunction も）。host.yml からキャッシュを外した（貸し手の場に前の run のものを残さない）。
+
+### ほか
+- BDS が落ちた直後（終わりがまだ見えていないとき）にコマンドを送ると、書き込みの EPIPE でラボごと落ち、「落ちた」と報告できないことがあった（tests/offline.mjs が時々落ちた）: 送り先が無ければ書かない。
+- `brief`（`import` の後も）が「この BDS に無いモジュールの版」を、BDS をまだ入れていないラボでも言う（版の表はサーバー無しで分かる。型の検査だけがセットアップを要る）。リリースを展開しただけの場所で、harvest がよその版の beta を残していた。
+
+### 確かめたこと
+- オフライン試験 全 40 本（`node lab.mjs auto gate --all`）が通る: device-offline 23・colony-offline 84・host-offline 18・app-offline 98・offline 68 ほか。見直しで直したところ（上の各節の「固く」）にはそれぞれ試験を足した（偽の adb・偽の gh・偽のサイトで。外へは 1 回もつながない）。
+- ESLint（バグだけを見る設定）でリポジトリ全体、actionlint で host.yml。ホストへ送る中身そのもので lint-offline が通ること。
+- 本物の BDS 1.26.52.3: `tests/dev-bds.mjs`、`colony borrow` の判定（動くものは本物の BDS の試験まで通って残り、読み込みで落ちるものは real で落ちる）。
+- arm64: lab-pad と lab-relay を zig・clang+lld で作り、qemu-aarch64 で動かした。lab-pad の uinput の値はカーネルのヘッダーと一致。
+- まだ確かめていないこと（あなたの PC で）: 本物の端末での 4 つの道（root あり・なし × USB・Wi-Fi）、本物のサイトでの `colony harvest`、本物の貸し手のリポジトリでの `host run`。
+
 ## v1.22.0 (2026-10-06)
 **クラフターズコロニーの配布物を扱う `colony` を戻して、本物のワールドが読めるようにした。使われていない部分は別の zip へ、内側のループ（sim・試験・CI）は速く、見本は直した。**
 

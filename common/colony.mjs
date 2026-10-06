@@ -7,6 +7,8 @@
 //   install <file|post> [--dir <minecraftWorlds>] [--name n] · packs <file|post> [--sim] [--ticks n]
 //   import <file|post> ["<request>"] [--pack <name>] [--name n]   its addon (or the world's behavior pack) as a unit
 //   voxel <file|post> [--radius n] [--height n] [--out course.json]   the terrain around spawn → a sandbox course
+//   harvest [--n 5] [--seed s] [--max-requests 40] [--retry] …   other people's addons never seen before that work on the
+//     latest BDS, kept as borrowed units (common/borrow.mjs: seen record, the mark, the guards) · borrowed · diff · borrow
 // Read-only and polite: one request per 2.5–5 s and at most 80 an hour, remembered across runs (.lab/colony/throttle.json);
 // pages are kept an hour (--fresh asks again). Never likes, counts views, comments or posts (site.js says why).
 // Downloads go to .lab/colony/<post>/ (node lab.mjs clean --deep removes them). <post> is a number or the post's URL.
@@ -37,12 +39,19 @@ const USAGE = `usage: node lab.mjs colony <command> (Crafters Colony, minecraft-
   packs <file|post> [--sim] [--ticks n]         the packs inside a world; --sim runs each behavior pack in the sandbox
   import <file|post> ["<request>"] [--pack p] [--name n]   its addon (or the world's behavior pack) as a unit here
   voxel <file|post> [--radius n] [--height n] [--out f]    the terrain around spawn as a sandbox course (course.json)
+  harvest [--n 5] [--seed s] [--max-requests 40] [--min-version 1.21] [--worlds] [--any] [--allow-risk] [--retry] [--sim-only]
+                                                random addon posts never seen before → kept only if they work on this BDS
+                                                (brief, schemas, sim, the draft tests on a real BDS): bds/addons/borrowed_<post>
+  borrowed                                      the borrowed units: where from, the post's rules, the verdict
+  diff <unit|post>                              a borrowed unit against its original file (what you changed)
+  borrow <file> [--url u] [--author a] [--sim-only]   the same verdict for a file you got from another site (by hand)
+  (borrowed units are someone else's: run, fix and learn here; share / ship / publish / bundle / host never carry them)
 <post>: the number in the post's URL (https://minecraft-mcworld.com/<post>/) or the URL itself; <file>: a path, or a post you got`;
 
 // ---------------------------------------------------------------- arguments
 function parse(args) {
   const flags = {}, pos = [];
-  const VAL = new Set(['--cat', '--page', '--sort', '--type', '--max-mb', '--out', '--chunker', '--format', '--dir', '--name', '--ticks', '--radius', '--height', '--pack']);
+  const VAL = new Set(['--cat', '--page', '--sort', '--type', '--max-mb', '--out', '--chunker', '--format', '--dir', '--name', '--ticks', '--radius', '--height', '--pack', '--n', '--seed', '--max-requests', '--min-version', '--url', '--author']);
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (VAL.has(a)) { flags[a.slice(2)] = args[++i]; continue; }
@@ -83,8 +92,9 @@ async function cached(key, fresh, get) {
   return v;
 }
 async function post(id, fresh = false) {
-  const S = await site(), c = await client();
-  return cached(`post-${id}`, fresh, async () => S.parsePost(await c.html(`${S.ORIGIN}/${id}/`), id));
+  const S = await site(), c = await client(), B = await import('./borrow.mjs');
+  // (the rules the page states about its files — 二次配布・改変 … — go with it: a borrowed unit carries them)
+  return cached(`post-${id}`, fresh, async () => { const html = await c.html(`${S.ORIGIN}/${id}/`); return { ...S.parsePost(html, id), rules: B.rulesOf(html) }; });
 }
 async function catId(v) {
   if (v == null || v === true) return null;
@@ -217,28 +227,40 @@ class TransformCount extends Transform {
   _transform(chunk, _e, cb) { this.n += chunk.length; this.onCount(this.n); if (this.n > this.max) cb(new Error(`over --max-mb ${Math.round(this.max / 1e6)} while downloading (say a larger --max-mb)`)); else cb(null, chunk); }
 }
 
-async function getCmd({ pos, flags }, out) {
-  const id = postId(pos[0]);
-  if (!id) { out('usage: node lab.mjs colony get <post> [--type mcworld|mcaddon|mcpack|zip] [--max-mb n]'); return false; }
-  const S = await site(), p = await post(id, !!flags.fresh);
+// a post's file, downloaded and checked: { p, file, bytes, info, check, dir } (kinds: the order of what to take first; got: the
+// post already read — harvest's — not asked for again)
+async function download(id, { type, maxMb, fresh = false, kinds = null, got: p0 = null } = {}, out = () => {}) {
+  // (a post is a number: it names a folder here, and a folder is deleted by it)
+  if (!/^\d{1,12}$/.test(String(id))) throw new Error(`post ${String(id).slice(0, 40)} is not a post number`);
+  const S = await site(), p = p0 ?? await post(id, fresh);
   if (!p.buttons.length) throw new Error(`post ${id} has no download button (its files are linked in its text: ${p.url})`);
-  const want = flags.type && String(flags.type).toLowerCase();
-  // a file the site or a known file host serves; .mcworld before .zip (a zip often holds the world one folder down)
-  const order = (b) => (want && b.kind !== want ? 9 : 0) + (b.dest && !b.hosted ? 4 : 0) + (['mcworld', 'mcaddon', 'mcpack'].includes(b.kind) ? 0 : b.kind === 'zip' ? 1 : 2);
+  const want = type && String(type).toLowerCase();
+  // a file the site or a known file host serves; .mcworld before .zip (a zip often holds the world one folder down);
+  // kinds (harvest): only those, in that order
+  const order = (b) => (want && b.kind !== want ? 9 : 0) + (kinds && !kinds.includes(b.kind) ? 9 : 0) + (b.dest && !b.hosted ? 4 : 0) + (kinds ? kinds.indexOf(b.kind) : ['mcworld', 'mcaddon', 'mcpack'].includes(b.kind) ? 0 : b.kind === 'zip' ? 1 : 2);
   const b = [...p.buttons].sort((x, y) => order(x) - order(y))[0];
   if (want && b.kind !== want) throw new Error(`post ${id} has no ${want} button (it has: ${p.buttons.map((x) => x.kind).join(', ')})`);
   if (b.dest && !b.hosted) throw new Error(`its download is on another site (${b.dest}): open it, save the file, then node lab.mjs colony inspect <file>`);
-  const dir = path.join(DIR(), id), maxBytes = (Number(flags['max-mb']) || 1024) * 1e6;
+  const dir = path.join(DIR(), id), maxBytes = (Number(maxMb) || 1024) * 1e6;
   out(`get ${id} "${p.title}" — ${b.kind}${b.dest ? ` from ${new URL(b.dest).hostname}` : ' from the site'} …`);
   const got = await fetchFile(b.dest ? S.directUrl(b.dest) : b.dlUrl, dir, `${id}.${['mcworld', 'mcaddon', 'mcpack'].includes(b.kind) ? b.kind : 'zip'}`, { maxBytes, referer: p.url });
   const W = await imp('world.js');
   let check;
   try { check = await W.verify(got.file); } catch (e) { check = { error: e.message }; }
   const info = await W.inspect(got.file).catch((e) => ({ kind: 'unknown', error: e.message }));
-  writeJson(path.join(dir, 'info.json'), { post: { id, title: p.title, url: p.url, author: p.author?.name ?? null, cats: p.catNames, info: p.info, description: p.description }, file: got.file, bytes: got.bytes, from: got.url, at: new Date().toISOString(), sha256: info.sha256 ?? null, kind: info.kind, check });
-  out(`OK ${path.relative(process.env.LAB_CALLER_CWD ?? process.cwd(), got.file) || got.file} (${kb(got.bytes)})${check.error ? ` — W the zip is damaged: ${check.error} (get it again with --fresh, or from the post's page)` : `, ${check.entries} entries, CRC ok`}`);
-  report(info, got.file, out, id);
-  return !check.error;
+  writeJson(path.join(dir, 'info.json'), { post: { id, title: p.title, url: p.url, author: p.author?.name ?? null, cats: p.catNames, info: p.info, description: p.description, rules: p.rules ?? [] }, file: got.file, bytes: got.bytes, from: got.url, at: new Date().toISOString(), sha256: info.sha256 ?? null, kind: info.kind, check });
+  return { p, file: got.file, bytes: got.bytes, info, check, dir };
+}
+async function getCmd({ pos, flags }, out) {
+  const id = postId(pos[0]);
+  if (!id) { out('usage: node lab.mjs colony get <post> [--type mcworld|mcaddon|mcpack|zip] [--max-mb n]'); return false; }
+  // (looked at before by harvest: said, not refused — a person asking for this post gets it)
+  const B = await import('./borrow.mjs'), was = B.seenAs(B.seenIndex(B.readSeen()), { post: id });
+  if (was) out(`W seen before (${String(was.rec.at).slice(0, 10)}: ${was.rec.result}${was.rec.reason ? ` — ${was.rec.reason}` : ''}; auto/borrowed-seen.jsonl)`);
+  const g = await download(id, { type: flags.type, maxMb: flags['max-mb'], fresh: !!flags.fresh }, out);
+  out(`OK ${path.relative(process.env.LAB_CALLER_CWD ?? process.cwd(), g.file) || g.file} (${kb(g.bytes)})${g.check.error ? ` — W the zip is damaged: ${g.check.error} (get it again with --fresh, or from the post's page)` : `, ${g.check.entries} entries, CRC ok`}`);
+  report(g.info, g.file, out, id);
+  return !g.check.error;
 }
 
 // what a file is, and the one next step for it
@@ -363,9 +385,241 @@ async function voxelCmd({ pos, flags }, out) {
   return true;
 }
 
+// ---------------------------------------------------------------- borrowing: harvest, borrowed, diff, borrow (common/borrow.mjs)
+const UNITS_DIR = () => path.join(TOP, 'bds', 'addons');
+const bdsNow = () => process.env.LAB_BORROW_BDS || (() => { try { return fs.readFileSync(path.join(TOP, 'bds', 'vendor', 'bds-version.txt'), 'utf8').trim(); } catch { return null; } })();
+// the lab itself, as a child (its own output kept): import, check, sim, test. Then a turn of the event loop: a Ctrl+C that
+// stopped the child is handled there (the unit being judged removed), before the next step starts
+async function labRun(args, timeout = 600_000) {
+  const r = spawnSync(process.execPath, [path.join(TOP, 'lab.mjs'), ...args], { cwd: TOP, encoding: 'utf8', timeout, killSignal: 'SIGKILL', maxBuffer: 64e6, env: { ...process.env, LAB_NOTRACE: '1', LAB_CALLER_CWD: TOP, LAB_GO_WHY: 'off' } });
+  await new Promise((res) => setImmediate(res));
+  return { ok: r.status === 0, lines: `${r.stdout ?? ''}${r.stderr ?? ''}`.split('\n').filter((l) => l.trim()) };
+}
+// an .mcaddon of .mcpack files (no manifest.json at its top: a common shape) is an addon too, by the packs inside → info
+async function asAddon(file, info) {
+  if (info.kind !== 'unknown') return info;
+  const B = await import('./borrow.mjs'), packs = await B.packIds(file).catch(() => []);
+  return packs.length ? { ...info, kind: 'addon', packed: true } : info;
+}
+const firstBad = (r) => (r.lines.find((l) => /^(E |✘ |ERR |FAIL|die:)/.test(l)) ?? r.lines.at(-1) ?? '?').slice(0, 220);
+/** does this addon file work on the latest BDS, as it is? → { kept, stage, reason, steps, unit }. The four checks, in order of
+ *  cost: no module version this BDS lacks (the brief), the packs' JSON (schemas, check), the sandbox (sim: a hint, recorded)
+ *  and the draft tests on a fresh real BDS (each way in once; any E line fails) — the real server decides; --sim-only: the
+ *  sandbox alone, said so. A risky addon (scan) is dropped before anything runs it unless allowRisk */
+async function judge(file, { unit, request, meta = {}, simOnly = false, allowRisk = false, worlds = false }, say = () => {}) {
+  const W = await imp('world.js'), SC = await import('./scan.mjs'), B = await import('./borrow.mjs'), steps = {};
+  let check; try { check = await W.verify(file); } catch (e) { check = { error: e.message }; }
+  if (check.error) return { stage: 'file', reason: `壊れた zip（${String(check.error).slice(0, 120)}）`, steps };
+  const info = await asAddon(file, await W.inspect(file).catch((e) => ({ kind: 'unknown', error: e.message })));
+  const world = info.kind === 'bedrock-world' && (info.packs ?? []).some((x) => x.startsWith('behavior_packs/'));
+  if (!(info.kind === 'addon' || (worlds && world))) return { stage: 'kind', reason: info.kind === 'bedrock-world' ? `ワールド${world ? '（--worlds で、その中のビヘイビアパックも）' : '（ビヘイビアパックなし）'}` : info.kind === 'java-world' ? 'Java 版のワールド' : `アドオンではない（${info.kind}）`, steps };
+  const sc = SC.scanPath(file);
+  steps.scan = sc.risks.length ? `RISK ${sc.risks.map(([w]) => w.split(':')[0]).join(' ')}` : 'ok';
+  if (sc.risks.length && !allowRisk) return { stage: 'scan', reason: `RISK: ${sc.risks.map(([w]) => w).join(' / ').slice(0, 200)}（--allow-risk で試す）`, steps };
+  say(`  import → bds/addons/${unit}`);
+  const r1 = await labRun(['colony', 'import', file, request, '--name', unit]);
+  if (!fs.existsSync(path.join(UNITS_DIR(), unit, 'bp'))) return { stage: 'import', reason: firstBad(r1), steps, unit };
+  // (marked at once: while it is judged — minutes — and if this is killed, the guards stop it like a kept one)
+  B.markPending(path.join(UNITS_DIR(), unit), meta);
+  const miss = r1.lines.find((l) => /✗ not in this BDS/.test(l));
+  steps.brief = miss ? miss.replace(/^modules: /, '') : (r1.lines.find((l) => /^on stable /.test(l)) ?? 'ok').slice(0, 200);
+  if (miss) return { stage: 'brief', reason: `この BDS に無いモジュールの版: ${miss.replace(/^modules: /, '').slice(0, 180)}`, steps, unit };
+  say('  check（パックの JSON・組み立て）');
+  const r2 = await labRun(['bds', 'check', '-a', unit]);
+  steps.check = r2.ok ? 'OK' : firstBad(r2);
+  if (!r2.ok) return { stage: 'check', reason: firstBad(r2), steps, unit };
+  say('  sim（サンドボックス: 目安）');
+  const r3 = await labRun(['bds', 'sim', '-a', unit], 300_000);
+  steps.sim = (r3.lines.find((l) => /^(PASS|FAIL) sim/.test(l)) ?? (r3.ok ? 'PASS' : 'FAIL')).replace(/ \(sandbox.*$/, '');
+  if (simOnly) return r3.ok ? { kept: true, stage: 'sim', steps, unit, note: 'sim だけ（本物の BDS では確かめていません）' } : { stage: 'sim', reason: firstBad(r3), steps, unit };
+  say('  test（下書きの試験を本物の BDS で）');
+  const r4 = await labRun(['bds', 'test', '-a', unit], 900_000);
+  steps.real = r4.lines.find((l) => /^(PASS|FAIL) \d+\/\d+/.test(l)) ?? (r4.ok ? 'PASS' : 'FAIL');
+  if (!r4.ok && r4.lines.some((l) => /cannot download BDS|no server here|network blocked/i.test(l))) return { stage: 'real', reason: 'この PC に BDS がありません（node lab.mjs bds、または --sim-only）', steps, unit, fatal: true };
+  if (!r4.ok) return { stage: 'real', reason: firstBad(r4), steps, unit };
+  return { kept: true, stage: 'real', steps, unit };
+}
+// (only a borrowed unit's own folder, by a name that is one: a unit this run made — never one that was there before it)
+const dropUnit = (unit) => { if (unit && /^borrowed_[a-z0-9_]+$/.test(unit)) fs.rmSync(path.join(UNITS_DIR(), unit), { recursive: true, force: true }); };
+// Ctrl+C or a kill while a unit is judged: that unit and its download go, the current unit is put back, then the exit
+function onStop(state) {
+  const h = (sig) => { try { dropUnit(state.unit); if (state.dir) fs.rmSync(state.dir, { recursive: true, force: true }); restoreCurrent(state.was); } finally { process.exit(sig === 'SIGINT' ? 130 : 143); } };
+  process.once('SIGINT', h); process.once('SIGTERM', h);
+  return () => { process.off('SIGINT', h); process.off('SIGTERM', h); };
+}
+const currentUnit = () => { try { return fs.readFileSync(path.join(TOP, 'bds', '.lab', 'addon'), 'utf8'); } catch { return null; } };
+const restoreCurrent = (was) => { const f = path.join(TOP, 'bds', '.lab', 'addon'); if (was === null) fs.rmSync(f, { force: true }); else fs.writeFileSync(f, was); };
+const verdictLine = (v) => Object.entries(v.steps ?? {}).map(([k, x]) => `${k} ${x}`).join(' · ');
+
+async function harvestCmd({ flags }, out) {
+  const B = await import('./borrow.mjs'), S = await site(), c = await client();
+  const n = Math.max(1, Number(flags.n) || 5), budget = Math.max(1, Number(flags['max-requests']) || 40);
+  const seed = flags.seed && flags.seed !== true ? String(flags.seed) : B.newSeed(), rand = B.rng(seed);
+  const mv = /^(\d+)\.(\d+)(?:\.(\d+))?$/.exec(String(flags['min-version'] ?? '1.21'));
+  if (!mv) throw new Error('--min-version is like 1.21 or 1.21.50');
+  const minVersion = [Number(mv[1]), Number(mv[2]), Number(mv[3] ?? 0)], kinds = flags.worlds ? ['mcaddon', 'mcpack', 'zip', 'mcworld'] : ['mcaddon', 'mcpack', 'zip'];
+  const bds = bdsNow(), seen = B.readSeen();
+  let idx = B.seenIndex(seen);
+  // (what this harvest records counts at once: the same file posted twice in one harvest is caught too)
+  const remember = (rec) => { seen.push(B.addSeen(rec)); idx = B.seenIndex(seen); };
+  // the request budget: every request this harvest makes (pages kept an hour cost nothing), under the site's own pace
+  let used = 0;
+  const raw0 = c.raw.bind(c);
+  c.raw = async (...a) => { if (used >= budget) throw Object.assign(new Error('budget'), { budget: true }); used++; return raw0(...a); };
+  out(`harvest: seed ${seed} · ${n} 個まで · アクセス ${budget} 回まで（2.5〜5 秒に 1 回、1 時間に 80 回）· BDS ${bds ?? '?'}${flags['sim-only'] ? ' · sim だけ' : ''}${flags.retry ? ' · --retry: 新しい BDS で落としたものを試し直す' : ''}`);
+  const was = currentUnit(), kept = [], dropped = [];
+  // (what is being judged now: removed if this is stopped — Ctrl+C, a kill — with the current unit put back)
+  const now = { unit: null, dir: null, was }, unhook = onStop(now);
+  // the candidates: random pages of the addon categories in the seed's order, each page's posts shuffled; --retry: what
+  // a newer BDS may change, in the seed's order
+  const cats = [20, 22, 23];
+  async function* candidates() {
+    if (flags.retry) { for (const r of B.shuffle(B.retryable(seen, bds), rand)) yield { id: String(r.post), title: r.title ?? '', retry: r }; return; }
+    const pageOf = (pg) => cached(`harvest-${cats.join('_')}-${pg}`, !!flags.fresh, async () => { const x = await S.restIndex(c, { cat: cats.join(','), page: pg, pages: 1, perPage: 20, fields: 'id,link,date,modified,title,categories' }); return { totalPages: x.totalPages ?? 1, posts: x.posts.map((p) => ({ id: p.id, title: p.title, date: p.date })) }; });
+    const first = await pageOf(1);
+    for (const pg of B.shuffle(Array.from({ length: Math.max(1, first.totalPages) }, (_, i) => i + 1), rand)) {
+      const list = pg === 1 ? first : await pageOf(pg);
+      for (const p of B.shuffle(list.posts, rand)) yield p;
+    }
+  }
+  const drop = (id, title, stage, reason, extra = {}) => { dropped.push({ id, title, stage, reason }); remember({ post: id, title, result: 'dropped', stage, reason, bds, ...extra }); out(`DROP ${id} ${title ? `"${title.slice(0, 40)}" ` : ''}— ${stage}: ${reason}`); };
+  let stopped = null;
+  try {
+    for await (const cand of candidates()) {
+      if (kept.length >= n) break;
+      const id = String(cand.id);
+      // (a post is a number: it names folders here that are deleted by it)
+      if (!/^\d{1,12}$/.test(id)) continue;
+      if (!cand.retry && B.seenAs(idx, { post: id })) continue;
+      let p;
+      try { p = await post(id, !!flags.fresh); } catch (e) { if (e.budget) throw e; drop(id, cand.title, 'page', String(e.message).slice(0, 120)); continue; }
+      const why = B.prefilter(p, { kinds, minVersion });
+      if (why) { drop(id, p.title, 'prefilter', why); continue; }
+      // (a unit of that name is already here — kept before, maybe with your fixes in it: never replaced)
+      const unit = `borrowed_${id}`;
+      if (fs.existsSync(path.join(UNITS_DIR(), unit))) { drop(id, p.title, 'exists', `bds/addons/${unit} があります（前に残したもの: そのまま）`); continue; }
+      let g;
+      now.dir = path.join(DIR(), id);
+      try { g = await download(id, { fresh: !!flags.fresh, kinds, got: p }, () => {}); }
+      catch (e) { fs.rmSync(path.join(DIR(), id), { recursive: true, force: true }); now.dir = null; if (e.budget) throw e; drop(id, p.title, 'download', String(e.message).split('\n')[0].slice(0, 160)); continue; }
+      const info = await asAddon(g.file, g.info), packs = info.kind === 'addon' ? await B.packIds(g.file).catch(() => []) : [];
+      // (--retry looks at a post again, never at the same content posted as another one)
+      const again = B.seenAs(idx, { sha256: info.sha256, packs }, { except: cand.retry ? id : null });
+      if (again) { drop(id, p.title, 'seen', `同じ中身を見ています（記事 ${again.rec.post}、${again.by}）`, { sha256: info.sha256, packs }); fs.rmSync(g.dir, { recursive: true, force: true }); now.dir = null; continue; }
+      // (scripts are what there is to debug and learn from: an addon without one only with --any)
+      if (info.kind === 'addon' && packs.length && !packs.some((x) => x.script) && !flags.any) { drop(id, p.title, 'kind', 'スクリプトの無いアドオン（--any で残す）', { sha256: info.sha256, packs }); fs.rmSync(g.dir, { recursive: true, force: true }); now.dir = null; continue; }
+      out(`TRY  ${id} "${p.title.slice(0, 50)}"${p.author?.name ? ` by ${p.author.name}` : ''} (${kb(g.bytes)})`);
+      const request = `借りたアドオン（${p.url}${p.author?.name ? `、作者 ${p.author.name}` : ''}）: 最新の BDS で動かし、壊れたところを直して学ぶ。配り直さない${p.rules?.length ? `（記事の決まり: ${p.rules.slice(0, 3).join(' / ')}）` : '（記事に決まりの記載なし: 手元で使うだけ）'}`;
+      now.unit = unit;
+      const v = await judge(g.file, { unit, request, meta: { site: 'colony', post: id, url: p.url, title: p.title, author: p.author?.name ?? null }, simOnly: !!flags['sim-only'], allowRisk: !!flags['allow-risk'], worlds: !!flags.worlds }, out);
+      if (v.fatal) { dropUnit(v.unit); fs.rmSync(g.dir, { recursive: true, force: true }); now.unit = now.dir = null; stopped = v.reason; break; }
+      if (!v.kept) { dropUnit(v.unit); fs.rmSync(g.dir, { recursive: true, force: true }); now.unit = now.dir = null; drop(id, p.title, v.stage, v.reason, { sha256: info.sha256, packs }); continue; }
+      B.markUnit(path.join(UNITS_DIR(), unit), { site: 'colony', post: id, url: p.url, title: p.title, author: p.author?.name ?? null, rules: p.rules ?? [], file: g.file, sha256: info.sha256, packs, verdict: { bds, ...v.steps, ...(v.note ? { note: v.note } : {}) } });
+      fs.rmSync(g.dir, { recursive: true, force: true });
+      now.unit = now.dir = null;
+      remember({ post: id, title: p.title, result: 'kept', stage: v.stage, reason: v.note ?? 'latest BDS: brief · check · test', bds, sha256: info.sha256, packs, unit });
+      kept.push({ id, title: p.title, unit, author: p.author?.name ?? null, rules: p.rules ?? [], v });
+      out(`KEEP ${id} → bds/addons/${unit} — ${verdictLine(v)}${v.note ? `（${v.note}）` : ''}`);
+    }
+  } catch (e) { if (e.budget) stopped = `アクセスの上限 ${budget} 回`; else throw e; }
+  finally { c.raw = raw0; if (now.unit) dropUnit(now.unit); if (now.dir) fs.rmSync(now.dir, { recursive: true, force: true }); restoreCurrent(was); unhook(); }
+  out('');
+  out(`harvest seed ${seed}: 残した ${kept.length} / 落とした ${dropped.length} · アクセス ${used}/${budget}${stopped ? ` · 止めた理由: ${stopped}` : kept.length >= n ? '' : ' · 候補を見尽くしました'}`);
+  for (const k of kept) out(`  KEPT ${k.id.padEnd(7)} bds/addons/${k.unit}  ${k.title.slice(0, 40)}${k.author ? ` (by ${k.author})` : ''}${k.rules.length ? `  決まり: ${k.rules[0].slice(0, 40)}` : ''}`);
+  const byStage = dropped.reduce((m, d) => ({ ...m, [d.stage]: (m[d.stage] ?? 0) + 1 }), {});
+  if (dropped.length) out(`  落とした理由: ${Object.entries(byStage).map(([k, x]) => `${k} ${x}`).join(' · ')}（auto/borrowed-seen.jsonl に記録: 同じものは二度取りません）`);
+  if (kept.length) out(`next: node lab.mjs go -a ${kept[0].unit}（直したところは node lab.mjs colony diff ${kept[0].unit}）。借りたものは配りません: share・ship・publish・bundle・host は止まります`);
+  else out(`next: もう一度（別の seed）か --max-requests を増やす${dropped.some((d) => RETRY_HINT.has(d.stage)) ? '。新しい BDS の後は --retry' : ''}`);
+  return !stopped || kept.length > 0;
+}
+const RETRY_HINT = new Set(['brief', 'check', 'sim', 'real']);
+async function borrowedCmd(_, out) {
+  const B = await import('./borrow.mjs'), list = B.borrowedUnits();
+  if (!list.length) { out('借りたユニットはありません（node lab.mjs colony harvest）'); return true; }
+  for (const u of list) {
+    const v = (() => { try { return JSON.parse(fs.readFileSync(path.join(u.dir, 'borrowed.json'), 'utf8')).verdict ?? {}; } catch { return {}; } })();
+    out(`${u.rel}  ${u.mark.title ?? ''}${u.mark.author ? ` by ${u.mark.author}` : ''}  ${u.mark.url ?? u.mark.site}  ${String(u.mark.at).slice(0, 10)}`);
+    out(`  決まり: ${u.mark.rules?.length ? u.mark.rules.join(' / ') : '記載なし（手元で使うだけ）'}`);
+    out(`  判定: ${Object.entries(v).map(([k, x]) => `${k} ${x}`).join(' · ') || '?'}`);
+  }
+  out(`${list.length} 個。どれも作者のもの: 手元で動かして直して学ぶだけ（配りません）`);
+  return true;
+}
+async function diffCmd({ pos }, out) {
+  const B = await import('./borrow.mjs');
+  const name = pos[0] ? (postId(pos[0]) && !fs.existsSync(path.join(UNITS_DIR(), pos[0])) ? `borrowed_${postId(pos[0])}` : pos[0]) : null;
+  if (!name || !/^[a-z0-9_]+$/.test(name)) { out('usage: node lab.mjs colony diff <unit|post>'); return false; }
+  const dir = path.join(UNITS_DIR(), name), orig = B.originalOf(dir);
+  // the original unpacked the way import did (one level of .mcpack inside), its packs matched to bp/ rp/ by UUID. Someone
+  // else's zip: every name is checked — nothing absolute, no "..", and each file (a nested pack's too) inside one folder
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-colony-diff-')), Z = await imp('zip.js'), root = path.resolve(tmp, 'orig');
+  try {
+    const plain = (n) => n && !n.includes('\0') && !path.isAbsolute(n) && !/^[a-zA-Z]:/.test(n) && !/(^|[\\/])\.\.([\\/]|$)/.test(n);
+    const inside = (f) => path.resolve(f).startsWith(root + path.sep);
+    const unpack = (buf, to, depth = 0) => {
+      const list = Z.listEntries(buf);
+      for (const e of list) {
+        if (e.dir || !plain(e.name)) continue;
+        const d = Z.readByName(buf, list, e.name);
+        if (depth < 1 && /\.(mcpack|zip)$/i.test(e.name)) { const sub = path.join(to, e.name.replace(/\.(mcpack|zip)$/i, '')); if (inside(sub)) unpack(d, sub, depth + 1); continue; }
+        const f = path.join(to, e.name);
+        if (!inside(f)) continue;
+        fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, d);
+      }
+    };
+    unpack(fs.readFileSync(orig), root);
+    const mans = (d) => { const o = []; const w = (x) => { for (const e of fs.readdirSync(x, { withFileTypes: true })) { const p = path.join(x, e.name); if (e.isDirectory()) w(p); else if (e.name === 'manifest.json') o.push(p); } }; w(d); return o; };
+    const uuidOf = (f) => { try { return String(JSON.parse(fs.readFileSync(f, 'utf8').replace(/^﻿/, '')).header.uuid).toLowerCase(); } catch { return null; } };
+    let changed = 0;
+    for (const k of ['bp', 'rp']) {
+      const mine = path.join(dir, k);
+      if (!fs.existsSync(mine)) continue;
+      const src = mans(path.join(tmp, 'orig')).find((m) => uuidOf(m) === uuidOf(path.join(mine, 'manifest.json')));
+      if (!src) { out(`${k}: 元のファイルに同じ UUID のパックがありません`); continue; }
+      // (both sides side by side here, so the diff's paths read a/orig/bp/… b/now/bp/…)
+      fs.cpSync(path.dirname(src), path.join(tmp, 'cmp', 'orig', k), { recursive: true });
+      fs.cpSync(mine, path.join(tmp, 'cmp', 'now', k), { recursive: true });
+      const g = (a) => spawnSync('git', ['diff', '--no-index', ...a, '--', `orig/${k}`, `now/${k}`], { cwd: path.join(tmp, 'cmp'), encoding: 'utf8' });
+      const st = g(['--stat']);
+      if (st.error) { out(`git がありません: 元のファイルは ${shown(orig)}`); return true; }
+      if (!st.stdout.trim()) { out(`${k}: 元のまま`); continue; }
+      changed++;
+      out(`${k}:`); st.stdout.trim().split('\n').forEach((l) => out('  ' + l));
+      g([]).stdout.split('\n').slice(0, 400).forEach((l) => out(l));
+    }
+    out(changed ? `元: ${shown(orig)}（sha256 一致）` : `元のまま（${shown(orig)}、sha256 一致）`);
+    return true;
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+async function borrowCmd({ pos, flags }, out) {
+  const B = await import('./borrow.mjs'), f = fileOf(pos[0]);
+  const W = await imp('world.js'), info = await asAddon(f, await W.inspect(f));
+  const packs = info.kind === 'addon' ? await B.packIds(f).catch(() => []) : [];
+  const was = B.seenAs(B.seenIndex(B.readSeen()), { sha256: info.sha256, packs });
+  if (was && !flags.retry) out(`W 同じ中身を見ています（${String(was.rec.at).slice(0, 10)} ${was.rec.result}${was.rec.reason ? `: ${was.rec.reason}` : ''}）: もう一度試します`);
+  // (borrowed_m_…: a file got by hand never takes the name a harvested post would have, borrowed_<post>)
+  const unit = `borrowed_m_${String(flags.name && flags.name !== true ? flags.name : info.sha256.slice(0, 10)).toLowerCase().replace(/[^a-z0-9_]+/g, '_').slice(0, 40)}`;
+  if (fs.existsSync(path.join(UNITS_DIR(), unit))) throw new Error(`bds/addons/${unit} exists (--name <other>, or remove it first)`);
+  const url = flags.url && flags.url !== true ? String(flags.url) : null, author = flags.author && flags.author !== true ? String(flags.author) : null;
+  const request = `借りたアドオン（${url ?? path.basename(f)}${author ? `、作者 ${author}` : ''}）: 最新の BDS で動かし、壊れたところを直して学ぶ。配り直さない（手元で使うだけ）`;
+  const cur = currentUnit(), now = { unit, dir: null, was: cur }, unhook = onStop(now);
+  out(`borrow ${path.basename(f)} → bds/addons/${unit}`);
+  let v;
+  try { v = await judge(f, { unit, request, meta: { site: 'manual', post: null, url, title: path.basename(f), author }, simOnly: !!flags['sim-only'], allowRisk: !!flags['allow-risk'], worlds: !!flags.worlds }, out); }
+  catch (e) { dropUnit(unit); throw e; }
+  finally { restoreCurrent(cur); unhook(); }
+  const bds = bdsNow();
+  if (!v.kept) { dropUnit(v.unit); B.addSeen({ site: 'manual', post: null, title: path.basename(f), result: 'dropped', stage: v.stage, reason: v.reason, bds, sha256: info.sha256, packs }); out(`DROP ${v.stage}: ${v.reason}`); return false; }
+  B.markUnit(path.join(UNITS_DIR(), unit), { site: 'manual', post: null, url, title: path.basename(f), author, rules: [], file: f, sha256: info.sha256, packs, verdict: { bds, ...v.steps, ...(v.note ? { note: v.note } : {}) } });
+  B.addSeen({ site: 'manual', post: null, title: path.basename(f), result: 'kept', stage: v.stage, reason: v.note ?? 'latest BDS: brief · check · test', bds, sha256: info.sha256, packs, unit });
+  out(`KEEP bds/addons/${unit} — ${verdictLine(v)}${v.note ? `（${v.note}）` : ''}`);
+  out(`next: node lab.mjs go -a ${unit}。作者のものなので配りません（share・ship・publish・bundle・host は止まります）`);
+  return true;
+}
+
 export async function colonyCmd(args, out = console.log) {
   const [sub, ...rest] = args;
-  const T = { search: searchCmd, new: newCmd, cats: catsCmd, show: showCmd, get: getCmd, inspect: inspectCmd, verify: inspectCmd, repack: repackCmd, convert: convertCmd, install: installCmd, packs: packsCmd, import: importCmd, voxel: voxelCmd };
+  const T = { search: searchCmd, new: newCmd, cats: catsCmd, show: showCmd, get: getCmd, inspect: inspectCmd, verify: inspectCmd, repack: repackCmd, convert: convertCmd, install: installCmd, packs: packsCmd, import: importCmd, voxel: voxelCmd, harvest: harvestCmd, borrowed: borrowedCmd, diff: diffCmd, borrow: borrowCmd };
   if (!sub || sub === 'help' || sub === '--help' || !T[sub] || rest.includes('--help')) { out(USAGE); return !sub || sub === 'help' || sub === '--help' || rest.includes('--help'); }
   try { return await T[sub](parse(rest), out); }
   catch (e) { out(`ERR colony ${sub}: ${String(e.message).split('\n')[0]}`); return false; }

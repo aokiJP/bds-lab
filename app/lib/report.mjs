@@ -168,6 +168,7 @@ export function writeReport(runDir, r) {
     `| アプリ | ${r.app?.versionName ? `${r.app.versionName} (${r.app.versionCode})${r.app.abis ? ` ${r.app.abis.join(',')}` : ''}` : '—'} |`,
     `| BDS | ${r.bds?.version ?? '—'}${r.bds && !r.bds.exact ? '（同じ系列の近い版）' : ''} |`,
     `| 端末 | ${r.device ?? '—'} |`,
+    ...(r.path ? [`| 道 | ${r.path} |`] : []),
     `| シナリオ | ${r.scenario} |`,
     ...(r.timing?.join ? [`| 参加 | ${(r.timing.join / 1000).toFixed(1)} 秒（参加リンク → ワールドに出るまで）${r.timing.fromStart ? `。端末の起動から ${(r.timing.fromStart / 1000).toFixed(1)} 秒` : ''} |`] : []),
     ...(r.timing?.device ? [`| 準備済みの端末 | ${(r.timing.device / 1000).toFixed(1)} 秒で戻りました（Minecraft はタイトル画面で起動済み） |`] : []),
@@ -178,6 +179,7 @@ export function writeReport(runDir, r) {
     ...(r.sections?.length ? ['## 画面ごと（section）', '', '| 区切り | 結果 | 時間 | クライアントのエラー / 警告 |', '|---|---|---|---|',
       ...r.sections.map((x) => { const e = (x.client ?? []).filter((l) => clientLevel(l) === 'error').length, w = (x.client ?? []).filter((l) => clientLevel(l) === 'warn').length; return `| ${x.name} | ${x.ok ? '✔' : '✘'} | ${((x.ms ?? 0) / 1000).toFixed(1)}s | ${e} / ${w} |`; }), ''] : []),
     ...(r.client ? ['## クライアントのエラー（ゲームのコンテンツログ）', '',
+      ...(r.client.source ? [`- 読んだ場所: ${r.client.source}`] : []), ...(r.client.logcat?.length ? r.client.logcat.map((l) => `- （logcat）${l.slice(0, 300)}`) : []),
       ...(!r.client.readable ? ['- 読めませんでした（端末で root になれない）'] : r.client.found === false && r.client.enabled === true ? ['- なし（コンテンツログはオン。ゲームは最初の 1 行でファイルを作る: ファイルが無い = 1 行も出ていない）'] : r.client.found === false ? ['- コンテンツログのファイルがありません（ゲームの設定で出力が無効？）。クライアントのエラーは読めていません'] : r.client.errors.length || r.client.warnings.length
         ? [...r.client.errors.slice(0, 40).map((x) => `- ✘ [${x.section}] ${x.line.slice(0, 300)}`), ...(r.client.errors.length > 40 ? [`- …ほか ${r.client.errors.length - 40} 行`] : []),
           ...r.client.warnings.slice(0, 15).map((x) => `- ⚠ [${x.section}] ${x.line.slice(0, 300)}`), ...(r.client.warnings.length > 15 ? [`- …警告ほか ${r.client.warnings.length - 15} 行`] : [])]

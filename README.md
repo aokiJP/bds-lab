@@ -39,6 +39,9 @@ node lab.mjs login ai           # ANTHROPIC_API_KEY / OPENAI_API_KEY を確か�
 | Minecraft が更新された・何かおかしい・しばらく触っていない | `node lab.mjs upkeep`（点検→片付け→最新版で全部試験・修理→結果と次の 1 コマンド。`--check` は何も変えずに見るだけ） |
 | ディスクが足りない | `node lab.mjs clean` |
 | 配布ワールド・アドオン（クラフターズコロニー）を試す・直す | `node lab.mjs colony search <言葉>` → `colony get <番号>` → `colony import <番号>`（`help colony`） |
+| 他の人のアドオンで、最新で動くものを借りて直して学ぶ（配り直さない） | `node lab.mjs colony harvest`（見たことのないものだけ。`colony borrowed`・`colony diff`） |
+| 自分のスマホ・タブレットで JSON UI を確かめる（root あり・なし × USB・Wi-Fi） | `node lab.mjs app device add <名前>` → `app run -a <アドオン> --device <名前>`（[app/README.md](app/README.md)） |
+| 知り合いが貸してくれる GitHub Actions の時間で試験を回す | `node lab.mjs host add <owner/repo>` → `host run gate`（[docs/guide/host.md](docs/guide/host.md)） |
 
 どれも最後の行に「次にやること」を 1 つだけ出します。AI も人も、それをそのまま打てば進みます。
 
@@ -61,7 +64,8 @@ node lab.mjs clean         # 作り直せるものを消して空きを作る（
   ├─ 見本が近い ────── bds-recipes の見本を写して直す
   ├─ 見本が無い ────── bds-from-scratch：依頼を行に分け → api/doc で調べ → sandbox と TS REPL で試し → テストを先に書く
   ├─ 人のアドオン ──── import → brief → 壊れる所を先に直す
-  └─ 配布物 ────────── colony search / get / import（クラフターズコロニーの配布ワールド・アドオン）
+  ├─ 配布物 ────────── colony search / get / import（クラフターズコロニーの配布ワールド・アドオン）
+  └─ 借りる ────────── colony harvest（最新で動く他の人のアドオンだけ。手元で直して学ぶ、配らない）
   │
   sim（サンドボックス、1 秒）→ go（型検査 → 本物の BDS と本物のクライアントでテスト → 品質チェック → .mcaddon）
   │
@@ -75,6 +79,7 @@ node lab.mjs clean         # 作り直せるものを消して空きを作る（
 - 使い方と自動化（AI に作らせる・Issue から・チャットだけの AI・配布・自動操縦・保守・品質）：[docs/guide/workflows.md](docs/guide/workflows.md)
 - スキルと、一から作る練習：[docs/guide/skills.md](docs/guide/skills.md)・成長の仕組み全体：[skills/GROWTH.md](skills/GROWTH.md)
 - 3 つのラボ・本物のアプリ・Endstone / LeviLamina の見本・環境：[docs/guide/labs.md](docs/guide/labs.md)
+- GitHub の時間を借りる（知り合いのアカウントの Actions でラボの試験を走らせる）：[docs/guide/host.md](docs/guide/host.md)
 - 秘密の扱い・AI に任せる範囲・CI の守り：[SECURITY.md](SECURITY.md)
 - 変更の記録：[CHANGES.md](CHANGES.md)
 

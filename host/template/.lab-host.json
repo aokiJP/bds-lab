@@ -1,0 +1,9 @@
+{
+  "lab": 1,
+  "minutesPerMonth": 600,
+  "jobs": ["gate", "test", "go", "sim"],
+  "hours": "00:00-24:00",
+  "timezone": "Asia/Tokyo",
+  "until": "2027-03-31",
+  "contact": "your GitHub name or e-mail"
+}

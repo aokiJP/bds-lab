@@ -1,0 +1,127 @@
+#!/usr/bin/env node
+// a fake gh for tests/host-offline.mjs: lenders' repositories as bare git repositories under $FAKEGH_DIR/<owner>/<repo>.git
+// (git reaches them through url.<dir>/.insteadOf https://github.com/), their state in $FAKEGH_DIR/state.json:
+//   { repos: { 'o/r': { push, private, archived, withdrawn: 404|403|'ratelimit'|'sso'|null } }, runs: [..], issues: [..], next }
+// `workflow run host.yml` makes a run of the pushed branch: FAKE_HOST_EXEC=1 runs the real `node lab.mjs host __job` in a
+// clone of that branch with the default branch's .lab-host.json (as host.yml does); otherwise a canned result
+// (FAKE_RUN_OK=0: failed). FAKE_RUN_POLLS=n: the run is in progress for n looks; FAKE_RUN_MS: its billable time;
+// FAKE_NO_RUN=1: the dispatch is taken but no run ever shows up; FAKE_LIST_FAIL=1: `run list` gets no answer (a 502).
+// Every call is appended to $FAKEGH_DIR/calls.log
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+
+const D = process.env.FAKEGH_DIR, SF = path.join(D, 'state.json');
+const a = process.argv.slice(2);
+fs.appendFileSync(path.join(D, 'calls.log'), a.join(' ') + '\n');
+const S = (() => { try { return JSON.parse(fs.readFileSync(SF, 'utf8')); } catch { return { repos: {}, runs: [], issues: [], next: 5000 }; } })();
+const save = () => fs.writeFileSync(SF, JSON.stringify(S, null, 1));
+const say = (x) => process.stdout.write(typeof x === 'string' ? x : JSON.stringify(x) + '\n');
+const die = (msg, code = 1) => { process.stderr.write(msg + '\n'); process.exit(code); };
+const bare = (slug) => path.join(D, `${slug}.git`);
+const git = (slug, args) => spawnSync('git', ['--git-dir', bare(slug), ...args], { encoding: 'utf8' });
+const opt = (k) => { const i = a.indexOf(k); return i >= 0 ? a[i + 1] : undefined; };
+// (403 three ways, as GitHub says them: gone for this login, a rate limit, an organization's SSO)
+const visible = (slug) => {
+  const r = S.repos[slug];
+  if (!r || r.withdrawn === 404) die('gh: Not Found (HTTP 404)');
+  if (r.withdrawn === 403) die('gh: Must have admin rights to Repository. (HTTP 403)');
+  if (r.withdrawn === 'ratelimit') die('gh: API rate limit exceeded for user ID 1. (HTTP 403)');
+  if (r.withdrawn === 'sso') die('gh: Resource protected by organization SAML enforcement. You must grant your Personal Access token access to this organization. (HTTP 403)');
+  return r;
+};
+
+if (a[0] === '--version') { say('gh version 2.99.0 (fake host)\n'); process.exit(0); }
+if (a[0] === 'auth') process.exit(0);
+if (a[0] === 'api' && a[1] === 'user') { say('me\n'); process.exit(0); }
+if (a[0] === 'api' && a[1] === '-X' && a[2] === 'DELETE') {
+  const m = /^repos\/([^/]+\/[^/]+)\/git\/refs\/heads\/(.+)$/.exec(a[3]);
+  if (!m) die('fake gh: delete what?');
+  visible(m[1]);
+  const r = git(m[1], ['update-ref', '-d', `refs/heads/${m[2]}`]);
+  process.exit(r.status === 0 ? 0 : 1);
+}
+if (a[0] === 'api') {
+  const p = a[1];
+  let m;
+  if ((m = /^repos\/([^/]+\/[^/]+)$/.exec(p))) { const r = visible(m[1]); say({ full_name: m[1], private: r.private !== false, archived: r.archived === true, default_branch: 'main', permissions: { admin: false, push: r.push !== false, pull: true } }); process.exit(0); }
+  if ((m = /^repos\/([^/]+\/[^/]+)\/contents\/(.+)$/.exec(p))) {
+    visible(m[1]);
+    const r = spawnSync('git', ['--git-dir', bare(m[1]), 'show', `main:${m[2]}`], { encoding: 'buffer' });
+    if (r.status !== 0) die('gh: Not Found (HTTP 404)');
+    say({ name: path.basename(m[2]), path: m[2], encoding: 'base64', content: r.stdout.toString('base64') }); process.exit(0);
+  }
+  if ((m = /^repos\/([^/]+\/[^/]+)\/actions\/runs\/(\d+)\/timing$/.exec(p))) {
+    visible(m[1]);
+    const run = S.runs.find((x) => String(x.id) === m[2]);
+    if (!run) die('gh: Not Found (HTTP 404)');
+    say({ billable: { UBUNTU: { total_ms: run.ms, jobs: 1 } }, run_duration_ms: run.ms + 4000 }); process.exit(0);
+  }
+  if ((m = /^repos\/([^/]+\/[^/]+)\/actions\/runs\/(\d+)$/.exec(p))) {
+    visible(m[1]);
+    const run = S.runs.find((x) => String(x.id) === m[2]);
+    if (!run) die('gh: Not Found (HTTP 404)');
+    if (run.polls > 0) { run.polls--; save(); say({ id: run.id, status: 'in_progress', conclusion: null, head_branch: run.branch }); process.exit(0); }
+    say({ id: run.id, status: 'completed', conclusion: run.conclusion, head_branch: run.branch, run_started_at: '2026-10-06T00:00:00Z', updated_at: '2026-10-06T00:02:00Z' }); process.exit(0);
+  }
+  die(`fake gh: unknown api ${p}`);
+}
+if (a[0] === 'workflow' && a[1] === 'run') {
+  const slug = opt('--repo'), ref = opt('--ref');
+  visible(slug);
+  if (git(slug, ['rev-parse', '--verify', '-q', `refs/heads/${ref}`]).status !== 0) die(`could not create workflow dispatch event: HTTP 422: No ref found for: ${ref}`);
+  if (spawnSync('git', ['--git-dir', bare(slug), 'cat-file', '-e', `${ref}:.github/workflows/host.yml`]).status !== 0) die('could not find any workflows named host.yml');
+  const inputs = {};
+  a.forEach((x, i) => { if (x === '-f') { const [k, ...v] = a[i + 1].split('='); inputs[k] = v.join('='); } });
+  if (process.env.FAKE_NO_RUN) { say('✓ Created workflow_dispatch event for host.yml\n'); process.exit(0); }
+  const id = S.next++, art = path.join(D, 'artifacts', String(id), `host-result-${inputs.request}`);
+  fs.mkdirSync(art, { recursive: true });
+  let conclusion = 'success';
+  if (process.env.FAKE_HOST_EXEC) {
+    // as host.yml does it: the pushed branch checked out, the default branch's .lab-host.json beside it, the job
+    const w = fs.mkdtempSync(path.join(os.tmpdir(), 'fakehost-'));
+    try {
+      spawnSync('git', ['clone', '-q', '-b', ref, bare(slug), w], { encoding: 'utf8' });
+      fs.mkdirSync(path.join(w, '.host-main'), { recursive: true });
+      fs.writeFileSync(path.join(w, '.host-main', '.lab-host.json'), spawnSync('git', ['--git-dir', bare(slug), 'show', 'main:.lab-host.json'], { encoding: 'utf8' }).stdout);
+      const env = { ...process.env, HOST_JOB: inputs.job, HOST_UNIT: inputs.unit, HOST_REQUEST: inputs.request, HOST_RULES: '.host-main/.lab-host.json' };
+      for (const k of Object.keys(env)) if (/^(FAKE|LAB_HOST|FAKEGH)/.test(k)) delete env[k];
+      const r = spawnSync(process.execPath, ['lab.mjs', 'host', '__job'], { cwd: w, encoding: 'utf8', env, timeout: 600_000 });
+      conclusion = r.status === 0 ? 'success' : 'failure';
+      if (fs.existsSync(path.join(w, 'host-result'))) for (const f of fs.readdirSync(path.join(w, 'host-result'))) fs.copyFileSync(path.join(w, 'host-result', f), path.join(art, f));
+    } finally { fs.rmSync(w, { recursive: true, force: true }); }
+  } else {
+    const okRun = process.env.FAKE_RUN_OK !== '0';
+    conclusion = okRun ? 'success' : 'failure';
+    fs.writeFileSync(path.join(art, 'result.json'), JSON.stringify({ request: inputs.request, job: inputs.job, unit: inputs.unit || null, ok: okRun, exit: okRun ? 0 : 1, summary: [okRun ? 'PASS gate (27 tests, 300 s)' : 'FAIL gate: tests/x-offline.mjs'] }));
+    fs.writeFileSync(path.join(art, 'log.txt'), 'the job\n');
+  }
+  S.runs.push({ id, repo: slug, branch: ref, inputs, polls: Number(process.env.FAKE_RUN_POLLS) || 0, conclusion, ms: Number(process.env.FAKE_RUN_MS) || 125_000 });
+  save();
+  say('✓ Created workflow_dispatch event for host.yml\n'); process.exit(0);
+}
+if (a[0] === 'run' && a[1] === 'list') {
+  const slug = opt('--repo'), branch = opt('--branch');
+  visible(slug);
+  if (process.env.FAKE_LIST_FAIL) die('gh: HTTP 502: Server Error (https://api.github.com/repos/x/actions/runs)');
+  say(S.runs.filter((x) => x.repo === slug && x.branch === branch).reverse().slice(0, Number(opt('--limit')) || 20).map((x) => ({ databaseId: x.id, status: x.polls > 0 ? 'in_progress' : 'completed', conclusion: x.polls > 0 ? '' : x.conclusion })));
+  process.exit(0);
+}
+if (a[0] === 'run' && a[1] === 'download') {
+  const id = a[2], slug = opt('--repo'), name = opt('-n'), dir = opt('-D');
+  visible(slug);
+  const src = path.join(D, 'artifacts', id, name);
+  if (!fs.existsSync(src) || !fs.readdirSync(src).length) die(`no artifact matches any of the names or patterns provided`);
+  fs.mkdirSync(dir, { recursive: true });
+  for (const f of fs.readdirSync(src)) fs.copyFileSync(path.join(src, f), path.join(dir, f));
+  process.exit(0);
+}
+if (a[0] === 'issue' && a[1] === 'create') {
+  const slug = opt('--repo');
+  visible(slug);
+  S.issues.push({ repo: slug, title: opt('--title'), body: fs.readFileSync(opt('--body-file'), 'utf8') });
+  save();
+  say(`https://github.com/${slug}/issues/${S.issues.length}\n`); process.exit(0);
+}
+die(`fake gh: unsupported ${a.join(' ')}`, 2);

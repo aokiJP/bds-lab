@@ -727,7 +727,10 @@ async function boot(inst) {
     srv.waiters.push(w);
     setTimeout(() => { const k = srv.waiters.indexOf(w); if (k >= 0) { srv.waiters.splice(k, 1); res(null); } }, ms);
   });
-  srv.send = (cmd) => { if (!srv.exited) child.stdin.write(cmd + '\n'); };
+  // (a server that died a moment ago, its exit not seen yet: a write to its stdin fails with EPIPE — the crash is what gets
+  // reported, not a lab that fell over on the write)
+  child.stdin.on('error', () => {});
+  srv.send = (cmd) => { if (!srv.exited && child.stdin.writable) child.stdin.write(cmd + '\n'); };
   srv.stop = async () => {
     srv.send(F.stopCommand ?? 'stop');
     if (!srv.exited) await Promise.race([new Promise((r) => child.once('exit', r)), sleep(F.stopWaitMs ?? 15000)]);
@@ -2941,11 +2944,13 @@ async function upgradeAudit() {
   const m = readJson(path.join(BP, 'manifest.json')), deps = (m.dependencies ?? []).filter((d) => d.module_name?.startsWith('@minecraft/') && d.module_name !== '@minecraft/server-gametest');
   const src = !!B.entryOf(ADDON), scripts = src || files(path.join(BP, 'scripts'), (x) => /\.[cm]?js$/.test(x)).length > 0;
   if (!deps.length || !scripts) return { mods: [], lines: [] };
-  await setup();
+  // the module versions this BDS has (npm's list for it, else the lab's own table): known before any server is set up, so
+  // the brief says a version this BDS lacks in a lab with no BDS yet too — only the type check below needs the setup
   const want = { stable: {}, beta: {} };
   for (const d of deps) for (const k of ['stable', 'beta']) want[k][d.module_name] = await moduleVersion(d.module_name.slice(11), k === 'beta');
   // stable versions carry over to newer BDS; a beta is only in the BDS it was made for
   const mods = deps.map((d) => ({ name: d.module_name.slice(11), want: d.version, ok: /-/.test(d.version) ? d.version === want.beta[d.module_name] : true, has: [want.stable[d.module_name], want.beta[d.module_name]].filter(Boolean) }));
+  try { await setup(); } catch (e) { return { mods, lines: [`W audit: ${String(e.message).split('\n')[0]}`] }; }
   const bv = bdsVersion().split('.').slice(0, 3).join('.'), res = {};
   for (const k of ['stable', 'beta']) {
     const tdeps = (m.dependencies ?? []).map((d) => (want[k][d.module_name] ? { ...d, version: want[k][d.module_name] } : d));
@@ -3442,13 +3447,21 @@ try {
   else if (cmd === 'brief') ok = await brief(rest);
   else if (cmd === 'bds') { await lock(); await bdsCmd(rest); }
   else if (cmd === 'github') { const G = (await gh()).makeGit(GITROOT, LAYOUT()); G.setup({ repoName: rest.find((a) => !a.startsWith('-')) ?? path.basename(GITROOT), addons: addonNames(), say: out }); }
+  // someone else's addon (colony harvest / borrow: imported.json borrowed) never goes out: stopped before anything is written
+  else if ((cmd === 'ship' || cmd === 'publish') && (await import('./borrow.mjs')).borrowedAs(ADDON)) { const B = await import('./borrow.mjs'); die(B.refusal(cmd, [{ rel: path.relative(TOP, ADDON).split(path.sep).join('/'), mark: B.borrowedAs(ADDON) }])); }
   else if (cmd === 'ship') { const f = await packFiles(); ok = !!f && (await (await gh()).ship({ ROOT: GITROOT, layout: LAYOUT(), ADDON, name: path.basename(ADDON), ...f, zip, unzip, say: out })); }
   else if (cmd === 'publish') {
     const f = await packFiles();
     let report = null; try { report = JSON.parse(fs.readFileSync(path.join(LAB, 'report.json'), 'utf8')); if (report.addon !== path.basename(ADDON)) report = null; } catch { /* never tested */ }
     ok = !!f && (await (await gh()).publish({ ROOT: GITROOT, layout: LAYOUT(), ADDON, name: path.basename(ADDON), mcaddon: f.mcaddon, version: f.version, report, yes: rest.includes('--yes'), zip, say: out }));
   }
-  else if (cmd === 'bundle') { if (F.name !== 'bds') die('bundle: bds lab only (the work zip carries the plain BDS)'); await ensureBds(); (await gh()).bundle({ ROOT: GITROOT, layout: LAYOUT(), bdsVer: bdsVersion(), zip, release: rest.includes('--release'), say: out }); }
+  else if (cmd === 'bundle') {
+    if (F.name !== 'bds') die('bundle: bds lab only (the work zip carries the plain BDS)');
+    // the work zip carries every unit: a borrowed one stops it (--skip-borrowed: made without them)
+    const BU = (await import('./borrow.mjs')).borrowedUnits(GITROOT);
+    if (BU.length && !rest.includes('--skip-borrowed')) die(`${(await import('./borrow.mjs')).refusal('bundle', BU)}（除いて作るなら --skip-borrowed）`);
+    await ensureBds(); (await gh()).bundle({ ROOT: GITROOT, layout: LAYOUT(), bdsVer: bdsVersion(), zip, release: rest.includes('--release'), exclude: BU.map((u) => u.rel), say: out });
+  }
   else if (cmd === 'selftest') ok = await selftest(rest);
   else if (cmd === 'lan') ok = await (await import('./lan.mjs')).lanCmd(CACHE, rest, out);
   else if (cmd === 'doctor') ok = await doctor();

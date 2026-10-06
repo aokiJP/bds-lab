@@ -53,12 +53,13 @@ export function findIn(text, own = []) {
   return hits;
 }
 export const isText = (rel, buf) => TEXT.test(rel) && buf.length < 4e6 && !buf.subarray(0, 8000).includes(0);
-// files: [[rel, Buffer]] → [{rel, what, line, warn?}]
-export function scan(files, top) {
+// files: [[rel, Buffer]] → [{rel, what, line, warn?}]. anyText: every small file that is text whatever its name (what goes to
+// someone else's machine: a unit's .mcfunction or .lang can hold a key as well as a .js)
+export function scan(files, top, { anyText = false } = {}) {
   const own = ownSecrets(top), out = [];
   for (const [rel, buf] of files) {
     if (/(^|\/)\.env\.example$/.test(rel)) { for (const h of findIn(buf.toString('utf8'), own)) if (h.what === 'a value from your .env') out.push({ rel, ...h }); continue; }
-    if (!isText(rel, buf)) continue;
+    if (!(anyText ? buf.length < 4e6 && !buf.subarray(0, 8000).includes(0) : isText(rel, buf))) continue;
     for (const h of findIn(buf.toString('utf8'), own)) out.push({ rel, ...h });
   }
   return out;

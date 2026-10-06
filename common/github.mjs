@@ -221,7 +221,7 @@ export async function publish({ ROOT, layout, ADDON, name, mcaddon, version, rep
 }
 
 // `node lab.mjs bundle [--release]`: the work zip AI gets (whole lab + addons + vendor BDS, no caches) -> Release "template"
-export function bundle({ ROOT, layout = DEF, bdsVer, zip, release, say }) {
+export function bundle({ ROOT, layout = DEF, bdsVer, zip, release, exclude = [], say }) {
   const vend = layout.vendor ?? VENDOR, vdir = path.posix.dirname(vend) + '/';
   const vz = path.join(ROOT, vend);
   if (!fs.existsSync(vz)) throw new Error('no vendor/bedrock-server.zip (node lab.mjs bds first)');
@@ -237,7 +237,8 @@ export function bundle({ ROOT, layout = DEF, bdsVer, zip, release, say }) {
   }
   const SKIP = /(^|\/)(\.git|node_modules|\.lab|dist|runs|__pycache__|build|\.xmake)(\/|$)|docs\/(coverage|verbs)\/(last-run\.txt|\.spec-run\.txt)$|(^|\/)\.DS_Store$/;
   const entries = [];
-  const walk = (d, base = '') => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const r = base + e.name; if (SKIP.test(r) || (r.startsWith(vdir) && r !== vend && r !== vdir + 'bds-version.txt')) continue; if (e.isDirectory()) walk(path.join(d, e.name), r + '/'); else entries.push({ name: `bds-lab/${r}`, data: fs.readFileSync(path.join(d, e.name)), store: r === vend }); } };   // (the BDS zip is stored as it is: deflating a zip again only costs time)
+  // (exclude: units left out — borrowed ones, someone else's: bundle --skip-borrowed)
+  const walk = (d, base = '') => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const r = base + e.name; if (SKIP.test(r) || exclude.includes(r) || (r.startsWith(vdir) && r !== vend && r !== vdir + 'bds-version.txt')) continue; if (e.isDirectory()) walk(path.join(d, e.name), r + '/'); else entries.push({ name: `bds-lab/${r}`, data: fs.readFileSync(path.join(d, e.name)), store: r === vend }); } };   // (the BDS zip is stored as it is: deflating a zip again only costs time)
   walk(ROOT);
   const file = path.join(ROOT, 'dist', `bds-lab-${bdsVer}.zip`);
   fs.mkdirSync(path.dirname(file), { recursive: true });

@@ -68,7 +68,8 @@ ok(!badJ.length, `data: ${jsons.length} JSON files parse`, badJ.join('\n'));
   const { DEFAULT_POLICY } = await import(pathToFileURL(path.join(TOP, 'common', 'auto-guard.mjs')).href);
   const gate = DEFAULT_POLICY.gate, missing = gate.filter((g) => !fs.existsSync(path.join(TOP, g)));
   ok(!missing.length, `gate: all ${gate.length} tests exist`, missing.join(' '));
-  const ci = files.filter((f) => /^\.github\/workflows\/.*\.yml$/.test(f)).map(rd).join('\n');
+  // (.lab-github/: the same files where a lender's host carries them — GitHub starts nothing from there: common/hosts.mjs)
+  const ci = files.filter((f) => /^\.(lab-)?github\/workflows\/.*\.yml$/.test(f)).map(rd).join('\n');
   // (CI runs `auto gate --all`: every tests/*-offline.mjs and tests/offline.mjs, whatever their names — the same pattern below)
   const all = /node lab\.mjs auto gate --all/.test(ci);
   const loose = files.filter((f) => /^tests\/[\w-]+\.mjs$/.test(f) && /-offline\.mjs$|^tests\/offline\.mjs$/.test(f) && !gate.includes(f) && !ci.includes(f) && !all);
@@ -87,7 +88,7 @@ ok(!badJ.length, `data: ${jsons.length} JSON files parse`, badJ.join('\n'));
 
 // CI supply chain: every action pinned to a commit (a moved tag cannot change what runs), every workflow says its permissions
 {
-  const wf = files.filter((f) => /^\.github\/workflows\/.*\.yml$/.test(f));
+  const wf = files.filter((f) => /^\.(lab-)?github\/workflows\/.*\.yml$/.test(f));
   const loose = wf.flatMap((f) => rd(f).split('\n').map((l, i) => [f, i + 1, l]).filter(([, , l]) => /^\s*-?\s*uses: /.test(l) && !/@[0-9a-f]{40}\b/.test(l))).map(([f, i, l]) => `${f}:${i}: ${l.trim()}`);
   ok(!loose.length, `CI: every action in ${wf.length} workflows is pinned to a commit SHA`, loose.join('\n'));
   const noPerm = wf.filter((f) => !/^\s*permissions:/m.test(rd(f)));

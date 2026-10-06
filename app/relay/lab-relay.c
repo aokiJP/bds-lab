@@ -11,6 +11,8 @@
 //   again as unicast to the target with the game's own address and port as the source (a raw socket). The emulator's NAT
 //   carries that like any packet from the game; the server's answer comes back to the game's own socket from the target,
 //   and what follows (LAN signaling) goes there directly
+// (_GNU_SOURCE: struct udphdr's Linux names — source, dest, len, check — in every C library: glibc, musl, bionic)
+#define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
 #include <linux/if_packet.h>

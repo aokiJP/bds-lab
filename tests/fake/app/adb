@@ -21,6 +21,78 @@ if (a[0] === '-s') a = a.slice(2);
 if (a[0] !== 'logcat') { (S.calls ??= []).push(a.join(' ')); save(); }
 const say = (t) => process.stdout.write(t);
 const sh = a[0] === 'shell' ? a.slice(1).join(' ') : null;
+
+// ---- a person's own devices (tests/device-offline.mjs): FAKE_DEVICES = [{ serial, model, maker, android, sdk, abi, hw,
+// root: null | 'adb' | 'su', game: bool, addrs: `ip -o -4 addr show` text, tether: that text's line for the USB network,
+// wifi: 'ip:port' (connect), hidden: listed only once connected, state, settings: {key: value}, locked: n looks }].
+// Each one answers what the lab asks to know it (getprop, id, su, dumpsys package, wm size, ip, settings, ping, svc usb);
+// the game itself (monkey, pidof, screencap, gamepad keys, logcat) is the one fake game below, whatever the serial.
+// Every call to one of them is kept in S.dev as "<serial> <args>" (the test: nothing ran on a device that was not added)
+const DEVS = process.env.FAKE_DEVICES ? JSON.parse(process.env.FAKE_DEVICES) : null;
+if (DEVS) {
+  const serialArg = process.argv[2] === '-s' ? process.argv[3] : null;
+  // (a device listed by its USB serial unless hidden; also by its Wi-Fi address once connected there — adb tcpip, pair)
+  const listed = () => { const out = []; for (const d of DEVS) { if (!d.hidden) out.push(d); if (d.wifi && (S.connected?.[d.wifi] || (d.hidden && S.connected?.[d.serial])) && !out.some((x) => x.serial === d.wifi)) out.push({ ...d, serial: d.wifi }); } return out; };
+  if (a[0] === 'devices') {
+    say('List of devices attached\n');
+    for (const d of listed()) say(`${d.serial}\t${d.state ?? 'device'}${d.state && d.state !== 'device' ? '' : ` ${/:\d+$/.test(d.serial) ? '' : 'usb:1-1 '}product:${d.model ?? 'x'} model:${d.model ?? 'x'} device:${d.model ?? 'x'} transport_id:1`}\n`);
+    if (process.env.FAKE_DEVICES_EMU) say('emulator-5554\tdevice product:sdk_gphone64_x86_64 model:sdk_gphone64_x86_64 device:emu64xa transport_id:2\n');
+    process.exit(0);
+  }
+  if (a[0] === 'pair') {
+    // (the code is checked, never kept: the test looks for it in every file the lab wrote. As real adb: on the command line,
+    // else asked for on its standard input — the lab writes it there, so it is in no process list)
+    const code = a[2] ?? String(fs.readFileSync(0, 'utf8')).split('\n')[0].trim();
+    if (a[2] !== undefined) S.codeInArgv = true;
+    if (code === process.env.FAKE_PAIR_CODE) { S.paired = a[1]; save(); say(`Successfully paired to ${a[1]} [guid=adb-FAKE]\n`); process.exit(0); }
+    say('Failed: Wrong password or connection was dropped.\n'); process.exit(1);
+  }
+  if (a[0] === 'connect') {
+    const d = DEVS.find((x) => x.wifi === a[1] || x.serial === a[1]);
+    if (d && !process.env.FAKE_CONNECT_FAIL) { (S.connected ??= {})[a[1]] = true; save(); say(`connected to ${a[1]}\n`); process.exit(0); }
+    say(`failed to connect to ${a[1]}\n`); process.exit(1);
+  }
+  if (a[0] === 'mdns' && a[1] === 'services') { say('List of discovered mdns services\n'); for (const d of DEVS.filter((x) => x.mdns)) say(`adb-${d.hw}-AbCdEf\t_adb-tls-connect._tcp\t${d.mdns}\n`); process.exit(0); }
+  const dev = serialArg ? listed().find((d) => d.serial === serialArg) ?? DEVS.find((d) => d.serial === serialArg || d.wifi === serialArg) : null;
+  if (serialArg && serialArg !== 'emulator-5554') { (S.dev ??= []).push(`${serialArg} ${a.join(' ')}`); save(); }
+  if (serialArg && serialArg !== 'emulator-5554' && !dev) { process.stderr.write(`error: device '${serialArg}' not found\n`); process.exit(1); }
+  if (dev && a[0] === 'tcpip') { (S.tcpip ??= {})[dev.serial] = a[1]; save(); say(`restarting in TCP mode port: ${a[1]}\n`); process.exit(0); }
+  // (adbd back on USB: its Wi-Fi address is gone from adb's list)
+  if (dev && a[0] === 'usb') { if (S.connected) delete S.connected[serialArg]; if (S.tcpip) delete S.tcpip[dev.serial]; save(); say('restarting in USB mode\n'); process.exit(0); }
+  if (dev && a[0] === 'get-state') { say('device\n'); process.exit(0); }
+  if (dev && sh !== null) {
+    const key = dev.hw ?? dev.serial, set = ((S.devSettings ??= {})[key] ??= { ...(dev.settings ?? {}) });
+    const prop = { 'ro.product.model': dev.model, 'ro.product.manufacturer': dev.maker, 'ro.build.version.release': dev.android, 'ro.build.version.sdk': dev.sdk, 'ro.product.cpu.abi': dev.abi, 'ro.product.cpu.abilist': dev.abi, 'ro.serialno': dev.hw, 'sys.boot_completed': '1', 'sys.usb.config': S.usb?.[key] ?? dev.usb ?? 'mtp,adb' };
+    let m;
+    if ((m = /^getprop ([\w.]+)$/.exec(sh)) && m[1] in prop) { say(`${prop[m[1]] ?? ''}\n`); process.exit(0); }
+    if (sh === 'id -u') { say(dev.root === 'adb' ? '0\n' : '2000\n'); process.exit(0); }
+    // (root 'su': Magisk's su (`su -c`); 'su0': AOSP's own su, which takes only `su 0 <command>`)
+    if (/^su -c id/.test(sh)) { if (dev.root === 'su') say('uid=0(root) gid=0(root) context=u:r:magisk:s0\n'); process.exit(0); }
+    if (/^su 0 id/.test(sh)) { if (dev.root === 'su0') say('uid=0(root) gid=0(root) groups=0(root) context=u:r:su:s0\n'); process.exit(0); }
+    if (sh === `dumpsys package com.mojang.minecraftpe`) { if (dev.game) say('    versionCode=912605204 minSdk=24\n    versionName=1.26.52.04\n'); process.exit(0); }
+    if (sh === 'wm size') { say('Physical size: 1080x2400\n'); process.exit(0); }
+    if (/^ip -o -4 addr show/.test(sh)) { say(`${(dev.addrs ?? '').replace(/\\n/g, '\n')}\n${S.tethered?.[key] && dev.tether ? `${dev.tether}\n` : ''}`); process.exit(0); }
+    if ((m = /^settings get (\w+) (\w+)$/.exec(sh))) { say(`${set[m[2]] ?? 'null'}\n`); process.exit(0); }
+    if ((m = /^settings put (\w+) (\w+) (\S+)$/.exec(sh))) {
+      set[m[2]] = m[3];
+      // (wireless debugging off: its connection goes)
+      if (m[2] === 'adb_wifi_enabled' && m[3] === '0' && S.connected) for (const k of Object.keys(S.connected)) if (k === dev.wifi || k === dev.mdns) delete S.connected[k];
+      save(); process.exit(0);
+    }
+    if ((m = /^settings delete (\w+) (\w+)$/.exec(sh))) { delete set[m[2]]; save(); process.exit(0); }
+    if ((m = /^am broadcast -a com\.android\.systemui\.demo -e command (\w+)/.exec(sh))) { ((S.demo ??= {})[key] ??= []).push(m[1]); save(); process.exit(0); }
+    if ((m = /^cmd notification set_dnd (\w+)$/.exec(sh))) { set.zen_mode = m[1] === 'off' ? '0' : '1'; save(); process.exit(0); }
+    if (sh === 'input keyevent KEYCODE_WAKEUP' || sh === 'wm dismiss-keyguard') process.exit(0);
+    if (/^dumpsys window 2>\/dev\/null \| grep/.test(sh)) { const left = (S.lockLooks ??= {})[key] ?? dev.locked ?? 0; S.lockLooks[key] = Math.max(0, left - 1); save(); say(`    mDreamingLockscreen=${left > 0} mDismissImeOnBackKeyPressed=false\n`); process.exit(0); }
+    if (/^ping -c 2 -W 2 /.test(sh)) { say(process.env.FAKE_NO_PING ? '2 packets transmitted, 0 received, 100% packet loss\n' : '2 packets transmitted, 2 received, 0% packet loss\n'); process.exit(0); }
+    if ((m = /^svc usb setFunctions ?(\S*)/.exec(sh))) { if (process.env.FAKE_NO_TETHER) { say('java.lang.SecurityException: not allowed\n'); process.exit(0); } (S.usb ??= {})[key] = m[1] || 'mtp'; (S.tethered ??= {})[key] = /^(ncm|rndis)$/.test(m[1]); save(); process.exit(0); }
+    if (/^((su -c|su 0 sh -c) '(umask 000; )?)?pkill -x lab-relay/.test(sh)) { S.cleared = [...(S.cleared ?? []), key]; S.padUp = false; S.relays = []; save(); process.exit(0); }
+    if (/^((su -c|su 0 sh -c) '(umask 000; )?)?rm -rf \/data\/local\/tmp\/lab-logs/.test(sh) || /cp -r \/data\/data\/com\.mojang\.minecraftpe\/games\/com\.mojang\/logs/.test(sh)) process.exit(dev.root ? 0 : 1);
+  }
+  if (dev && a[0] === 'wait-for-device') process.exit(0);
+  // (adb root on a phone: refused, as on a production build)
+  if (dev && a[0] === 'root') { say('adbd cannot run as root in production builds\n'); process.exit(1); }
+}
 // the player goes in (the deep link, or the LAN world played from PLAY): FAKE_JOIN_PROMPTS = the game's own questions first
 // (an unknown external server: Continue; online play not rated: Proceed), answered by taps; FAKE_JOIN_REFUSE = it wants a
 // Microsoft sign-in instead; FAKE_REAL_JOIN = the lab's own real Bedrock client joins the real live BDS in the app's place
@@ -177,6 +249,8 @@ else if (sh !== null) {
   // (1.26: the content log in the app's external folder; FAKE_CONTENT_LOG_INTERNAL: the private one, as older versions)
   if (/^ls -t \/sdcard\/Android\/data\/com\.mojang\.minecraftpe\/files\/games\/com\.mojang\/logs\/\*\.txt /.test(sh)) { if (process.env.FAKE_CONTENT_LOG) say(`${process.env.FAKE_CONTENT_LOG_INTERNAL ? '/data/data/com.mojang.minecraftpe/games/com.mojang/logs' : '/sdcard/Android/data/com.mojang.minecraftpe/files/games/com.mojang/logs'}/ContentLog__lab.txt\n`); process.exit(0); }
   if (sh === 'nproc') { say('2\n'); process.exit(0); }
+  // (its size: a person's device reads its content log from the end it had when the run began)
+  if (/^wc -c < '.*ContentLog__lab\.txt' 2>\/dev\/null$/.test(sh)) { if (process.env.FAKE_CONTENT_LOG && fs.existsSync(process.env.FAKE_CONTENT_LOG)) say(`${fs.statSync(process.env.FAKE_CONTENT_LOG).size}\n`); process.exit(0); }
   // the game's options.txt (FAKE_OPTIONS: what the game wrote on its first start); written back through `cat >`
   if (/^cat \/data\/data\/com\.mojang\.minecraftpe\/games\/com\.mojang\/minecraftpe\/options\.txt$/.test(sh)) { say(S.options ?? (process.env.FAKE_OPTIONS ?? '').replace(/\\n/g, '\n')); process.exit(0); }
   if (/^cat > \/data\/data\/com\.mojang\.minecraftpe\/games\/com\.mojang\/minecraftpe\/options\.txt$/.test(sh)) { S.options = fs.readFileSync(0, 'utf8'); save(); process.exit(0); }
@@ -290,7 +364,8 @@ else if (sh !== null) {
   else if (/minecraftWorlds\/lab-ready/.test(sh)) { S.world = Boolean(S.worldPushed); save(); if (S.world) say('world /data/data/com.mojang.minecraftpe/games/com.mojang/minecraftWorlds/lab-ready\n'); }
   // the gamepad (1.26's PLAY screen takes it): A opens PLAY from the title, DOWN brings the focus to the LAN world, A joins
   // it (FAKE_LAN_NONE: no LAN world listed), B goes back
-  else if (/^input gamepad keyevent KEYCODE_\w+$/.test(sh)) await padPress(sh.split('KEYCODE_')[1]);
+  // (--longpress: a real device without the controller presses its buttons as the shell's long press)
+  else if (/^input gamepad keyevent (--longpress )?KEYCODE_\w+$/.test(sh)) { if (/--longpress/.test(sh)) { S.longPresses = (S.longPresses ?? 0) + 1; save(); } await padPress(sh.split('KEYCODE_')[1]); }
   // the device's controller (lib/android.mjs startPad: lab-pad on uinput): plugged in by nohup, its presses through a FIFO
   else if (/nohup \/data\/local\/tmp\/lab-pad /.test(sh)) { S.padUp = true; save(); }
   else if (/^pidof lab-pad/.test(sh)) say(S.padUp ? '888\n' : '');

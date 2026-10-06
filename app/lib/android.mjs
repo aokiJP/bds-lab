@@ -42,7 +42,8 @@ export class Adb {
     // (SIGKILL at the deadline: adb outlives a SIGTERM while the device's command goes on — `nc` that never ends, an `echo`
     // into a FIFO nobody reads — and spawnSync then waits for it: a live session once hung there for good)
     const r = spawnSync(this.bin, ['-s', this.serial, ...args], { encoding: binary ? 'buffer' : 'utf8', timeout, killSignal: 'SIGKILL', maxBuffer: 512e6, input, env: cleanEnv() });
-    const o = { status: r.status ?? (r.error ? 1 : 0), stdout: binary ? '' : (r.stdout ?? ''), stderr: String(r.stderr ?? ''), buf: binary ? r.stdout : undefined, error: r.error };
+    // (stopped by a signal — Ctrl+C reaches adb too — is a failure: its empty output is no answer)
+    const o = { status: r.status ?? (r.error || r.signal ? 1 : 0), stdout: binary ? '' : (r.stdout ?? ''), stderr: String(r.stderr ?? ''), buf: binary ? r.stdout : undefined, error: r.error };
     if (o.status !== 0) this.log(`adb ${args.slice(0, 4).join(' ')} → ${o.status} ${(o.stderr || o.stdout).trim().slice(0, 200)}`);
     return o;
   }
@@ -84,7 +85,9 @@ export class Adb {
       if (this.padReady && !dir(w) && (/^wait\d+$/.test(w) ? batch.length : /^\w+$/.test(w))) { batch.push(w); continue; }
       flush(true);
       if (/^wait\d+$/.test(w)) { spawnSync('sleep', [String(Number(w.slice(4)) / 1000)]); continue; }
-      if (PAD_KEYCODE[w]) this.shell(['input', 'gamepad', 'keyevent', `KEYCODE_${PAD_KEYCODE[w]}`]);
+      // (padLong — a real device without the controller: a button as the shell's long press, down … up ~0.5 s later, as the
+      // controller holds it; a direction stays one quick key event)
+      if (PAD_KEYCODE[w]) this.shell(['input', 'gamepad', 'keyevent', ...(this.padLong && !dir(w) ? ['--longpress'] : []), `KEYCODE_${PAD_KEYCODE[w]}`]);
     }
     flush(false);
     return { status: 0, stdout: '', stderr: '' };
@@ -136,32 +139,93 @@ export class Adb {
 // The game asks for a Microsoft sign-in before it joins an external server ("You need to authenticate to Microsoft
 // services", Guardian) — but not for one on 127.0.0.1. So the lab runs a small UDP relay on the device (app/relay):
 // the game joins 127.0.0.1:<listen>, the relay sends the session on to the lab's BDS on the machine (10.0.2.2:<port>).
-export const RELAY_SRC = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'relay', 'lab-relay.c');
+// ---- the lab's two small programs for a device (app/relay): built here for the device's CPU, never committed ----
+const RELAY_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'relay');
+export const RELAY_SRC = path.join(RELAY_DIR, 'lab-relay.c');
+export const PAD_SRC = path.join(RELAY_DIR, 'lab-pad.c'), PAD_HDR = path.join(RELAY_DIR, 'lab-uinput.h');
 export const RELAY_ON_DEVICE = '/data/local/tmp/lab-relay';
-/** the relay for an x86_64 device, built once on this machine (a static Linux binary: cc -static) → its path, or
- *  { error } when it cannot be (not Linux x86_64, no C compiler) */
-export function relayBinary(labDir, { cc = process.env.CC || 'cc' } = {}) {
-  const out = path.join(labDir, 'tools', 'lab-relay-x86_64');
-  if (fs.existsSync(out) && fs.statSync(out).mtimeMs >= fs.statSync(RELAY_SRC).mtimeMs) return out;
-  if (process.platform !== 'linux' || process.arch !== 'x64') return { error: 'このパソコン（Linux x86_64 以外）では中継を作れません' };
-  fs.mkdirSync(path.dirname(out), { recursive: true });
-  const r = spawnSync(cc, ['-static', '-Os', '-s', '-o', out, RELAY_SRC], { encoding: 'utf8', timeout: 120_000 });
-  return r.status === 0 && fs.existsSync(out) ? out : { error: `中継を作れません（${cc}: ${(r.stderr || r.error?.message || '').trim().split('\n').pop()?.slice(0, 160) || r.status}）` };
+const answers = (bin, args) => { try { return spawnSync(bin, args, { encoding: 'utf8', timeout: 30_000 }).status === 0; } catch { return false; } };
+const byVersionDesc = (a, b) => { const x = a.split(/\D+/).map(Number), y = b.split(/\D+/).map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (y[i] ?? 0) - (x[i] ?? 0); return 0; };
+/** the C compilers that make programs for a device's CPU, in the order they are tried (only those on this machine).
+ *  x86_64: cc (on a Linux x86_64 machine). arm64-v8a (phones): the Android NDK's clang (APP_NDK, ANDROID_NDK_HOME /
+ *  ANDROID_NDK_ROOT, <sdk>/ndk/<newest>: sdkmanager "ndk;<version>"), zig (APP_ZIG / zig, or python3 -m ziglang: pip install
+ *  ziglang), a cross gcc, and — lab-pad only, it needs no C library — clang with ld.lld
+ *  → [{ name, cmd: [bin, ...args], libc, flavor: gcc | ndk | zig | clang }] */
+export function deviceCompilers(abi, env = process.env, { has = answers } = {}) {
+  const out = [];
+  if (abi === 'x86_64') {
+    const cc = env.CC || 'cc';
+    if (process.platform === 'linux' && process.arch === 'x64' && has(cc, ['--version'])) out.push({ name: cc, cmd: [cc], libc: true, flavor: 'gcc' });
+    return out;
+  }
+  if (abi !== 'arm64-v8a') return out;
+  const sdk = sdkRoot(env), host = WIN ? 'windows-x86_64' : process.platform === 'darwin' ? 'darwin-x86_64' : 'linux-x86_64';
+  let ndks = [env.APP_NDK, env.ANDROID_NDK_HOME, env.ANDROID_NDK_ROOT];
+  try { if (sdk) ndks.push(...fs.readdirSync(path.join(sdk, 'ndk')).sort(byVersionDesc).map((v) => path.join(sdk, 'ndk', v))); } catch { /* no NDK in the SDK */ }
+  ndks = ndks.filter(Boolean);
+  // (the NDK's own clang with the Android target — not its aarch64-…-clang wrapper: on Windows that is a .cmd, which Node
+  // does not start without a shell)
+  for (const n of ndks) {
+    const c = path.join(n, 'toolchains', 'llvm', 'prebuilt', host, 'bin', `clang${WIN ? '.exe' : ''}`);
+    if (fs.existsSync(c)) { out.push({ name: `NDK ${path.basename(n)}`, cmd: [c, '--target=aarch64-linux-android24'], libc: true, flavor: 'ndk' }); break; }
+  }
+  const zig = env.APP_ZIG || 'zig';
+  if (has(zig, ['version'])) out.push({ name: 'zig', cmd: [zig, 'cc', '-target', 'aarch64-linux-musl'], libc: true, flavor: 'zig' });
+  else if (has('python3', ['-m', 'ziglang', 'version'])) out.push({ name: 'zig（python3 -m ziglang）', cmd: ['python3', '-m', 'ziglang', 'cc', '-target', 'aarch64-linux-musl'], libc: true, flavor: 'zig' });
+  for (const g of ['aarch64-linux-gnu-gcc', 'aarch64-linux-musl-gcc']) if (has(g, ['--version'])) { out.push({ name: g, cmd: [g], libc: true, flavor: 'gcc' }); break; }
+  if (has('clang', ['--version']) && has('ld.lld', ['--version'])) out.push({ name: 'clang + ld.lld', cmd: ['clang', '--target=aarch64-linux-gnu', '-fuse-ld=lld'], libc: false, flavor: 'clang' });
+  return out;
 }
+// lab-pad: no C library (a static program of its own system calls); lab-relay: static (the NDK: against the device's own
+// C library, which every Android has)
+const buildFlags = (kind, flavor) => (kind === 'pad'
+  ? ['-static', '-nostdlib', '-ffreestanding', '-fno-builtin', '-fno-stack-protector', '-fno-pie', '-no-pie', '-Os', '-s', ...(flavor === 'gcc' ? ['-fno-tree-loop-distribute-patterns'] : ['-Wno-unused-command-line-argument'])]
+  : [...(flavor === 'ndk' ? [] : ['-static']), '-Os', '-s']);
+export const abiTag = (abi) => (abi === 'arm64-v8a' ? 'arm64' : abi);
+/** lab-relay or lab-pad for a device's CPU, built once on this machine (again when its source changed) → its path, or
+ *  { error } saying why not and what would make it */
+export function deviceBinary(labDir, kind, { abi = 'x86_64', env = process.env, compilers } = {}) {
+  const src = kind === 'pad' ? PAD_SRC : RELAY_SRC, deps = kind === 'pad' ? [PAD_SRC, PAD_HDR] : [RELAY_SRC], what = kind === 'pad' ? 'コントローラー' : '中継';
+  const out = path.join(labDir, 'tools', `lab-${kind}-${abiTag(abi)}`);
+  if (fs.existsSync(out) && fs.statSync(out).mtimeMs >= Math.max(...deps.map((f) => fs.statSync(f).mtimeMs))) return out;
+  if (!['x86_64', 'arm64-v8a'].includes(abi)) return { error: `${abi} の端末用の${what}は作れません（x86_64 と arm64-v8a だけ）` };
+  const list = (compilers ?? deviceCompilers(abi, env)).filter((c) => kind === 'pad' || c.libc);
+  if (!list.length) return { error: abi === 'x86_64' ? `このパソコン（Linux x86_64 で cc があるもの以外）では${what}を作れません` : `arm64 の端末用の${what}を作るコンパイラがありません: Android NDK（sdkmanager "ndk;27.2.12479018"）か zig（pip install ziglang）を入れてください${kind === 'pad' ? '（clang と ld.lld でも作れます）' : ''}` };
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  const errs = [];
+  for (const c of list) {
+    const r = spawnSync(c.cmd[0], [...c.cmd.slice(1), ...buildFlags(kind, c.flavor), '-o', out, src], { encoding: 'utf8', timeout: 600_000 });
+    if (r.status === 0 && fs.existsSync(out)) return out;
+    fs.rmSync(out, { force: true });
+    errs.push(`${c.name}: ${(r.stderr || r.error?.message || '').trim().split('\n').filter((l) => /error|Error/.test(l)).pop()?.slice(0, 140) || r.status}`);
+  }
+  return { error: `${what}（${abi}）を作れません（${errs.join(' / ')}）` };
+}
+/** the relay for a device's CPU (x86_64 by default) → its path, or { error } */
+export const relayBinary = (labDir, { cc, abi = 'x86_64' } = {}) => deviceBinary(labDir, 'relay', { abi, env: cc ? { ...process.env, CC: cc } : process.env });
+/** a start command on the device as root: adbd itself (the emulator) or su (a rooted phone: Magisk and the like). umask 0:
+ *  what it makes (the controller's FIFO) stays writable for adb's shell, which sends it the presses */
+export const asRoot = (adb, cmd) => {
+  if (!adb.su) return cmd;
+  const q = `'${`umask 000; ${cmd}`.replace(/'/g, `'\\''`)}'`;
+  // (the form the device's su answered when it was looked at: `su -c`, or AOSP's own `su 0 sh -c`)
+  return adb.su === '0' ? `su 0 sh -c ${q}` : `su -c ${q}`;
+};
 /** the relays started on the device: 127.0.0.1:listen → host:port, each [listen, port] of `also`, and each port of `reflect`
  *  (a broadcast port the game holds itself — NetherNet's LAN discovery, 7551: its broadcasts sent on to host:port as the
- *  game's own packets) — the old ones stopped first. → { ok, note } */
-export function startRelay(adb, { labDir, listen = 19132, host = '10.0.2.2', port, also = [], reflect = [] }) {
-  const bin = process.env.APP_RELAY_BIN || relayBinary(labDir);
+ *  game's own packets) — the old ones stopped first. abi: the device's CPU (adb.abi, else x86_64) → { ok, note } */
+export function startRelay(adb, { labDir, listen = 19132, host = '10.0.2.2', port, also = [], reflect = [], abi = adb.abi ?? 'x86_64' }) {
+  const bin = process.env.APP_RELAY_BIN || relayBinary(labDir, { abi });
   if (typeof bin !== 'string') return { ok: false, note: bin.error };
   const p = adb.run(['push', bin, RELAY_ON_DEVICE], { timeout: 60_000 });
   if (p.status !== 0) return { ok: false, note: `中継を端末へ送れません: ${(p.stderr || p.stdout).trim().slice(0, 160)}` };
   // (pkill -x: by its name — `pkill -f lab-relay` matched this very shell line and killed it before the relay started.
   // setsid + nohup + no stdin: it lives on after adb's shell ends. The first one logs to lab-relay.log, the others beside it)
-  const all = [[listen, port], ...also];
+  // (listen null: no relay for the game's session — a reflector alone, for a device on the same network as the BDS)
+  const all = listen ? [[listen, port], ...also] : also;
   const starts = [...all.map(([l, pt], i) => `setsid nohup ${RELAY_ON_DEVICE} ${l} ${host} ${pt} > /data/local/tmp/lab-relay${i ? `-${l}` : ''}.log 2>&1 < /dev/null &`),
     ...reflect.map((pt) => `setsid nohup ${RELAY_ON_DEVICE} --reflect ${pt} ${host} ${pt} > /data/local/tmp/lab-relay-reflect-${pt}.log 2>&1 < /dev/null &`)].join(' ');
-  adb.run(['shell', `chmod 755 ${RELAY_ON_DEVICE}; pkill -x lab-relay 2>/dev/null; ${starts} sleep 1`], { timeout: 20_000 });
+  adb.run(['shell', asRoot(adb, `chmod 755 ${RELAY_ON_DEVICE}; pkill -x lab-relay 2>/dev/null; ${starts} sleep 1`)], { timeout: 20_000 });
   const pids = adb.run(['shell', 'pidof lab-relay || true'], { timeout: 15_000 }).stdout.trim().split(/\s+/).filter(Boolean);
   const what = [...all.map(([l, pt]) => `127.0.0.1:${l} → ${host}:${pt}`), ...reflect.map((pt) => `放送 :${pt} → ${host}:${pt}`)].join('、');
   return pids.length ? { ok: true, note: `端末の中継 ${what}（pid ${pids.join(' ')}）` } : { ok: false, note: `中継が動きません: ${adb.run(['shell', 'cat /data/local/tmp/lab-relay.log'], { timeout: 15_000 }).stdout.trim().slice(0, 160)}` };
@@ -170,28 +234,28 @@ export function startRelay(adb, { labDir, listen = 19132, host = '10.0.2.2', por
 // ---- a game controller on the device (app/relay/lab-pad.c: the kernel's uinput) ----
 // 1.26's new screens (Ore UI) take a controller where they ignore taps on the emulator; the shell's injected key events
 // (`input gamepad`, device -1) reach them unevenly — on CI they did not leave a screen a real controller's B left at once
-export const PAD_SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'relay', 'lab-pad.c');
 export const PAD_ON_DEVICE = '/data/local/tmp/lab-pad', PAD_FIFO = '/data/local/tmp/lab-pad.fifo';
-/** the controller for an x86_64 device, built once here (no C library: a few kilobytes) → its path, or { error } */
-export function padBinary(labDir, { cc = process.env.CC || 'cc' } = {}) {
-  const out = path.join(labDir, 'tools', 'lab-pad-x86_64');
-  if (fs.existsSync(out) && fs.statSync(out).mtimeMs >= fs.statSync(PAD_SRC).mtimeMs) return out;
-  if (process.platform !== 'linux' || process.arch !== 'x64') return { error: 'このパソコン（Linux x86_64 以外）ではコントローラーを作れません' };
-  fs.mkdirSync(path.dirname(out), { recursive: true });
-  const r = spawnSync(cc, ['-static', '-nostdlib', '-ffreestanding', '-fno-builtin', '-fno-tree-loop-distribute-patterns', '-fno-stack-protector', '-fno-pie', '-no-pie', '-Os', '-s', '-o', out, PAD_SRC], { encoding: 'utf8', timeout: 120_000 });
-  return r.status === 0 && fs.existsSync(out) ? out : { error: `コントローラーを作れません（${cc}: ${(r.stderr || r.error?.message || '').trim().split('\n').pop()?.slice(0, 160) || r.status}）` };
-}
+/** the controller for a device's CPU (x86_64 by default; no C library: a few kilobytes) → its path, or { error } */
+export const padBinary = (labDir, { cc, abi = 'x86_64' } = {}) => deviceBinary(labDir, 'pad', { abi, env: cc ? { ...process.env, CC: cc } : process.env });
 /** the controller plugged into the device (root: /dev/uinput), once: → { ok, note }. adb.pad() uses it from then on */
-export function startPad(adb, { labDir }) {
+export function startPad(adb, { labDir, abi = adb.abi ?? 'x86_64' }) {
   if (adb.run(['shell', 'pidof lab-pad || true'], { timeout: 15_000 }).stdout.trim()) { adb.padReady = true; return { ok: true, note: 'コントローラーはつながっています' }; }
-  const bin = process.env.APP_PAD_BIN || padBinary(labDir);
+  const bin = process.env.APP_PAD_BIN || padBinary(labDir, { abi });
   if (typeof bin !== 'string') return { ok: false, note: bin.error };
   const p = adb.run(['push', bin, PAD_ON_DEVICE], { timeout: 60_000 });
   if (p.status !== 0) return { ok: false, note: `コントローラーを端末へ送れません: ${(p.stderr || p.stdout).trim().slice(0, 160)}` };
-  adb.run(['shell', `chmod 755 ${PAD_ON_DEVICE}; setsid nohup ${PAD_ON_DEVICE} ${PAD_FIFO} > /data/local/tmp/lab-pad.log 2>&1 < /dev/null & sleep 1`], { timeout: 20_000 });
+  adb.run(['shell', asRoot(adb, `chmod 755 ${PAD_ON_DEVICE}; setsid nohup ${PAD_ON_DEVICE} ${PAD_FIFO} > /data/local/tmp/lab-pad.log 2>&1 < /dev/null & sleep 1`)], { timeout: 20_000 });
   const pid = adb.run(['shell', 'pidof lab-pad || true'], { timeout: 15_000 }).stdout.trim();
   adb.padReady = Boolean(pid);
   return pid ? { ok: true, note: `コントローラー（Xbox Wireless Controller、uinput）をつなぎました（pid ${pid}）` } : { ok: false, note: `コントローラーが動きません: ${adb.run(['shell', 'cat /data/local/tmp/lab-pad.log'], { timeout: 15_000 }).stdout.trim().slice(0, 160)}` };
+}
+/** what the lab put on a person's device, gone: its relay and controller stopped (as root when they ran as root: the copy of
+ *  the content logs too), then every file the lab may have left removed as the shell (it owns /data/local/tmp: a file a root
+ *  process made there goes too) — the programs, their logs and FIFO, the layout dumps, a recording a stopped run left */
+export function clearDevice(adb) {
+  if (adb.su) adb.run(['shell', asRoot(adb, 'pkill -x lab-relay 2>/dev/null; pkill -x lab-pad 2>/dev/null; rm -rf /data/local/tmp/lab-logs; true')], { timeout: 20_000 });
+  else adb.run(['shell', 'pkill -x lab-relay 2>/dev/null; pkill -x lab-pad 2>/dev/null; true'], { timeout: 20_000 });
+  return adb.run(['shell', 'rm -rf /data/local/tmp/lab-relay /data/local/tmp/lab-relay*.log /data/local/tmp/lab-pad /data/local/tmp/lab-pad.fifo /data/local/tmp/lab-pad.log /data/local/tmp/lab-ui.xml /data/local/tmp/lab-logs /sdcard/lab-rec-*.mp4 2>/dev/null; true'], { timeout: 20_000 });
 }
 // the shell's key codes of the same buttons (when there is no controller: input gamepad keyevent)
 const PAD_KEYCODE = { A: 'BUTTON_A', B: 'BUTTON_B', X: 'BUTTON_X', Y: 'BUTTON_Y', LB: 'BUTTON_L1', RB: 'BUTTON_R1', LT: 'BUTTON_L2', RT: 'BUTTON_R2', SELECT: 'BUTTON_SELECT', START: 'BUTTON_START', HOME: 'BUTTON_MODE', L3: 'BUTTON_THUMBL', R3: 'BUTTON_THUMBR', UP: 'DPAD_UP', DOWN: 'DPAD_DOWN', LEFT: 'DPAD_LEFT', RIGHT: 'DPAD_RIGHT' };

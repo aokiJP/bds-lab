@@ -183,7 +183,35 @@ rated」で Proceed → 「Download Resource Packs?」で Download Everything & 
 - **Genymobile/scrcpy**（H.264 の画面転送）: GPU のエンコーダが無いとソフトウェアで圧縮するので、2 CPU では重すぎる。
 - **openatx/uiautomator2**（常駐のエージェント）: uiautomator の dump は 3 秒（測定）。ダイアログに答えるときだけ使う。
 
-## 7. 次の手（効きそうな順）
+## 7. 自分の端末（root あり・なし × USB・Wi-Fi）
+
+本物の端末は、エミュレータと違って「人のもの」です。設計はそこから決めました。
+
+- **触るのは登録した端末だけ**: `app device`（一覧）は adb に見えている端末を並べるだけで、登録していない端末では何も実行
+  しない。`add` が読むだけのコマンド（getprop・id・dumpsys package・wm size・ip addr。root の確かめに su を 1 回）で調べ、
+  `app/.lab/devices/<名前>.json` に残す。
+- **参加はゲームのネットワークで、adb とは別**: adb の転送（forward / reverse）は TCP だけで、ゲームは UDP（RakNet・
+  NetherNet・LAN の放送 7551）。なので「adb が USB か Wi-Fi か」と「ゲームが BDS に届くか」は別の問題として扱う。端末と PC
+  が同じネットワーク（Wi-Fi・USB テザリング・ホットスポット）なら、ゲームの LAN の見つけ方がそのまま届き、root も中継も
+  要らない。NetherNet は LAN の放送の後、ICE でお互いのアドレスへ UDP を張るので、adb の上の 1 本の UDP の筒では足りない
+  （だから USB だけの道は作らず、テザリングを案内する）。
+- **root が変えるのは操作とログだけ**: root があれば、エミュレータで確かめたコントローラー（lab-pad、uinput）で押す。
+  lab-pad は C ライブラリを使わず、x86_64 と arm64 のシステムコールを持つ（`app/relay/lab-uinput.h` はカーネルのヘッダーを
+  使わない写し: 試験でカーネルの値と突き合わせる）。arm64 用は NDK・zig・cross gcc・clang+lld のどれかで作る。root が無ければ
+  `input gamepad keyevent`（ボタンは `--longpress`: ゲームは 1 フレームに 1 回ボタンを読む）。反射（lab-relay --reflect）は
+  放送だけを落とす Wi-Fi 向けの手で、`APP_DEVICE_REFLECT=1` のときだけ。
+- **変えたものは戻す**: run の間だけ、画面を点けたまま（stay_on・screen_off_timeout）・通知の帯のデモ表示・おやすみモード。
+  変える前の値を先にファイルへ書くので、途中で殺された run も次の run か `app device restore` が戻す。ゲームは run が起動
+  したときだけ止め、置いたもの（コントローラー・中継・ログの写し）は消す。画面の形・回線を変える手順は使わない。
+- **Wi-Fi は戻ってくる**: ワイヤレス デバッグはつなぐたびにポートが変わるので、端末のシリアル番号（ro.serialno、mDNS の
+  名前 adb-<番号>-… にも入る）で探してつなぎ直す。ペア設定コードは adb pair の 1 回にだけ使い、どこにも書かない。
+
+確かめたこと（偽の端末: tests/device-offline.mjs）: 4 通りの道の選び方と案内、登録しない端末に何も実行しないこと、ペア設定
+コードがどのファイルにも出力にも残らないこと、run の後に設定が元の値（無かったものは無いまま）に戻ること、su の端末で
+コントローラーを su で起こして後で消すこと、殺された run の後始末。arm64 の lab-pad と lab-relay は zig と clang+lld で作り、
+qemu で動かした。本物の端末での 4 通りの表（道・入り方・操作・時間・失敗と直し）は、手元の端末で通してからここに載せる。
+
+## 8. 次の手（効きそうな順）
 
 1. redroid の端末（起動 16 秒は確かめた）: GApps（Play 開発者サービス・Play ストア）を足したイメージと、アカウント・
    ゲーム入りの /data を暗号化キャッシュへ。ライセンス確認が通れば、戻すのはエミュレータの数分の一。

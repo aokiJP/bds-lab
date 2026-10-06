@@ -27,9 +27,9 @@ const UNITS = { bds: 'addons', end: 'plugins', ll: 'mods' };
 const today = () => new Date().toISOString().slice(0, 10);
 // never shipped: caches, results, secrets, per-machine state, leftovers of patch / handoff / ci / the autopilot
 // (extras.json: the extras zip's list of what was put back in this lab: this lab's own, never shipped)
-const SKIP = (r) => /(^|\/)(\.git|node_modules|\.lab|\.lab-node|\.lab-node\.tmp|\.lab-tools|runs|__pycache__|build|\.xmake|\.logs|\.pytest_cache)(\/|$)/.test(r)
+export const SKIP = (r) => /(^|\/)(\.git|node_modules|\.lab|\.lab-node|\.lab-node\.tmp|\.lab-tools|runs|__pycache__|build|\.xmake|\.logs|\.pytest_cache)(\/|$)/.test(r)
   || (/(^|\/)dist(\/|$)/.test(r) && !/^common\/[^/]+\/dist(\/|$)/.test(r))   // (vendored code keeps its dist/: common/nethernet-connect/dist is what `lan` runs)
-  || /^(carry|auto\/\.work|training)(\/|$)/.test(r) || r === 'extras.json' || /^ts\/(?!examples(\/|$))./.test(r) || /^bedrock-binary\/(profiles|reports|work|site)(\/|$)/.test(r) || /^bds\/addons\/[^/]+\/source\/(?!LICENSE|README)./.test(r)   // (a utility's upstream source: its bp/rp are what runs; license and readme kept)
+  || /^(carry|auto\/\.work|training)(\/|$)/.test(r) || r === 'extras.json' || /^auto\/(borrowed-seen\.jsonl|hosts\.json|host-ledger\.jsonl)$/.test(r) || r === 'host-result' || r.startsWith('host-result/') || /^ts\/(?!examples(\/|$))./.test(r) || /^bedrock-binary\/(profiles|reports|work|site)(\/|$)/.test(r) || /^bds\/addons\/[^/]+\/source\/(?!LICENSE|README)./.test(r)   // (a utility's upstream source: its bp/rp are what runs; license and readme kept)
   || /^(bds\/addons|end\/plugins|ll\/mods)\/[^/]+\/lab\.mjs$/.test(r) || /^sandbox-be\/(node_modules|vendor|bedrock-server|worlds|\.tools)(\/|$)/.test(r) || /^auto\/(\.lease\.json|\.lock|\.scheduled\.log|STOP)$/.test(r)
   || (/^bds\/vendor\/./.test(r) && r !== 'bds/vendor/bds-version.txt')
   || /(^|\/)\.env(\.(?!example$)[^/]*)?$/.test(r) || /(^|\/)(github\.token|\.DS_Store|Thumbs\.db)$/.test(r)
@@ -61,6 +61,12 @@ export function collect(top = TOP()) {
     }
   };
   walk(top);
+  // a borrowed unit (someone else's addon: colony harvest / borrow) never ships, even named a sample by mistake: its mark, or
+  // its name (borrowed_…) or the original kept in it (.borrowed/) — a unit still being judged has no full mark yet
+  const unitOf = (r) => /^((bds|end|ll)\/(addons|plugins|mods)\/[^/]+)\//.exec(r)?.[1];
+  const lent = [...new Set(files.filter(([r, b]) => (/^(bds|end|ll)\/(addons|plugins|mods)\/[^/]+\/imported\.json$/.test(r) && (() => { try { return Boolean(JSON.parse(b.toString('utf8')).borrowed); } catch { return false; } })())
+    || /^(bds\/addons|end\/plugins|ll\/mods)\/(borrowed_[^/]*|[^/]+\/\.borrowed)\//.test(r)).map(([r]) => unitOf(r)))];
+  if (lent.length) throw new Error(`借りたアドオンは配りません: ${lent.join(', ')}（samples.json から外す）`);
   return { files, dropped: [...dropped].sort(), skipped };
 }
 // what is yours inside files that ship: the autopilot's memory and the bench rows' local paths

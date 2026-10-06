@@ -26,7 +26,8 @@
 //   node lab.mjs auto run [--ticks n | --forever] [--via v] [--model m] [--dry]   the lab calls the AI (make.mjs's --via)
 //   node lab.mjs auto next                 for an agent that is itself the AI (Claude Code, Codex...): the one task, how
 //   node lab.mjs auto done <id> ok|fail ["<lesson>"]   …and its result (an engine task is gated here; fail → put back)
-//   node lab.mjs auto gate [--all] [--jobs n]  the gate tests on the lab as it is, side by side (--all: every offline test)
+//   node lab.mjs auto gate [--all] [--jobs n] [--on <owner/repo>|auto]  the gate tests on the lab as it is, side by side (--all:
+//                                          every offline test; --on: on a lender's host, node lab.mjs host; policy gateOn)
 //   node lab.mjs auto plan                 is there work, and for which labs (a schedule decides on it before its set-up)
 //   node lab.mjs auto log [n]   auto stop ["why"]   auto resume   auto policy [key=value ...]   auto schedule hourly|daily|off
 // LAB_AUTO_ROOT: another bds-lab folder (tests). LAB_AUTO_ISSUES=<json>: issues instead of gh (tests). LAB_CI_DRY=1: gh/git
@@ -37,6 +38,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { policy, stopped, floorHash, canSpend, isProtected, SECRET, PROTECTED, DEFAULT_POLICY } from './auto-guard.mjs';
+import { hostCmd, hostsSummary } from './hosts.mjs';
 
 const REPO = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const TOP = process.env.LAB_AUTO_ROOT || REPO;
@@ -349,10 +351,18 @@ export function gate(pol, out, only = null, { jobs } = {}) {
   return res;
 }
 // an engine change: it passes the gate, or each test it fails also failed before it (not its doing); and the floor is intact
-function engineVerdict(id, pol, changed, floor0, out) {
+async function engineVerdict(id, pol, changed, floor0, out) {
   const touched = changed.filter((r) => isProtected(r));
   if (touched.length || floorHash(TOP) !== floor0) return { ok: false, why: `touched the floor (${touched.join(' ') || 'common/auto-guard.mjs'}): put back` };
   if (!changed.length) return { ok: false, why: 'changed nothing' };
+  // the gate on a lender's host when the person set gateOn (AI-free, the same tests, the change as it is on disk): passed
+  // there = passed; failed there, or no host could take it (the budget, the hours, none) = the gate here decides, as before
+  if (pol.gateOn && pol.gateOn !== 'local') {
+    const said = [];
+    const passed = await hostCmd(['run', 'gate', '--on', String(pol.gateOn)], (l) => { said.push(l); out(`  host ${l}`); });
+    const hit = said.map((l) => /^PASS (r\S+) on (\S+?)（/.exec(l)).find(Boolean);
+    if (passed && hit) return { ok: true, why: `gate passed on ${hit[2]} (${hit[1]})` };
+  }
   const after = gate(pol, out), failing = after.filter((x) => !x.ok).map((x) => x.t);
   if (!failing.length) return { ok: true, why: `gate passed (${after.filter((x) => !x.skip).length} tests)` };
   // were they failing before the change too? put the old files in, run just those, put the change back
@@ -485,7 +495,7 @@ export async function tick({ dry = false, out = console.log } = {}) {
     else if (task.kind === 'reflect') { const r = await reflect(rows); ok = true; tokens += r.tokens; note = `backlog +${r.added} −${r.dropped}${r.lessons ? `; lessons → ${r.lessons}` : ''}`; }
     else if (task.kind === 'lab') {
       const r = await engineAgent(task, pol, budget, out); tokens += r.tokens;
-      const v = r.ok ? engineVerdict(id, pol, changedSince(before), floor0, out) : { ok: false, why: r.note };
+      const v = r.ok ? await engineVerdict(id, pol, changedSince(before), floor0, out) : { ok: false, why: r.note };
       ok = v.ok; note = `${v.why}${r.note ? ' | ' + r.note : ''}`;
     } else {
       const r = labRun(task.cmd, { LAB_TOKEN_BUDGET: String(budget), LAB_MAKE_CONTEXT: lessonsCtx(id) }, out);
@@ -536,6 +546,7 @@ function status(out) {
   const pol = policy(TOP), rows = ledger(), st = stats(rows), s = stopped(TOP);
   out(`autopilot: ${s ? `STOPPED (${cut(s, 80)}; node lab.mjs auto resume)` : 'ready'} | merge ${pol.merge}${pol.push ? '+push' : ''} | review ${pol.review ? 'on' : 'off'} | today ${spentToday(rows).toLocaleString('en')} / ${pol.dailyTokens.toLocaleString('en')} tokens | ${rows.length} tasks in the ledger`);
   if (Object.keys(st).length) out('earned: ' + Object.entries(st).map(([k, x]) => `${k} ${x.ok}/${x.n}`).join(' · '));
+  { const hs = hostsSummary(); if (hs) out(`hosts (gate ${pol.gateOn}): ${hs}`); }
   const q = sense(pol, rows);
   out(q.length ? 'next (the AI picks one; score = value × success rate × cost):' : 'next: nothing to do');
   for (const t of q.slice(0, 10)) out(`  ${String(t.score).padStart(5)}  ${t.id}  ${t.title}`);
@@ -558,6 +569,7 @@ function setPolicy(args, out) {
     if (typeof want === 'number' && !(typeof v === 'number' && Number.isFinite(v) && v >= 0)) { out(`ERR ${m[1]}=${m[2]}: a number ≥ 0`); return false; }
     if (typeof want === 'boolean' && typeof v !== 'boolean') { out(`ERR ${m[1]}=${m[2]}: true or false`); return false; }
     if (m[1] === 'merge' && !['auto', 'pr', 'local'].includes(v)) { out(`ERR merge=${m[2]}: auto | pr | local`); return false; }
+    if (m[1] === 'gateOn' && !(v === 'local' || v === 'auto' || /^[\w.-]+\/[\w.-]+$/.test(String(v)))) { out(`ERR gateOn=${m[2]}: local | auto | <owner/repo>`); return false; }
     if (Array.isArray(want) && !(Array.isArray(v) && v.every((x) => typeof x === 'string' && fs.existsSync(path.join(TOP, x))))) { out(`ERR ${m[1]}: a JSON list of test files that exist, e.g. ${m[1]}='["tests/docs-offline.mjs"]'`); return false; }
     if (typeof want === 'string' && typeof v !== 'string') { out(`ERR ${m[1]}=${m[2]}: text`); return false; }
     let o = p; for (const k of ks.slice(0, -1)) o = o[k] ??= {}; o[ks.at(-1)] = v;
@@ -607,7 +619,7 @@ async function done(args, out) {
   let ok = verdict === 'ok', note = rest.join(' ');
   let changed = changedSince(before);
   if (changed.some((r) => isProtected(r)) || floorHash(TOP) !== L.floor) { ok = false; note = `touched the floor: put back (${changed.filter((r) => isProtected(r)).join(' ')})`; putBack(id, changed); }
-  else if (ok && task.kind === 'lab') { const v = engineVerdict(id, pol, changed, L.floor, out); ok = v.ok; note = v.why + (note ? ' | ' + note : ''); if (!ok) putBack(id, changed); }
+  else if (ok && task.kind === 'lab') { const v = await engineVerdict(id, pol, changed, L.floor, out); ok = v.ok; note = v.why + (note ? ' | ' + note : ''); if (!ok) putBack(id, changed); }
   if (!ok && rest.length) addLesson(task.kind, rest.join(' '));
   if (task.item) markItem(task.item, ok);
   record({ id: task.id, at: new Date().toISOString(), kind: task.kind, title: cut(task.title, 120), ok, tokens: 0, sec: Math.round((Date.now() - L.at) / 1000), via: 'agent', why: 'auto next', note: cut(note, 200) });
@@ -639,6 +651,9 @@ export async function autoCmd(args, out = console.log) {
     return true;
   }
   if (sub === 'gate') {
+    // --on <owner/repo>|auto: on a lender's host (node lab.mjs host): the same gate, their minutes
+    const on = flag('--on');
+    if (on) return hostCmd(['run', a.includes('--all') ? 'gate-all' : 'gate', '--on', on], out);
     // --all: every offline test in tests/ too (the gate's, then the rest: the labs end to end, app, lan, login, env, …);
     // --jobs n: how many side by side (1 = one by one); a test whose vendored part is missing says so and is not a failure
     const pol = policy(TOP), all = a.includes('--all'), jobs = Number(flag('--jobs')) || undefined;
@@ -673,6 +688,6 @@ export async function autoCmd(args, out = console.log) {
     out(`auto: ${ran} task(s)`);
     return true;
   }
-  out('usage: node lab.mjs auto [run [--ticks n|--forever] [--dry] [--via v] [--model m] | next | plan | done <id> ok|fail ["lesson"] | gate [--all] [--jobs n] | log [n] | stop ["why"] | resume | policy [key=value] | schedule hourly|daily|off]');
+  out('usage: node lab.mjs auto [run [--ticks n|--forever] [--dry] [--via v] [--model m] | next | plan | done <id> ok|fail ["lesson"] | gate [--all] [--jobs n] [--on <owner/repo>|auto] | log [n] | stop ["why"] | resume | policy [key=value] | schedule hourly|daily|off]');
   return false;
 }
