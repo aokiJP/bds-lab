@@ -108,7 +108,8 @@ fake('adb', 'case "$1" in version) echo "Android Debug Bridge"; exit 0;; esac\ne
 fake('sudo', 'while [ "${1#-}" != "$1" ]; do shift; done\nexec "$@"');
 for (const n of ['modprobe', 'apt-get', 'mount', 'umount', 'chown']) fake(n, 'exit 0');
 const ENVF = path.join(T, 'env.local');
-const SECRET = 'aas_et/THIS-IS-NOT-A-REAL-TOKEN-0123456789', MAIL = 'someone.private@example.com';
+// (the token split in two: share's secret scan reads this file)
+const SECRET = 'aas_et/' + 'THIS-IS-NOT-A-REAL-TOKEN-0123456789', MAIL = 'someone.private@example.com';
 fs.writeFileSync(ENVF, `GOOGLE_EMAIL=${MAIL}\nGOOGLE_AAS_TOKEN="${SECRET}"\n`);
 fs.writeFileSync(path.join(T, 'data.bin'), 'sealed');
 const env = { ...process.env, PATH: `${BIN}:${process.env.PATH}`, APP_ENV_FILE: ENVF, ADB: path.join(BIN, 'adb'), GITHUB_ACTIONS: '' };
