@@ -34,6 +34,37 @@ export async function run() {
     eq(F.checkPlan({ goal: 'x', base: 'b', lanes: [{ name: 'one', goal: 'g', owns: ['a.mjs#f'], test: 't' }, { name: 'two', goal: 'g', owns: ['a.mjs#g'], test: 't', after: ['one'] }] }, text), []);
     ok(F.checkPlan({ goal: 'x', base: 'b', lanes: Array.from({ length: 11 }, (_, i) => ({ name: `l${i}`, goal: 'g', owns: [`f${i}.mjs`], test: 't' })) }).some((b) => /多すぎ/.test(b)));
   });
+  await t('assignModels: Opus 4 割（固定の Opus が先、残りは重い順）、Sonnet 6 割。固定が多ければそのまま、mix で変えられる', () => {
+    const lane = (name, w, x = {}) => ({ name, goal: 'g', owns: [`${name}.mjs`], test: 't', weight: w, ...x });
+    const plan = { lanes: [lane('a', 100), lane('b', 900), lane('c', 300), lane('d', 50), lane('e', 700), lane('r', 0, { readonly: true, owns: undefined }), lane('f', 10), lane('g', 20), lane('h', 30), lane('i', 40)] };
+    const m = F.assignModels(plan), opus = [...m].filter(([, x]) => x.model === 'opus').map(([n]) => n).sort();
+    eq(opus, ['b', 'c', 'e', 'r']);   // 10 本の 4 割 = 4: レビュー + 重い 3 本
+    ok(/比率/.test(m.get('b').why) && /レビュー/.test(m.get('r').why) && m.get('a').model === 'sonnet');
+    const many = { lanes: [lane('x', 1, { hard: 'h' }), lane('y', 1, { hard: 'h' }), lane('z', 1)] };
+    eq([...F.assignModels(many).values()].map((x) => x.model), ['opus', 'opus', 'sonnet']);   // 目標 1 本でも hard の 2 本は Opus
+    eq([...F.assignModels({ ...many, mix: { opus: 1 } }).values()].map((x) => x.model), ['opus', 'opus', 'opus']);
+    eq(F.modelOf(lane('a', 100), { plan }).model, 'sonnet'); eq(F.modelOf(lane('b', 900), { plan }).model, 'opus');
+    ok(F.checkPlan({ goal: 'x', base: 'b', mix: { opus: 2 }, lanes: [lane('a', 1)] }).some((b) => /mix\.opus/.test(b)));
+  });
+  await t('laneWork: ファイルの行数・関数の行数・details 40 行、新しいファイル 80 行、weight が勝つ', () => {
+    const text = (f) => (f === 'a.mjs' ? 'function f() {\n  return 1;\n}\nfunction g() {}\n' : f === 'b.mjs' ? 'x\ny\n' : null);
+    eq(F.laneWork({ owns: ['a.mjs#f'], details: ['d'] }, text), 3 + 40);
+    eq(F.laneWork({ owns: ['b.mjs', 'new.mjs'] }, text), 3 + 80);
+    eq(F.laneWork({ owns: ['b.mjs'], weight: 7 }, text), 7);
+  });
+  await t('sizePlan: 小さな仕事は 1 本（並行の起動代が高い）、大きい仕事は 1 本 1500 行までに割る、読む役は書く 4 本に 1 本', () => {
+    const one = F.sizePlan([120, 80]);
+    eq([one.writes, one.reviews], [1, 0]);
+    const mid = F.sizePlan([900, 900, 900, 900]);
+    ok(mid.writes >= 2 && mid.writes <= 4 && mid.reviews === 1, JSON.stringify(mid));
+    const big = F.sizePlan(Array.from({ length: 12 }, () => 1400));
+    ok(big.total <= F.MAX_LANES && big.writes >= 8 && big.reviews === Math.ceil(big.writes / 4), JSON.stringify(big));
+    ok(mid.cost > 0 && mid.single > 0 && mid.cost >= mid.single, JSON.stringify(mid));
+  });
+  await t('brief: 司令塔は Opus、Sonnet 6 割・Opus 4 割、models と size の使い方', () => {
+    const b = F.brief();
+    ok(/司令塔で、モデルは Opus/.test(b) && /Sonnet 約 6 割・Opus 約 4 割/.test(b) && /fanout\.mjs models/.test(b) && /fanout\.mjs size/.test(b), b);
+  });
   await t('modelOf: 既定は sonnet、レビューと hard は opus、計画の指定が勝つ、直しが 2 回通らなければ opus', () => {
     eq(F.modelOf({ name: 'a' }).model, 'sonnet');
     eq(F.modelOf({ name: 'r', readonly: true }).model, 'opus');
@@ -87,8 +118,16 @@ export async function run() {
       const s = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8'));
       eq(s.permissions.deny, ['WebFetch']); ok(s.permissions.allow.includes('Bash(node .fanout/fanout.mjs:*)'));
       ok(!F.hasAutoTrigger(fs.readFileSync(path.join(dir, '.github', 'workflows', 'v.yml'), 'utf8')));
+      eq([s.model, s.env.CLAUDE_CODE_SUBAGENT_MODEL], ['opus', 'sonnet']);
+      eq(s.hooks.SessionStart, [{ hooks: [{ type: 'command', command: 'node .fanout/fanout.mjs brief' }] }]);
       node('install');
+      const s2 = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8'));
+      eq(s2.hooks.SessionStart.length, 1);   // 2 回目は足さない
       eq(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8').split('fanout:rules').length, 2);
+      // an older rules block is replaced (the block runs to the end of AGENTS.md)
+      const af = path.join(dir, 'AGENTS.md'), cur = fs.readFileSync(af, 'utf8');
+      fs.writeFileSync(af, cur.slice(0, cur.indexOf('<!-- fanout:rules -->')) + '<!-- fanout:rules -->\n古い規則\n');
+      ok(/新しくした/.test(node('install').stdout)); ok(!/古い規則/.test(fs.readFileSync(af, 'utf8')) && fs.readFileSync(af, 'utf8').split('fanout:rules').length === 2);
       ok(node('actions-off', '--check').status === 0);
     });
     await t('new: commit していない変更があれば断る → commit 後に計画の雛形', () => {

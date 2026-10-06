@@ -62,5 +62,21 @@
       "SuggestConnectors",
       "propose_skills"
     ]
+  },
+  "model": "opus",
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .fanout/fanout.mjs brief"
+          }
+        ]
+      }
+    ]
   }
 }

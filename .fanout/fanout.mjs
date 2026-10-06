@@ -9,7 +9,9 @@
 //   node .fanout/fanout.mjs worktree <レーン>     そのレーンの作業フォルダを土台から作る（枝 fanout/<レーン>、計画に記録）
 //   node .fanout/fanout.mjs record <レーン> <枝>  子が作った枝を計画に記録
 //   node .fanout/fanout.mjs order               統合の順番（after に従う）
-//   node .fanout/fanout.mjs models              レーンごとに使うモデル（Agent の model に渡す）と、その理由
+//   node .fanout/fanout.mjs models              レーンごとに使うモデル（Agent の model に渡す）と、その理由（Opus 4 割・Sonnet 6 割）
+//   node .fanout/fanout.mjs size [行数 ...]      いちばん安く並行できるレーン数（計画があればその仕事量から）と費用の見積もり
+//   node .fanout/fanout.mjs brief               どの作業でも最初に読む進め方（SessionStart のフックが毎回これを文脈に入れる）
 //   node .fanout/fanout.mjs status              レーンごとの枝・commit 数・範囲の検査
 //   node .fanout/fanout.mjs actions-off [--check]   .github/workflows を手動（workflow_dispatch）だけにする
 //   node .fanout/fanout.mjs selftest            この道具自身のテスト（一時フォルダの git で）
@@ -99,6 +101,7 @@ export function checkPlan(plan, fileText = () => null) {
   if (!plan.base) bad.push('base（土台の commit）がありません');
   if (!lanes.length) bad.push('lanes が空です');
   if (lanes.length > (plan.maxLanes ?? MAX_LANES)) bad.push(`レーンが ${lanes.length} 本: 多すぎます（上限 ${plan.maxLanes ?? MAX_LANES}）`);
+  if (plan.mix !== undefined && !(Number.isFinite(plan.mix?.opus) && plan.mix.opus >= 0 && plan.mix.opus <= 1)) bad.push('mix.opus は 0〜1 の数（Opus のレーンの割合）');
   const names = new Set(), shared = [...ALWAYS_SHARED, ...(plan.shared ?? [])];
   const whole = [], fns = new Map();   // path -> [{lane, fn}]
   for (const l of lanes) {
@@ -107,6 +110,7 @@ export function checkPlan(plan, fileText = () => null) {
     names.add(l.name);
     if (!l.goal) bad.push(`${l.name}: goal がありません`);
     if (l.model !== undefined && !MODELS.includes(l.model)) bad.push(`${l.name}: model は ${MODELS.join(' / ')}（${l.model}）`);
+    if (l.weight !== undefined && !(Number.isFinite(l.weight) && l.weight >= 0)) bad.push(`${l.name}: weight は 0 以上の数（行数相当）`);
     const owns = l.owns ?? [];
     if (l.readonly) {
       if (owns.length) bad.push(`${l.name}: readonly なのに owns があります`);
@@ -144,17 +148,79 @@ export function checkPlan(plan, fileText = () => null) {
   return bad;
 }
 /** the lanes in an order where each comes after its `after` (pure; throws on a cycle) */
-// ---- which model a lane runs on: Sonnet by default (half Opus's price per token), Opus only where a mistake is expensive ----
+// ---- which model a lane runs on. The commander (plan, merge) is Opus. Lanes: about 6 in 10 on Sonnet (half Opus's price
+// per token) and 4 in 10 on Opus — Opus where a mistake is expensive (reviews, `hard`), then the heaviest of the rest until the
+// mix is reached. A plan may set its own `mix: { opus: 0.4 }` ----
 export const MODELS = ['sonnet', 'opus'];
-/** a lane → {model, why}: its own `model` if set; else Opus for a readonly lane (a review: finding what breaks is the hard
- *  part, and its findings decide what gets fixed) or a lane marked `hard` (several files, processes or waiting on each
- *  other, cleanup, security); else Sonnet. A fix round goes up to Opus after `escalateAfter` failed rounds (pure) */
-export function modelOf(lane, { round = 0, escalateAfter = 2 } = {}) {
+export const COMMANDER = 'opus';
+export const MIX = { opus: 0.4 };
+// price per 1M tokens (Claude API): input / output. Opus is exactly twice Sonnet
+export const PRICE = { sonnet: { in: 2, out: 10 }, opus: { in: 4, out: 20 } };
+/** a lane → {model, why} without the rest of the plan: its own `model` if set; else Opus for a readonly lane (a review:
+ *  finding what breaks is the hard part, and its findings decide what gets fixed) or a lane marked `hard` (several files,
+ *  processes or waiting on each other, cleanup, security); else Sonnet. A fix round goes up to Opus after `escalateAfter`
+ *  failed rounds. With `plan`: the plan's mix decides the rest (assignModels) (pure) */
+export function modelOf(lane, { round = 0, escalateAfter = 2, plan = null } = {}) {
   if (lane.model) return { model: lane.model, why: '計画で指定' };
   if (round >= escalateAfter) return { model: 'opus', why: `直しが ${round} 回通らなかった` };
   if (lane.readonly) return { model: 'opus', why: 'レビュー（壊れる道を探す）' };
   if (lane.hard) return { model: 'opus', why: `難しい: ${typeof lane.hard === 'string' ? lane.hard : '計画で hard'}` };
+  if (plan) return assignModels(plan).get(lane.name) ?? { model: 'sonnet', why: '既定' };
   return { model: 'sonnet', why: '既定' };
+}
+/** how much work a lane carries, in "lines" (pure): its owned code (a whole file's lines, or its named functions' lines) plus
+ *  40 per detail; `lane.weight` overrides. fileText(path) → the base's text or null (a new file counts 80) */
+export function laneWork(lane, fileText = () => null) {
+  if (Number.isFinite(lane.weight)) return lane.weight;
+  if (lane.readonly) return 0;
+  let n = 0;
+  for (const o of lane.owns ?? []) {
+    const p = parseOwn(o), t = /[*?]/.test(p.path) ? null : fileText(p.path);
+    if (t == null) { n += 80; continue; }
+    if (!p.fns) { n += t.split('\n').length; continue; }
+    for (const d of definitions(t)) if (p.fns.includes(d.name)) n += d.end - d.start + 1;
+  }
+  return n + 40 * (lane.details?.length ?? 0);
+}
+/** plan → Map(lane name → {model, why}) (pure apart from fileText): fixed choices first (model, readonly, hard), then the
+ *  heaviest Sonnet lanes go up to Opus until round(lanes × mix.opus) lanes are on Opus. More fixed Opus lanes than that stay
+ *  Opus (a review or a hard lane on Sonnet costs more in fixes than it saves) */
+export function assignModels(plan, fileText = () => null) {
+  const lanes = plan.lanes ?? [], want = Math.round(lanes.length * (plan.mix?.opus ?? MIX.opus)), out = new Map();
+  for (const l of lanes) out.set(l.name, modelOf(l));
+  let opus = [...out.values()].filter((m) => m.model === 'opus').length;
+  const free = lanes.filter((l) => !l.model && !l.readonly && !l.hard).map((l, i) => ({ l, i, w: laneWork(l, fileText) })).sort((a, b) => b.w - a.w || a.i - b.i);
+  for (const { l, w } of free) { if (opus >= want) break; out.set(l.name, { model: 'opus', why: `比率（Opus ${Math.round((plan.mix?.opus ?? MIX.opus) * 100)}%）: 重い順（${w} 行相当）` }); opus++; }
+  return out;
+}
+/** the cheapest lane count that still runs side by side (pure). Every lane pays a start-up (its prompt, AGENTS.md, reading the
+ *  code: about `overhead` input tokens) before any work; work costs about `perLine` tokens a line. Splitting below
+ *  `minWork` lines a lane pays more start-up than it saves; above `maxWork` a lane is slow and its fixes cost more. Reviews:
+ *  one Opus reader per up to 4 writing lanes (none for a single small one). → {writes, reviews, total, cost, perLane[]} */
+export function sizePlan(works, { overhead = 40_000, perLine = 60, outShare = 0.25, minWork = 300, maxWork = 1500, mix = MIX.opus, maxLanes = MAX_LANES } = {}) {
+  const total = works.reduce((a, b) => a + b, 0);
+  const cost = (n, r) => {
+    // tokens: start-up per lane + the work (in), a quarter of it written back (out); Opus share by the mix
+    const inT = n * overhead + total * perLine, outT = total * perLine * outShare, rIn = r * (overhead + total * perLine * 0.5), rOut = r * 4000;
+    const blend = (k) => PRICE.sonnet[k] * (1 - mix) + PRICE.opus[k] * mix;
+    return (inT * blend('in') + outT * blend('out') + rIn * PRICE.opus.in + rOut * PRICE.opus.out) / 1e6;
+  };
+  const reviewsFor = (n) => (n <= 1 && total < maxWork ? 0 : Math.ceil(n / 4));
+  // the counts that fit under the cap (writers + readers); a piece of work is never split (at most one lane per piece)
+  const feasible = [];
+  for (let n = 1; n <= Math.max(1, Math.min(works.length || 1, maxLanes)); n++) if (n + reviewsFor(n) <= maxLanes || n === 1) feasible.push(n);
+  const pick = (n) => ({ writes: n, reviews: reviewsFor(n), total: n + reviewsFor(n), cost: cost(n, reviewsFor(n)) });
+  let best = null;
+  for (const n of feasible) {
+    const per = total / n;
+    if (per > maxWork || (per < minWork && n > 1)) continue;
+    const c = pick(n);
+    // cheapest first; at the same price (within 5%) more lanes finish sooner
+    if (!best || c.cost < best.cost * 0.95 || (c.cost <= best.cost * 1.05 && n > best.writes)) best = c;
+  }
+  // too much for the cap even at 1500 lines a lane: as many lanes as the cap allows; too little to split: one
+  best ??= total / feasible.at(-1) > maxWork ? pick(feasible.at(-1)) : pick(1);
+  return { ...best, work: total, cost: Math.round(best.cost * 100) / 100, single: Math.round(cost(1, 0) * 100) / 100 };
 }
 export function order(plan) {
   const lanes = plan.lanes ?? [], done = [], state = new Map();
@@ -338,6 +404,17 @@ function install(top) {
   const allow = new Set(s.permissions.allow ?? []);
   for (const a of ['Bash(node .fanout/fanout.mjs:*)', 'Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git merge:*)', 'Bash(git worktree:*)', 'Bash(git branch:*)', 'Bash(git checkout:*)', 'Bash(git switch:*)', 'Bash(git show:*)', 'Bash(git rev-parse:*)']) allow.add(a);
   s.permissions.allow = [...allow];
+  // the commander on Opus; a subagent started without a model on Sonnet (the cheap default: Opus only where `models` says);
+  // every session starts with the brief in its context
+  const kept = [];
+  if (s.model && s.model !== COMMANDER) kept.push(`model（${s.model}）はそのまま`); else s.model = COMMANDER;
+  s.env ??= {};
+  if (s.env.CLAUDE_CODE_SUBAGENT_MODEL && s.env.CLAUDE_CODE_SUBAGENT_MODEL !== 'sonnet') kept.push(`CLAUDE_CODE_SUBAGENT_MODEL（${s.env.CLAUDE_CODE_SUBAGENT_MODEL}）はそのまま`); else s.env.CLAUDE_CODE_SUBAGENT_MODEL = 'sonnet';
+  s.hooks ??= {};
+  const BRIEF = 'node .fanout/fanout.mjs brief';
+  const ss = (s.hooks.SessionStart ??= []);
+  if (!ss.some((g) => (g.hooks ?? []).some((h) => h.command === BRIEF))) ss.push({ hooks: [{ type: 'command', command: BRIEF }] });
+  said.push(`.claude/settings.json: 司令塔 ${s.model}・子の既定 ${s.env.CLAUDE_CODE_SUBAGENT_MODEL}・起動のたびに brief${kept.length ? `（${kept.join('、')}）` : ''}`);
   fs.mkdirSync(path.dirname(sf), { recursive: true });
   fs.writeFileSync(sf, JSON.stringify(s, null, 2) + '\n');
   said.push(`.claude/settings.json: ${removed.length ? `拒否から外した ${removed.join(' ')}、` : ''}許可に fanout と git の作業コマンド`);
@@ -347,7 +424,9 @@ function install(top) {
   // AGENTS.md: the rules, once
   const af = path.join(top, 'AGENTS.md'), rules = fs.readFileSync(path.join(HERE, 'RULES.md'), 'utf8');
   const cur = fs.existsSync(af) ? fs.readFileSync(af, 'utf8') : '';
-  if (!cur.includes(AGENTS_MARK)) { fs.writeFileSync(af, `${cur.replace(/\n*$/, '\n\n')}${AGENTS_MARK}\n${rules.trim()}\n`); said.push('AGENTS.md: 並行開発の規則を末尾に'); }
+  const block = `${AGENTS_MARK}\n${rules.trim()}\n`;
+  if (!cur.includes(AGENTS_MARK)) { fs.writeFileSync(af, `${cur.replace(/\n*$/, '\n\n')}${block}`); said.push('AGENTS.md: 並行開発の規則を末尾に'); }
+  else if (cur.slice(cur.indexOf(AGENTS_MARK)) !== block) { fs.writeFileSync(af, cur.slice(0, cur.indexOf(AGENTS_MARK)) + block); said.push('AGENTS.md: 並行開発の規則を新しくした'); }
   else said.push('AGENTS.md: 規則は入っています');
   // the run's own files never go into git
   const gi = path.join(top, '.gitignore'), g = fs.existsSync(gi) ? fs.readFileSync(gi, 'utf8') : '';
@@ -357,6 +436,20 @@ function install(top) {
   if (g2 !== g) fs.writeFileSync(gi, g2);
   return said;
 }
+
+// ---- what every session reads first (SessionStart hook: `node .fanout/fanout.mjs brief`) ----
+export function brief() {
+  return [
+    '## 進め方（fanout が既定・このリポジトリのすべての作業）',
+    `- あなた（このセッション）は司令塔で、モデルは ${COMMANDER === 'opus' ? 'Opus' : COMMANDER}。作業は /fanout（.claude/skills/fanout/SKILL.md）で、計画 → 子（サブエージェント）を並行 → 範囲の検査 → 統合。`,
+    '- 例外（司令塔が 1 人でやる方が安い）: 質問に答えるだけ・1 ファイルで 50 行に満たない直し・調べもの。迷ったら `node .fanout/fanout.mjs size <行数…>` が 1 本と言えば 1 人で。',
+    `- 子のモデル: Sonnet 約 6 割・Opus 約 4 割。Agent を呼ぶときは必ず \`node .fanout/fanout.mjs models\` の値を model に渡す（渡さなければ Sonnet）。Opus はレビュー・hard・重いレーン。`,
+    '- 何体にするか: `node .fanout/fanout.mjs size` の数（いちばん安く並行できる数。小さく割りすぎない）。',
+    '- 子へのプロンプトは `node .fanout/fanout.mjs prompt <レーン>` の出力だけ。共有ファイル（AGENTS.md・README・CHANGES・.claude・.fanout・.github）は司令塔だけが触る。',
+    '',
+  ].join('\n');
+}
+const baseText = (top, plan) => (f) => { const r = git(['show', `${plan.base}:${f}`], top); return r.ok ? r.out : null; };
 
 // ---- command line ----
 function newPlan(top, goal) {
@@ -412,10 +505,23 @@ async function main([cmd, ...rest]) {
     }
     case 'order': console.log(order(loadPlan(top)).join('\n')); break;
     case 'models': {
-      const plan = loadPlan(top);
-      for (const l of plan.lanes) { const m = modelOf(l); console.log(`${l.name.padEnd(14)} ${m.model.padEnd(7)} ${m.why}`); }
+      const plan = loadPlan(top), ft = baseText(top, plan), a = assignModels(plan, ft);
+      for (const l of plan.lanes) { const m = a.get(l.name); console.log(`${l.name.padEnd(14)} ${m.model.padEnd(7)} ${m.why}`); }
+      const n = plan.lanes.length, o = [...a.values()].filter((m) => m.model === 'opus').length;
+      console.log(`（司令塔 ${COMMANDER}・レーン ${n} 本: Opus ${o} / Sonnet ${n - o}、目標 Opus ${Math.round((plan.mix?.opus ?? MIX.opus) * 100)}%）`);
       break;
     }
+    case 'size': {
+      // from numbers given (each piece of work in lines), else from the plan's writing lanes
+      let works = rest.map(Number).filter((x) => Number.isFinite(x) && x > 0), from = '指定の仕事量';
+      if (!works.length) { const plan = loadPlan(top), ft = baseText(top, plan); works = plan.lanes.filter((l) => !l.readonly).map((l) => laneWork(l, ft)); from = '計画の書くレーン'; }
+      const r = sizePlan(works);
+      console.log(`✔ いちばん安く並行できる数: 書く ${r.writes} 本 + 読む ${r.reviews} 本 = ${r.total} 体（司令塔のほか）`);
+      console.log(`  ${from}: ${works.length} 個、計 ${r.work} 行相当 · 見積もり $${r.cost}（1 本だけなら $${r.single}、並行の上乗せ ${r.single ? Math.round((r.cost / r.single - 1) * 100) : 0}%）`);
+      console.log(`  決め方: 1 本あたり 300〜1500 行相当（小さく割ると起動の分が仕事より高くつく・大きいと遅く直しが高い）、同じ値段なら多いほう、読む役は書く 4 本に 1 本（Opus）`);
+      break;
+    }
+    case 'brief': process.stdout.write(brief()); break;
     case 'status': {
       const plan = loadPlan(top);
       for (const name of order(plan)) {
