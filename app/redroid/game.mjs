@@ -9,10 +9,12 @@
 //                                                              in GitHub Actions only for a private repository; as root)
 //   node app/redroid/game.mjs launch [--port p]                the game on a running device, timed to its title
 //   node app/redroid/game.mjs debug --data <dir> [--addon a] [--mode run|ui] [--keep] [-- <app run / ui の指定>]
-//                                                              start from it to the title (timed: the "ready to debug" figure),
-//                                                              then app/'s own `app run` (or `app ui`) on that device: it takes a
-//                                                              booted device named by APP_SERIAL as it is (APP_LIVE_DEVICE=1);
-//                                                              the device stopped after unless --keep (= app run --device redroid)
+//                                                              app/'s own `app run` (or `app ui`) started at once beside it (its
+//                                                              BDS comes up while the device does: APP_DEVICE_READY_FILE is the
+//                                                              device's word, ready or why not), the device restored → booted →
+//                                                              at the title (timed), then taken as it is (APP_SERIAL,
+//                                                              APP_LIVE_DEVICE=1); stopped after unless --keep (= app run --device
+//                                                              redroid, where --keep is the default off GitHub Actions)
 // Secrets: GOOGLE_EMAIL + GOOGLE_AAS_TOKEN (the token reaches the account database on stdin only; neither is printed).
 import fs from 'node:fs';
 import os from 'node:os';
@@ -31,6 +33,7 @@ import * as C from '../lib/client.mjs';
 import * as V from '../lib/vault.mjs';
 import * as PF from './prepfast.mjs';
 import * as RD from './ready.mjs';
+import { startBoost, stopBoost } from './boost.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)), LAB = path.join(HERE, '.lab');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -38,6 +41,9 @@ const now = () => performance.now();
 const secs = (ms) => Math.round(ms / 100) / 10;
 const SECRETS = () => [process.env.GOOGLE_AAS_TOKEN, process.env.GOOGLE_EMAIL].filter(Boolean);
 const say = (t) => console.log(redact(String(t), SECRETS()));
+// what Ctrl+C has to know: a boost still on (its nices put back), the device ready yet (a device that never got to the title is
+// not left up even with --keep: the next run would take it as it is)
+const live = { boost: null, ready: false };
 const adbOf = (port = R.PORT) => new Adb({ bin: process.env.ADB || [process.env.ANDROID_HOME, process.env.ANDROID_SDK_ROOT].filter(Boolean).map((d) => path.join(d, 'platform-tools', 'adb')).find((p) => fs.existsSync(p)) || 'adb', serial: `127.0.0.1:${port}` });
 
 // ---- the account, written from the host while the device is stopped (its /data is a folder here: no sqlite3 needed on
@@ -95,8 +101,10 @@ const screenSize = () => { const m = /^(\d+)x(\d+)/.exec(process.env.REDROID_SIZ
 /** starts the game (cold) and waits for its title → {pidS, windowS, drawnS, titleS, words, license, ocr} seconds from the
  *  launch. The screen is read (OCR) only after the cheap signals (process, window, logcat) and, when earlier starts are kept
  *  (paceFile), from 7/10 of their titleS on, at widening gaps (pace.mjs); ocr = {n, fromS, gate}: how many reads, from when */
-export async function launch(adb, { timeoutMs = 240_000, shots = null, paceFile = path.join(LAB, 'title-pace.json') } = {}) {
+export async function launch(adb, { timeoutMs = 240_000, shots = null, paceFile = path.join(LAB, 'title-pace.json'), boost = false } = {}) {
   adb.shell(['am', 'force-stop', PACKAGE]);
+  // (REDROID_BOOST=1: the game first while it starts — bench and debug only, never prep: Google's services stay as they are there)
+  const bst = boost ? (live.boost = startBoost(adb)) : null;
   const t0 = now(), m = {};
   const kept = readPace(paceFile), prevMs = prevTitleMs(kept), ready = readyRe(), off = process.env.REDROID_OCR_PACE === '0';
   const o = { n: 0, last: null, logAt: null, drawn: false, ready: false };
@@ -145,6 +153,7 @@ export async function launch(adb, { timeoutMs = 240_000, shots = null, paceFile 
     }
     await sleep(500);
   }
+  if (bst) { m.boost = await stopBoost(adb, bst); live.boost = null; }
   m.words = last.join(' ').slice(0, 200);
   if (m.trail) m.trail = m.trail.slice(-14);
   if (!m.titleS) m.why = whyNot(adb);
@@ -273,13 +282,13 @@ export async function bench({ data, img = R.GAPPS_TAG, rounds = 3, shots, timeli
     const t0 = now(), l0 = load();
     const r = R.restore(data, 'overlay', work);
     const m = await R.up({ data: r.data, from: data, image: img, untilBoot: true });
-    const g = await launch(adb, { shots: i === 1 ? shots : null });
+    const g = await launch(adb, { shots: i === 1 ? shots : null, boost: true });
     const { why, ...gg } = g;
     const row = { round: i, restoreS: secs(r.ms), runS: m.runS, adbS: m.adbS, bootS: m.bootS, ...gg, totalS: g.titleS ? secs(now() - t0) : null };
     rows.push(row);
     R.notice(`起動からタイトルまで（${i} 回目）`, JSON.stringify(row));
     // the device kept up: the game alone again (what a second debug run on a resident device costs)
-    const { why: _w, ...again } = await launch(adb);
+    const { why: _w, ...again } = await launch(adb, { boost: true });
     R.notice(`常駐の端末でゲームだけ起動し直す（${i} 回目）`, JSON.stringify(again));
     rows.push({ round: i, resident: true, ...again });
     TL.append(TL.entriesOf(rows.slice(-2), { run, at: new Date().toISOString(), load: l0 }), timeline);
@@ -338,20 +347,24 @@ export async function debug({ data, img = R.GAPPS_TAG, addon = 'jsonui_demo', mo
     const resident = R.running({ from: data, image: img });
     if (resident) {
       await root(adb);
-      const alive = adb.pid(PACKAGE) > 0, g = alive ? {} : await launch(adb, { shots });
+      // (running is not enough: a game a run left on another screen — a paywall, a stuck start — is started again; no OCR: as it is)
+      const w = adb.pid(PACKAGE) > 0 ? words(adb) : [], atTitle = w === null || (w.length > 0 && isTitle(w));
+      const g = atTitle ? {} : await launch(adb, { shots, boost: true });
       const { why, ...gg } = g;
-      ready = { resident: true, game: alive ? '起動済み' : '起動しました', ...gg, totalS: secs(now() - t0) };
+      ready = { resident: true, game: atTitle ? '起動済み（タイトル）' : '起動しました', ...gg, totalS: secs(now() - t0) };
+      if (!atTitle && !g.titleS && !g.windowS) { downOnFail = true; throw new Error(`常駐の端末でゲームがタイトルまで起動しません（${g.license?.startsWith('no') ? `ライセンス: ${g.license}` : g.words || g.am || '画面なし'}）: 端末を止めます`); }
       R.notice('デバッグできるまで（常駐の端末）', JSON.stringify(ready));
     } else {
       const r = R.restore(data, 'overlay', work);
       const m = await R.up({ data: r.data, from: data, image: img, untilBoot: true });
       await root(adb);
-      const g = await launch(adb, { shots });
+      const g = await launch(adb, { shots, boost: true });
       const { why, ...gg } = g;
       ready = { restoreS: secs(r.ms), bootS: m.bootS, ...gg, totalS: secs(now() - t0) };
       R.notice('デバッグできるまで（戻す → 起動 → タイトル）', JSON.stringify(ready));
       if (!g.titleS && !g.windowS) { downOnFail = true; throw new Error(`ゲームがタイトルまで起動しません（${g.license?.startsWith('no') ? `ライセンス: ${g.license}` : g.words || g.am || '画面なし'}）: node lab.mjs app redroid prep で端末を作り直してください`); }
     }
+    live.ready = true;
     apks = pullApks(adb, apkDir, { aside });
   } catch (e) { failed = e; }
   // the device's word to app run: ready, or why not (app run stops its BDS then and ends with that reason). Another version
@@ -365,7 +378,8 @@ export async function debug({ data, img = R.GAPPS_TAG, addon = 'jsonui_demo', mo
     say(`端末の準備に失敗しました: app ${mode} の終わり（BDS を止める）を待ちます`);
     await run.done;
     if (aside) fs.rmSync(aside, { recursive: true, force: true });
-    if (downOnFail && !keep) R.down({ quiet: true });
+    // (a device that never got to its title is stopped even with --keep: kept, the next run would use it as it is)
+    if (downOnFail) { R.down({ quiet: true }); R.sh('umount', [path.join(work, 'merged')], { sudo: true, quiet: true }); }
     throw failed;
   }
   // (another version: the first run ends on the word above; again on the APKs just pulled, the device up — waited as before)
@@ -437,8 +451,11 @@ async function main([cmd, ...rest]) {
     const release = R.lock(cmd);
     process.on('exit', release);
     for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => {
-      say(`止めます（${sig}）${o.keep === true ? ': 端末は動いたまま' : ': 端末を止めます'}`);
-      if (o.keep !== true) { R.down({ quiet: true }); R.sh('umount', [path.join(data + '.run', 'merged')], { sudo: true, quiet: true }); }
+      // (--keep keeps only a device that got to the game's title: one stopped mid-start would be taken as ready next time)
+      const stay = o.keep === true && (cmd !== 'debug' || live.ready);
+      say(`止めます（${sig}）${stay ? ': 端末は動いたまま' : ': 端末を止めます'}`);
+      if (live.boost) try { adbOf().run(live.boost.plan.restore, { timeout: 15_000 }); } catch { /* the device may be gone */ }
+      if (!stay) { R.down({ quiet: true }); R.sh('umount', [path.join(data + '.run', 'merged')], { sudo: true, quiet: true }); }
       release(); process.exit(130);
     });
   }

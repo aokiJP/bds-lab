@@ -189,12 +189,17 @@ case "$1" in
   *) exit 0;;
 esac
 line="$*"
+# one look at sys.boot_completed: booted once the BDS is up (or after 80 looks) → prints 1, else nothing
+boot_poll() {
+  if [ -f "$FAKE_RD/booted" ]; then echo 1; return; fi
+  n=$(cat "$FAKE_RD/polls" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$FAKE_RD/polls"
+  if grep -q '"up ' "$FAKE_APP_STATE" 2>/dev/null; then echo yes > "$FAKE_RD/bds-before-boot"; elif [ $n -lt 80 ]; then return; else echo no > "$FAKE_RD/bds-before-boot"; fi
+  touch "$FAKE_RD/booted"; printf on > "$FAKE_APP_STATE.power"; echo 1
+}
 case "$line" in
-  "getprop sys.boot_completed")
-    if [ -f "$FAKE_RD/booted" ]; then echo 1; exit 0; fi
-    n=$(cat "$FAKE_RD/polls" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$FAKE_RD/polls"
-    if grep -q '"up ' "$FAKE_APP_STATE" 2>/dev/null; then echo yes > "$FAKE_RD/bds-before-boot"; elif [ $n -lt 80 ]; then exit 0; else echo no > "$FAKE_RD/bds-before-boot"; fi
-    touch "$FAKE_RD/booted"; printf on > "$FAKE_APP_STATE.power"; echo 1;;
+  # (redroid.mjs up's own loop on the device: one look per call here, a short slice — up tries again at once)
+  *"echo booted"*) if [ "$(boot_poll)" = 1 ]; then echo booted; exit 0; fi; sleep 0.25; exit 1;;
+  "getprop sys.boot_completed") boot_poll;;
   "id -u") echo 0;;
   "pidof com.mojang.minecraftpe") echo 4242;;
   "cmd package resolve-activity"*) echo "com.mojang.minecraftpe/com.mojang.minecraftpe.MainActivity";;
@@ -243,14 +248,15 @@ await t('debug: the device does not start (docker run fails after the BDS is up)
   ok(r.S.bds.some((l) => /^up\b/.test(l)) && /^down\b/.test(r.S.bds.at(-1)), `the BDS was up, then stopped: ${JSON.stringify(r.S.bds)}`);
 });
 
-await t('debug: the game stops at Play\'s paywall → app run ends with the reason, the device stopped; --keep leaves it up', () => {
+// (a device that never got to the title is stopped even with --keep: left up, the next run would take it as ready — review-a)
+await t('debug: the game stops at Play\'s paywall → app run ends with the reason, the device stopped; --keep too', () => {
   const r = debugRun('paywall', { extra: { FAKE_PAYWALL: '1' } });
   ok(r.status === 1 && /ゲームがタイトルまで起動しません（ライセンス: no/.test(r.text) && /端末の準備に失敗しました: ゲームがタイトルまで/.test(r.text), `exit ${r.status}\n${r.text}`);
   ok(/^down\b/.test(r.S.bds.at(-1)), JSON.stringify(r.S.bds));
   ok(afterRun(r.calls).some((c) => /^docker rm -f/.test(c)), `stopped: ${r.calls.join(' | ')}`);
   const k = debugRun('paywall-keep', { args: ['--keep'], extra: { FAKE_PAYWALL: '1' } });
   ok(k.status === 1 && /端末の準備に失敗しました/.test(k.text), `exit ${k.status}\n${k.text}`);
-  ok(!afterRun(k.calls).some((c) => /^docker rm/.test(c)), `--keep: the device left up: ${k.calls.join(' | ')}`);
+  ok(afterRun(k.calls).some((c) => /^docker rm -f/.test(c)), `--keep: stopped all the same (never at its title): ${k.calls.join(' | ')}`);
   ok(/^down\b/.test(k.S.bds.at(-1)), 'the BDS stopped all the same: ' + JSON.stringify(k.S.bds));
 });
 

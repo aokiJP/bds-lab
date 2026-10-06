@@ -2353,6 +2353,7 @@ const REDROID_HELP = `app redroid: 本物の Minecraft を redroid（コンテ�
   setup                      端末のイメージを作る（redroid + MindTheGapps: Play ストアと Play 開発者サービス。約 1 分）
   prep [--data <dir>]        準備済みの端末を作る（一度だけ、約 8 分）: アカウント → checkin → Play がゲームを入れる → タイトル
   warm [--data <dir>]        端末を起こしてゲームをタイトルで待たせておく（常駐。次の run / ui はすぐ始まります）
+  local [--dry-run] [--bench]   手元の Linux で準備を 1 回で: doctor → binder → イメージ → open / prep（GitHub Actions を使わない）
   run -a <アドオン> [--no-keep] [app run の指定 …]   = node lab.mjs app run -a <アドオン> --device redroid
   ui -a <アドオン> [--no-keep] [app ui の指定 …]     = node lab.mjs app ui -a <アドオン> --device redroid
   up [--restore overlay|direct] / down / facts / launch   端末だけ起こす・止める・中身・ゲームだけ起動してタイトルまで計る
@@ -2369,6 +2370,8 @@ async function redroidCmd(args) {
   if (sub === 'prep' || sub === 'bench' || sub === 'launch' || sub === 'report') return redroidRun('game.mjs', [sub, ...args]);
   // (the prepared device into / out of the encrypted vault: Android's uids, so as root)
   if (sub === 'seal' || sub === 'open') return redroidRun('game.mjs', [sub, ...args]);
+  // (what redroid.yml did, on this machine: only the stages it lacks, each said before it runs)
+  if (sub === 'local') return redroidRun('local.mjs', args);
   // the device up and the game waiting at its title, left so (resident): the next run / ui on it starts at once. A device
   // already up from the same --data and image is used as it is (no doctor, no restore, no boot; the game started only if not running)
   if (sub === 'warm') {

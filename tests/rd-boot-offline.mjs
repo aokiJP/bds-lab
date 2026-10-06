@@ -59,7 +59,9 @@ const W = await import(pathToFileURL(path.join(TOP, 'app', 'redroid', 'wait.mjs'
 
 // ---- bootArgs: unchanged by default; REDROID_PROFILE=fast smaller and slower; REDROID_SIZE / REDROID_FPS still win ----
 const BEFORE = ['androidboot.redroid_gpu_mode=guest', 'androidboot.redroid_width=1560', 'androidboot.redroid_height=720', 'androidboot.redroid_dpi=280',
-  'androidboot.redroid_fps=20', 'androidboot.use_memfd=1', 'ro.setupwizard.mode=DISABLED', 'debug.sf.nobootanimation=1', 'ro.hw_timeout_multiplier=5', 'service.adb.root=1'];
+  'androidboot.redroid_fps=20', 'androidboot.use_memfd=1', 'ro.setupwizard.mode=DISABLED', 'debug.sf.nobootanimation=1', 'ro.hw_timeout_multiplier=5', 'service.adb.root=1',
+  // (added when the lanes were brought together: no background dexopt right after a boot — prep's ask)
+  'pm.dexopt.disable_bg_dexopt=true'];
 ok(JSON.stringify(R.bootArgs({})) === JSON.stringify(BEFORE) && JSON.stringify(R.bootArgs({ REDROID_PROFILE: 'nope' })) === JSON.stringify(BEFORE), 'bootArgs: no profile (or an unknown one) = exactly as before', R.bootArgs({}).join(' '));
 const fast = R.bootArgs({ REDROID_PROFILE: 'fast' }), num = (a, k) => Number(a.find((x) => x.startsWith(`androidboot.redroid_${k}=`))?.split('=')[1]);
 ok(num(fast, 'width') < 1560 && num(fast, 'height') < 720 && num(fast, 'fps') < 20 && Math.abs(num(fast, 'width') / num(fast, 'height') - 1560 / 720) < 0.01 && fast.includes('ro.setupwizard.mode=DISABLED'),

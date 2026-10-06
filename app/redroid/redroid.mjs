@@ -10,7 +10,8 @@
 //   node app/redroid/redroid.mjs up [--data d] [--restore direct|overlay] [--image t] [--name n] [--port p]
 //   node app/redroid/redroid.mjs down [--name n]     node app/redroid/redroid.mjs facts [--port p]
 // Knobs: REDROID_IMAGE (redroid/redroid:14.0.0_64only-latest), REDROID_GAPPS_URL (+ REDROID_GAPPS_SHA256), REDROID_SIZE
-// (1560x720@280), REDROID_FPS (20), REDROID_ARGS (more boot args / properties), ADB (else $ANDROID_HOME/platform-tools/adb).
+// (1560x720@280), REDROID_FPS (20), REDROID_PROFILE (fast: 1040x480@187 at 10 fps; REDROID_SIZE / REDROID_FPS win), REDROID_ARGS
+// (more boot args / properties), ADB (else $ANDROID_HOME/platform-tools/adb).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -58,6 +59,8 @@ export function bootArgs(env = process.env) {
     'androidboot.redroid_gpu_mode=guest', `androidboot.redroid_width=${w}`, `androidboot.redroid_height=${h}`, `androidboot.redroid_dpi=${dpi}`,
     `androidboot.redroid_fps=${env.REDROID_FPS || p.fps || '20'}`, 'androidboot.use_memfd=1',
     'ro.setupwizard.mode=DISABLED', 'debug.sf.nobootanimation=1', 'ro.hw_timeout_multiplier=5', 'service.adb.root=1',
+    // (no background dexopt right after a boot: it took the 2 cores from the game's first start. prep compiles the game itself)
+    'pm.dexopt.disable_bg_dexopt=true',
     ...(env.REDROID_ARGS ? env.REDROID_ARGS.trim().split(/\s+/) : []),
   ].filter((a) => /^[\w.]+=[\w.,:/-]*$/.test(a));
 }
@@ -290,7 +293,7 @@ export function doctor(f) {
     { name: 'uinput', ok: f.uinput, soft: true, detail: f.uinput ? '使えます' : '無い: 端末のコントローラーが使えません', fix: 'sudo modprobe uinput' },
     { name: 'イメージ', ok: f.image, detail: f.image ? GAPPS_TAG : 'まだ作っていません', fix: 'node lab.mjs app redroid setup' },
     { name: 'Google の認証', ok: f.account || f.prepared, soft: f.prepared, detail: f.account ? 'あります' : f.prepared ? '（準備済みの端末があるので不要）' : 'GOOGLE_EMAIL / GOOGLE_AAS_TOKEN がありません', fix: 'node lab.mjs app token' },
-    { name: '常駐の端末', ok: Boolean(f.resident), soft: true, detail: f.resident ? `動いています（127.0.0.1:${PORT}: 次の run / ui はこれを使います。止める: node lab.mjs app redroid down）` : 'なし（run / ui --keep で残せます）', fix: '' },
+    { name: '常駐の端末', ok: Boolean(f.resident), soft: true, detail: f.resident ? `動いています（127.0.0.1:${PORT}: 次の run / ui はこれを使います。止める: node lab.mjs app redroid down）` : 'なし（node lab.mjs app redroid warm で起こせます。run / ui の後も手元では残ります）', fix: '' },
     { name: '準備済みの端末', ok: f.prepared, detail: f.prepared ? 'あります（ゲームがタイトルまで起動した /data）' : 'まだ作っていません', fix: 'node lab.mjs app redroid prep（約 8 分、一度だけ）' },
   ];
 }
