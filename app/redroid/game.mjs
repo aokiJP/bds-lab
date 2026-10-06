@@ -27,6 +27,7 @@ import { PACKAGE, redact } from '../lib/apk.mjs';
 import * as L from '../lib/license.mjs';
 import * as C from '../lib/client.mjs';
 import * as V from '../lib/vault.mjs';
+import * as RD from './ready.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)), LAB = path.join(HERE, '.lab');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -269,44 +270,66 @@ export function pullApks(adb, dir) {
  *  broadcast does cross the bridge (seen: 172.17.0.2:7551 → 172.17.255.255:7551 every 2 s) but the BDS does not answer a
  *  broadcast there: app run's own reflector on the device sends it on as unicast to this address, as on the emulator */
 export const bridgeIp = () => R.sh('docker', ['network', 'inspect', 'bridge', '-f', '{{(index .IPAM.Config 0).Gateway}}'], { quiet: true }).stdout.trim() || '172.17.0.1';
+// (app run starts at once, before the device: its BDS gets ready while the device is restored, boots and starts the game.
+// It waits for the device's word in APP_DEVICE_READY_FILE (ready.mjs). The APKs pulled last time (apk/.version) tell it the
+// game's version before the device can; checked on the device once it is up — another version: app run again on the new ones)
 export async function debug({ data, img = R.GAPPS_TAG, addon = 'jsonui_demo', mode = 'run', shots, args = [], keep = false } = {}) {
   const adb = adbOf(), work = data + '.run', t0 = now();
-  // a device `--keep` left up is used as it is (nothing restored or booted; the game started only when it is not running):
-  // the second run on a resident device costs the game's start at most
-  const resident = R.running({ from: data, image: img });
-  let ready;
-  if (resident) {
-    await root(adb);
-    const alive = adb.pid(PACKAGE) > 0, g = alive ? {} : await launch(adb, { shots });
-    const { why, ...gg } = g;
-    ready = { resident: true, game: alive ? '起動済み' : '起動しました', ...gg, totalS: secs(now() - t0) };
-    R.notice('デバッグできるまで（常駐の端末）', JSON.stringify(ready));
-  } else {
-    const r = R.restore(data, 'overlay', work);
-    const m = await R.up({ data: r.data, from: data, image: img, untilBoot: true });
-    await root(adb);
-    const g = await launch(adb, { shots });
-    const { why, ...gg } = g;
-    ready = { restoreS: secs(r.ms), bootS: m.bootS, ...gg, totalS: secs(now() - t0) };
-    R.notice('デバッグできるまで（戻す → 起動 → タイトル）', JSON.stringify(ready));
-    if (!g.titleS && !g.windowS) { if (!keep) R.down({ quiet: true }); throw new Error(`ゲームがタイトルまで起動しません（${g.license?.startsWith('no') ? `ライセンス: ${g.license}` : g.words || g.am || '画面なし'}）: node lab.mjs app redroid prep で端末を作り直してください`); }
-  }
-  const apkDir = path.join(path.dirname(data), 'apk');
-  const apks = pullApks(adb, apkDir);
+  const apkDir = path.join(path.dirname(data), 'apk'), early = RD.lastApks(apkDir), readyFile = path.join(path.dirname(data), 'device-ready.json');
   const env = { ...process.env, APP_SERIAL: adb.serial, APP_LIVE_DEVICE: '1', APP_APK_DIR: apkDir, APP_HOST: bridgeIp(), APP_SHOT: 'adb', APP_SNAPSHOT: '0' };
   for (const k of Object.keys(env)) if (/^GOOGLE_|^MS_/.test(k) || k === 'APP_DEVICE') delete env[k];
   // the LAN discovery on the bridge while the run goes (UDP 7551 both ways: does the game's broadcast reach the BDS, does the
   // BDS answer): what `report` tells. Its own process, stopped when the run ends
   const lan = path.join(path.dirname(data), 'lan.txt');
   R.sh('sh', ['-c', `(timeout 2400 tcpdump -lni docker0 -c 60 udp port 7551 > ${lan} 2>&1 &)`], { sudo: true, quiet: true });
-  const t1 = now();
+  fs.rmSync(readyFile, { force: true });
+  let t1 = now();
   // (app run's own lines as they come: its stages, a failing step, its PASS / FAIL line)
-  const run = spawnSync(process.execPath, [path.join(HERE, '..', '..', 'lab.mjs'), 'app', mode, '-a', addon, ...args], { timeout: 40 * 60_000, stdio: ['ignore', 'inherit', 'inherit'], env });
-  const verdict = run.status === 0 ? 'PASS' : `FAIL（終了コード ${run.status ?? run.signal}）`;
-  R.notice(`app ${mode} を redroid で`, `${verdict}（${secs(now() - t1)} 秒、APK ${apks.length} 個、BDS は ${env.APP_HOST}、LAN の発見は app の中継 --reflect で）`);
+  const run = RD.startChild(process.execPath, [path.join(HERE, '..', '..', 'lab.mjs'), 'app', mode, '-a', addon, ...args], { timeoutMs: 40 * 60_000, env: { ...env, APP_DEVICE_READY_FILE: readyFile } });
+  say(`app ${mode} を先に始めました（BDS を用意しながら端末を待ちます。APK: ${early ? `前回取り出した版 ${early.version}` : 'まだ無いので端末から取り出してから'}）`);
+  // a device `--keep` left up is used as it is (nothing restored or booted; the game started only when it is not running):
+  // the second run on a resident device costs the game's start at most
+  let ready, apks = [], failed = null, downOnFail = false;
+  try {
+    const resident = R.running({ from: data, image: img });
+    if (resident) {
+      await root(adb);
+      const alive = adb.pid(PACKAGE) > 0, g = alive ? {} : await launch(adb, { shots });
+      const { why, ...gg } = g;
+      ready = { resident: true, game: alive ? '起動済み' : '起動しました', ...gg, totalS: secs(now() - t0) };
+      R.notice('デバッグできるまで（常駐の端末）', JSON.stringify(ready));
+    } else {
+      const r = R.restore(data, 'overlay', work);
+      const m = await R.up({ data: r.data, from: data, image: img, untilBoot: true });
+      await root(adb);
+      const g = await launch(adb, { shots });
+      const { why, ...gg } = g;
+      ready = { restoreS: secs(r.ms), bootS: m.bootS, ...gg, totalS: secs(now() - t0) };
+      R.notice('デバッグできるまで（戻す → 起動 → タイトル）', JSON.stringify(ready));
+      if (!g.titleS && !g.windowS) { downOnFail = true; throw new Error(`ゲームがタイトルまで起動しません（${g.license?.startsWith('no') ? `ライセンス: ${g.license}` : g.words || g.am || '画面なし'}）: node lab.mjs app redroid prep で端末を作り直してください`); }
+    }
+    apks = pullApks(adb, apkDir);
+  } catch (e) { failed = e; }
+  // the device's word to app run: ready, or why not (app run stops its BDS then and ends with that reason)
+  const now1 = RD.lastApks(apkDir), changed = !failed && early && now1?.version !== early.version;
+  const why = failed ? redact(failed.message, SECRETS()) : changed ? `APK の版が変わりました（${early.version} → ${now1?.version || '?'}）: 取り出し直したもので app ${mode} をやり直します` : '';
+  RD.writeReady(readyFile, { serial: adb.serial, ok: !why, why });
+  const aheadS = secs(now() - t1);
+  if (ready) ready.runAheadS = aheadS;
+  if (failed) {
+    say(`端末の準備に失敗しました: app ${mode} の終わり（BDS を止める）を待ちます`);
+    await run.done;
+    if (downOnFail && !keep) R.down({ quiet: true });
+    throw failed;
+  }
+  // (another version: the first run ends on the word above; again on the APKs just pulled, the device up — waited as before)
+  let res = await run.done;
+  if (changed) { t1 = now(); res = spawnSync(process.execPath, [path.join(HERE, '..', '..', 'lab.mjs'), 'app', mode, '-a', addon, ...args], { timeout: 40 * 60_000, stdio: ['ignore', 'inherit', 'inherit'], env }); }
+  const verdict = res.status === 0 ? 'PASS' : `FAIL（終了コード ${res.status ?? res.signal}）`;
+  R.notice(`app ${mode} を redroid で`, `${verdict}（${secs(now() - t1)} 秒、${changed ? 'APK の版が変わったのでやり直し' : `端末の準備より ${aheadS} 秒先に開始（その間に BDS）`}、APK ${apks.length} 個、BDS は ${env.APP_HOST}、LAN の発見は app の中継 --reflect で）`);
   if (keep) say(`端末は動いたままです（${adb.serial}）。止める: node lab.mjs app redroid down`);
   else { R.down({ quiet: true }); R.sh('umount', [path.join(work, 'merged')], { sudo: true, quiet: true }); }
-  return { ready, run: { status: run.status ?? 1, verdict, s: secs(now() - t1) } };
+  return { ready, run: { status: res.status ?? 1, verdict, s: secs(now() - t1) } };
 }
 
 // ---- the prepared device kept between CI jobs: app's own vault (AES-256-GCM, the key from APP_CACHE_KEY or GOOGLE_AAS_TOKEN;
