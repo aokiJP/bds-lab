@@ -64,7 +64,8 @@ r = lab(['verify', 'no_such_unit_zz']); ok(r.code !== 0 && /no bds unit "no_such
 r = lab(['share', 'zzz']); ok(r.code !== 0 && /ERR share: unknown zzz/.test(r.t) && r.ms < 15000, 'share <unknown arg>: refused (it built and verified a whole release)', r.t);
 r = lab(['setup', 'zzz']); ok(r.code !== 0 && /setup: unknown zzz/.test(r.t) && r.ms < 15000, 'setup <unknown arg>: refused (it started a server install)', r.t);
 r = lab(['ui', 'build'], {}, TOP, 20000); ok(!r.timedOut && /usage: node lab\.mjs ui build|ERR several addons|ERR no addon|use <name>/.test(r.t), '`ui build` reaches the JSON UI builder (it opened the browser page and never returned)', r.t);
-r = lab(['app', 'token'], { APP_LOGIN_HEADLESS: '1', DISPLAY: '' }, TOP, 30000);
+// (no credentials: the person's own Google ones in the environment are not this test's)
+r = lab(['app', 'token'], { APP_LOGIN_HEADLESS: '1', DISPLAY: '', GOOGLE_EMAIL: '', GOOGLE_AAS_TOKEN: '', GOOGLE_PASSWORD: '' }, TOP, 30000);
 ok(!r.timedOut && r.code !== 0 && /GOOGLE_EMAIL/.test(r.t), 'app token with no screen, no credentials and no terminal: an error at once (it waited forever)', r.t);
 
 // a lab name before any lab-level command (end status printed the Endstone lab's usage)
