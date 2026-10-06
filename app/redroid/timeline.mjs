@@ -85,17 +85,37 @@ export function table(c) {
 }
 
 // ---- the file ----
-/** the kept lines (a broken line is skipped: a run cut off mid-write loses only itself) */
+// the file stays bounded: read uses only the newest KEEP lines; append, once the file passes MAX lines, cuts it back to KEEP
+export const KEEP = 2000, MAX = 4000;
+const linesOf = (t) => t.split('\n').filter((l) => l.trim());
+/** the kept lines, the newest KEEP of them (a broken line is skipped: a run cut off mid-write loses only itself) */
 export function read(file = FILE) {
   let t = '';
   try { t = fs.readFileSync(file, 'utf8'); } catch { return []; }
-  return t.split('\n').filter((l) => l.trim()).flatMap((l) => { try { return [JSON.parse(l)]; } catch { return []; } });
+  return linesOf(t).slice(-KEEP).flatMap((l) => { try { return [JSON.parse(l)]; } catch { return []; } });
 }
-/** the lines added at the end of the file, one JSON each */
+/** whether the file is there, not empty, and its last byte is not a newline (a line cut off mid-write) */
+function endsOpen(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const { size } = fs.fstatSync(fd);
+    if (!size) return false;
+    const b = Buffer.alloc(1);
+    fs.readSync(fd, b, 0, 1, size - 1);
+    return b[0] !== 0x0a;
+  } catch { return false; } finally { if (fd !== undefined) fs.closeSync(fd); }
+}
+/** the lines added at the end of the file, one JSON each (on a line of their own even after a line cut off mid-write);
+ *  past MAX lines the oldest are dropped down to KEEP, written whole to a side file first and then renamed over it */
 export function append(entries, file = FILE) {
   if (!entries.length) return;
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.appendFileSync(file, entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  fs.appendFileSync(file, (endsOpen(file) ? '\n' : '') + entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  const lines = linesOf(fs.readFileSync(file, 'utf8'));
+  if (lines.length <= MAX) return;
+  const tmp = `${file}.${process.pid}.tmp`;
+  try { fs.writeFileSync(tmp, lines.slice(-KEEP).join('\n') + '\n'); fs.renameSync(tmp, file); } finally { fs.rmSync(tmp, { force: true }); }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

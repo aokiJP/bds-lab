@@ -77,6 +77,35 @@ await t('read / append: one JSON a line, appended; a broken line skipped; no fil
   eq(TL.read(f), history);
 });
 
+await t('append after a line cut off mid-write (no newline at the end): the new lines still read', () => {
+  const f = path.join(tmp, 'cut.jsonl');
+  TL.append(history.slice(0, 2), f);
+  fs.appendFileSync(f, '{"run":"cut","kind":"sta');
+  TL.append(history.slice(2), f);
+  eq(TL.read(f), history);
+  ok(fs.readFileSync(f, 'utf8').endsWith('\n'), 'ends with a newline');
+  const g = path.join(tmp, 'empty.jsonl'); fs.writeFileSync(g, '');
+  TL.append(history.slice(0, 1), g);
+  ok(!fs.readFileSync(g, 'utf8').startsWith('\n'), 'an empty file gets no leading newline');
+});
+
+await t(`bounded: read uses the newest ${TL.KEEP} lines; append past ${TL.MAX} lines cuts the file back to ${TL.KEEP}, no side file left`, () => {
+  const dir = path.join(tmp, 'cap'), f = path.join(dir, 'tl.jsonl');
+  const e = (i) => ({ at: `r${i}`, run: `r${i}`, kind: 'start', round: 1, s: { total: i } });
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(f, Array.from({ length: TL.MAX - 1 }, (_, i) => JSON.stringify(e(i))).join('\n') + '\n');
+  const r = TL.read(f);
+  eq([r.length, r[0].run, r.at(-1).run], [TL.KEEP, `r${TL.MAX - 1 - TL.KEEP}`, `r${TL.MAX - 2}`]);
+  TL.append([e(TL.MAX - 1)], f);
+  eq(fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).length, TL.MAX, 'exactly MAX lines: kept as is');
+  TL.append([e(TL.MAX)], f);
+  const left = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean);
+  eq([left.length, JSON.parse(left[0]).run, JSON.parse(left.at(-1)).run], [TL.KEEP, `r${TL.MAX + 1 - TL.KEEP}`, `r${TL.MAX}`]);
+  eq(fs.readdirSync(dir), ['tl.jsonl'], 'no side file');
+  TL.append([e(TL.MAX + 1)], f);
+  eq(fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).length, TL.KEEP + 1, 'below MAX: only appended');
+});
+
 // ---- bench end to end against fake tools ----
 const bin = path.join(tmp, 'bin'), log = path.join(tmp, 'calls.log');
 fs.mkdirSync(bin);
