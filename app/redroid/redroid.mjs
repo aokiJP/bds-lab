@@ -17,6 +17,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { profile, bootLoop, readyLoop, stages, asideName, later, q } from './wait.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LAB = path.join(HERE, '.lab');
@@ -47,13 +48,15 @@ const ashell = (port, line, opts) => adb(port, ['shell', line], opts);
 const prop = (port, p) => ashell(port, `getprop ${p}`, { timeout: 10_000 }).stdout.trim();
 
 /** the boot args: the screen, software drawing in the container (ANGLE → SwiftShader), no setup wizard, no boot
- *  animation; redroid takes plain `key=value` words as system properties too (pure) */
+ *  animation; redroid takes plain `key=value` words as system properties too. REDROID_PROFILE=fast: a smaller screen and
+ *  fewer frames (wait.mjs PROFILES; REDROID_SIZE / REDROID_FPS still win; unset = as before) (pure) */
 export function bootArgs(env = process.env) {
-  const m = /^(\d+)x(\d+)(?:@(\d+))?$/.exec(env.REDROID_SIZE || '1560x720@280') ?? [];
+  const p = profile(env);
+  const m = /^(\d+)x(\d+)(?:@(\d+))?$/.exec(env.REDROID_SIZE || p.size || '1560x720@280') ?? [];
   const [w, h, dpi] = [m[1] || '1560', m[2] || '720', m[3] || '280'];
   return [
     'androidboot.redroid_gpu_mode=guest', `androidboot.redroid_width=${w}`, `androidboot.redroid_height=${h}`, `androidboot.redroid_dpi=${dpi}`,
-    `androidboot.redroid_fps=${env.REDROID_FPS || '20'}`, 'androidboot.use_memfd=1',
+    `androidboot.redroid_fps=${env.REDROID_FPS || p.fps || '20'}`, 'androidboot.use_memfd=1',
     'ro.setupwizard.mode=DISABLED', 'debug.sf.nobootanimation=1', 'ro.hw_timeout_multiplier=5', 'service.adb.root=1',
     ...(env.REDROID_ARGS ? env.REDROID_ARGS.trim().split(/\s+/) : []),
   ].filter((a) => /^[\w.]+=[\w.,:/-]*$/.test(a));
@@ -115,9 +118,15 @@ export function image({ ctx, tag = GAPPS_TAG, base = BASE_IMAGE } = {}) {
 export function restore(src, mode, work) {
   const t0 = now();
   if (mode === 'direct') { fs.mkdirSync(src, { recursive: true }); return { data: src, ms: 0 }; }
-  down({ quiet: true });
+  // the last device killed and its rm, and the last run's folder (its upper layer can be large), left to the background:
+  // both moved out of the way first (the container renamed, the folder moved aside), so nothing the new start uses collides
+  down({ quiet: true, wait: false });
   unmount(work);
-  sh('rm', ['-rf', work], { sudo: true, quiet: true });
+  if (sh('test', ['-e', work], { sudo: true, quiet: true }).status === 0) {
+    const old = `${work}.old-${process.pid}-${Date.now()}`, su = process.getuid?.() === 0 ? '' : 'sudo -n ';
+    const moved = sh('mv', ['-T', work, old], { sudo: true, quiet: true }).status === 0;
+    if (!moved || !later(`${su}rm -rf --one-file-system ${q(old)} >/dev/null 2>&1`)) sh('rm', ['-rf', moved ? old : work], { sudo: true, quiet: true });
+  }
   if (mode === 'overlay') {
     for (const d of ['upper', 'work', 'merged']) sh('mkdir', ['-p', path.join(work, d)], { sudo: true });
     const o = `lowerdir=${src},upperdir=${path.join(work, 'upper')},workdir=${path.join(work, 'work')}`;
@@ -129,32 +138,49 @@ export function restore(src, mode, work) {
 function unmount(work) { if (work) sh('umount', [path.join(work, 'merged')], { sudo: true, quiet: true }); }
 
 // ---- the container ----
-export function down({ name = NAME, port = PORT, quiet = false } = {}) {
+/** stops the device: docker kill (SIGKILL: the port and /data let go at once), then its rm. wait: false = the rm in the
+ *  background under another name (asideName: the next `docker run --name` does not collide) */
+export function down({ name = NAME, port = PORT, quiet = false, wait = true } = {}) {
   sh(adbBin(), ['disconnect', `127.0.0.1:${port}`], { quiet: true });
-  const r = sh('docker', ['rm', '-f', name], { quiet: true, timeout: 60_000 });
+  const k = sh('docker', ['kill', name], { quiet: true, timeout: 60_000 });
+  let r = k;
+  if (!/no such container/i.test(k.stderr)) {
+    const aside = wait ? null : asideName(name);
+    r = aside && sh('docker', ['rename', name, aside], { quiet: true, timeout: 60_000 }).status === 0 && later(`docker rm -f ${q(aside)} >/dev/null 2>&1`)
+      ? { status: 0 } : sh('docker', ['rm', '-f', name], { quiet: true, timeout: 60_000 });
+  }
   if (!quiet) console.log(r.status === 0 ? `  ${name} を止めました` : `  ${name} は動いていません`);
 }
-/** starts the device on a data folder and waits: → {runS, adbS, bootS, readyS} seconds from the start (docker run) */
+/** starts the device on a data folder and waits: → {runS, adbS, bootS, readyS} seconds from the start (docker run) + ms:
+ *  {run, adb, boot, ready} what each stage took on its own. Waited for without polling from here: adb connect until adbd
+ *  takes it, adb wait-for-device, then one loop on the device for boot_completed and one for the launcher (wait.mjs) */
 // (from: the prepared folder a restored copy came from — kept on the container as a label, so a resident device is reused only
 // for the same prepared device and image)
 export async function up({ data, from = data, image: img = GAPPS_TAG, name = NAME, port = PORT, timeoutMs = 240_000, extra = [], untilBoot = false } = {}) {
   down({ name, port, quiet: true });
-  const t0 = now(), mark = {};
+  const t0 = now(), mark = {}, at = {}, left = () => Math.round(timeoutMs - (now() - t0)), serial = `127.0.0.1:${port}`;
   const run = sh('docker', ['run', '-d', '--privileged', '--name', name, '--label', `bdslab.from=${from ?? ''}`, '--label', `bdslab.image=${img}`, '-p', `127.0.0.1:${port}:5555`, ...(data ? ['-v', `${data}:/data`] : []), img, ...bootArgs(), ...extra], { timeout: 120_000 });
   if (run.status !== 0) throw new Error(`redroid が起きません（docker run）: ${run.stderr.trim().slice(0, 300)}`);
-  mark.runS = secs(now() - t0);
-  while (now() - t0 < timeoutMs) {
-    if (!mark.adbS) { if (/connected/.test(sh(adbBin(), ['connect', `127.0.0.1:${port}`], { quiet: true, timeout: 5000 }).stdout) && adb(port, ['get-state'], { timeout: 5000 }).stdout.trim() === 'device') mark.adbS = secs(now() - t0); }
-    else if (!mark.bootS) { if (prop(port, 'sys.boot_completed') === '1') { mark.bootS = secs(now() - t0); if (untilBoot) break; } }
+  at.run = now() - t0; mark.runS = secs(at.run);
+  // (a step that fails — adbd not listening yet, the connection dropped — is tried again after a second, adb connect first)
+  while (left() > 0 && !(untilBoot ? at.boot : at.ready)) {
+    if (at.adb == null) {
+      if (/connected/.test(sh(adbBin(), ['connect', serial], { quiet: true, timeout: 5000 }).stdout) && adb(port, ['wait-for-device'], { timeout: Math.max(1000, Math.min(15_000, left())) }).status === 0) { at.adb = now() - t0; mark.adbS = secs(at.adb); continue; }
+    } else if (at.boot == null) {
+      if (/^booted\r?$/m.test(ashell(port, bootLoop(left() / 1000), { timeout: left() + 5000 }).stdout)) { at.boot = now() - t0; mark.bootS = secs(at.boot); continue; }
     // ready = the package manager and the launcher answer (an app can be started)
-    else if (/package:/.test(ashell(port, 'pm path android', { timeout: 10_000 }).stdout) && /mCurrentFocus=.*(Launcher|launcher|Quickstep)/.test(ashell(port, 'dumpsys window displays | grep mCurrentFocus=', { timeout: 10_000 }).stdout)) { mark.readyS = secs(now() - t0); break; }
-    await sleep(250);
+    } else if (/^ready\r?$/m.test(ashell(port, readyLoop(left() / 1000), { timeout: left() + 5000 }).stdout)) { at.ready = now() - t0; mark.readyS = secs(at.ready); continue; }
+    if (left() <= 0) break;
+    await sleep(1000);
+    if (at.adb != null) sh(adbBin(), ['connect', serial], { quiet: true, timeout: 5000 });
   }
-  if (mark.bootS && !mark.readyS && !untilBoot) mark.focus = ashell(port, 'dumpsys window displays | grep mCurrentFocus=', { timeout: 10_000 }).stdout.trim().slice(0, 160);
-  if (!mark.bootS) {
+  mark.ms = stages(at);
+  if (at.boot != null && at.ready == null && !untilBoot) mark.focus = ashell(port, 'dumpsys window displays | grep mCurrentFocus=', { timeout: 10_000 }).stdout.trim().slice(0, 160);
+  if (at.boot == null) {
     const logs = sh('docker', ['logs', '--tail', '30', name], { quiet: true });
     throw new Error(`redroid が ${timeoutMs / 1000} 秒で起動し終わりません（${JSON.stringify(mark)}）: ${(logs.stdout + logs.stderr).split('\n').slice(-8).join(' | ').slice(0, 600)}`);
   }
+  notice('redroid の起動（段階ごとの ms）', `${Object.entries(mark.ms).map(([k, v]) => `${k} ${v}`).join(' → ')}（画面: ${process.env.REDROID_PROFILE || '既定'}）`);
   return mark;
 }
 
