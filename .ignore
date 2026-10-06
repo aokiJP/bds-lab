@@ -1,0 +1,19 @@
+# Search tools (ripgrep: Claude Code Grep/Glob, Codex, many editors) skip these: generated, vendored or data files an AI
+# never needs to grep. git still tracks them; Read still opens them by path.
+bds/addons/ts_repl/bp/scripts/
+bds/addons/ts_repl/rp/ui/
+sandbox-be/data/
+common/data/*.json
+bedrock-binary/data/
+bds/docs/verbs/results.json
+# generated tables (`help verbs <word>` answers from them): ~30% of what a search for give/inventory/player returns
+bds/docs/EVENTS.md
+bds/docs/VERBS.md
+bds/docs/coverage/spec.txt
+training/
+*.png
+*.tga
+*.ogg
+*.lock
+# the reference solution of the lessons: building from nothing is the point (scratch)
+bds/bench/solution.mjs

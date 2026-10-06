@@ -1,0 +1,31 @@
+name: share
+# bds-lab itself as a release anyone can be given (common/share.mjs): the lab and its samples, none of the units, caches,
+# servers or secrets; scanned for secrets, then unpacked alone and checked before it is kept. A GitHub Release lab-v<version>
+# with the zip and its sha256. Run by hand, or by the autopilot after it changed the lab itself (auto kind `share`).
+on:
+  workflow_dispatch:
+    inputs:
+      bump: { description: 'patch | minor | major | none', required: false, default: 'patch' }
+permissions:
+  contents: write
+jobs:
+  share:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with: { node-version: 22 }
+      - name: share
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.name 'bds-lab'
+          node lab.mjs share --bump "${{ inputs.bump || 'patch' }}" --release
+          git add VERSION CHANGES.md auto/ledger.jsonl
+          git commit -q -m "share: bds-lab v$(cat VERSION)" || true
+          git tag -f "lab-v$(cat VERSION)"
+          git push -q origin HEAD
+          git push -q -f origin "lab-v$(cat VERSION)"

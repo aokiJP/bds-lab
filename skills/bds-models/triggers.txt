@@ -1,0 +1,3 @@
+# words and phrases a person uses when this skill is needed, any language, one per line (skill route reads them; not installed)
+model, geometry, geo.json, Blockbench, cube, bone, pivot, UV, mirrored texture, wrong side, z-fighting, flicker, animation, attachable, held item, worn item, wing
+モデル, 形, ボーン, テクスチャ, 反転, 裏返し, チラつき, アニメーション, 翼, 手に持つ, 頭にかぶる

@@ -1,0 +1,17 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Daily Bonus RP",
+    "description": "An emerald for each day you log in, 5 on a 7-day streak",
+    "uuid": "f00aeb18-3701-43bb-a09a-6913164f025c",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 26, 52]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "c9974877-1dde-45f9-a390-bd9119d327f0",
+      "version": [1, 0, 0]
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+## an operator sees another player's address, ping, device and language
+@A join
+@B join locale=ja_JP os=android
+@A cmd /whois B
+~ @A B: ip 127\.0\.0\.1:\d+ ping \d+ms \| Android .*\| ja_JP \| client
+## offline names are refused politely
+@A cmd /whois Nobody
+~ Nobody is not online
+## players without op cannot use it
+deop B
+@B cmd /whois A
+!~ @B A: ip

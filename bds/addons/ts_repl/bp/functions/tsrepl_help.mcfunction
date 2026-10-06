@@ -1,0 +1,2 @@
+# 困ったときの一覧。自分にだけ出ます（say は全員に出るので使わない）。
+tellraw @s {"rawtext": [{"translate": "tsrepl.help.head"}, {"text": "\n"}, {"translate": "tsrepl.help.start"}, {"text": "\n"}, {"translate": "tsrepl.help.chat"}, {"text": "\n"}, {"translate": "tsrepl.help.screens"}, {"text": "\n"}, {"translate": "tsrepl.help.write"}, {"text": "\n"}, {"translate": "tsrepl.help.access"}, {"text": "\n"}, {"translate": "tsrepl.help.doctor"}, {"text": "\n"}, {"translate": "tsrepl.help.move"}]}

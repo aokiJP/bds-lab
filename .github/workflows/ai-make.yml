@@ -1,0 +1,60 @@
+name: ai-make
+# AI-driven development: an issue labeled `make` (or titled "make: ...") becomes a tested addon / Endstone plugin / LeviLamina
+# mod, built and playtested by AI on real servers with real clients, shipped as a branch + Release, answered in the issue.
+# `/make <change>` commented on that issue changes it. Setup: the secret ANTHROPIC_API_KEY (or OPENAI_API_KEY, with the
+# variables OPENAI_BASE_URL / OPENAI_MODEL for a compatible server); optional variables LAB_MODEL, LAB_CI_PLAYTEST (rounds, 0 = off).
+# Only the owner, members and collaborators can start it (it spends API tokens). Logic: common/ci.mjs.
+on:
+  issues:
+    types: [opened, labeled]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      request: { description: 'what to make, or the change (empty with a unit: harden it by AI playtest)', required: false }
+      unit: { description: 'change or harden this unit instead: <lab>/<name>, e.g. bds/rubyshop', required: false }
+permissions:
+  contents: write
+  issues: write
+concurrency:
+  group: ai-make-${{ github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+jobs:
+  make:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && (github.event.label.name == 'make' || startsWith(github.event.issue.title, 'make:'))) ||
+      (github.event_name == 'issue_comment' && !github.event.issue.pull_request && startsWith(github.event.comment.body, '/make'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { fetch-depth: 0, lfs: true }
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with: { node-version: 22 }
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: '3.12' }
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            bds/.lab
+            end/.lab
+            ll/.lab
+          key: ai-make-${{ runner.os }}-${{ hashFiles('bds/vendor/bds-version.txt', 'common/data/bds-versions.json', 'end/flavor.mjs', 'll/flavor.mjs') }}
+      - run: npm i -g esbuild@0.28 typescript@6.0.3
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends wine winetricks cabextract || true   # ll only
+      - name: make
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          LAB_MODEL: ${{ vars.LAB_MODEL }}
+          LAB_CI_PLAYTEST: ${{ vars.LAB_CI_PLAYTEST }}
+          LAB_TOKEN_BUDGET: ${{ vars.LAB_TOKEN_BUDGET }}
+          LAB_NOTIFY_WEBHOOK: ${{ secrets.LAB_NOTIFY_WEBHOOK }}
+          GH_TOKEN: ${{ github.token }}
+        run: node common/ci.mjs
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with: { name: made, path: '*/dist/*', if-no-files-found: ignore }

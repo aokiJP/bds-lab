@@ -1,0 +1,11 @@
+## chat goes into today's log file
+@A join
+@A chat おはよう
+@A chat second line
+wait 500
+lse return File.readFrom(`./plugins/chatlog/logs/${new Date().toISOString().slice(0, 10)}.log`).trim().split(String.fromCharCode(10)).map((l) => l.slice(9)).join(' / ')
+= <A> おはよう / <A> second line
+## /chatlog shows the last lines, also after a restart
+restart
+@A cmd /chatlog 1
+~ @A cmd: \d\d:\d\d:\d\d <A> second line

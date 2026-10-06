@@ -1,0 +1,73 @@
+# from the import draft, with what the request wants
+## loads
+@A join
+js 1+1
+= 2
+
+## a new player gets one compass, and not another when they come back
+wait 500
+js inv(p('A')).filter((s) => s.includes('compass')).join(' ')
+~ ^\d+:minecraft:compass\*1$
+@A leave
+@A join
+wait 500
+js inv(p('A')).filter((s) => s.includes('compass')).join(' ')
+~ ^\d+:minecraft:compass\*1$
+
+## !home without a home says so
+@A chat !home
+~ @A No home yet
+
+## !sethome then !home brings the player back
+tp A 5 -60 5
+wait 300
+@A chat !sethome
+~ @A Home set!
+tp A -10 -60 -10
+wait 300
+@A chat !home
+~ @A Welcome home!
+wait 500
+js [Math.floor(p('A').location.x), Math.floor(p('A').location.z)].join(' ')
+= 5 5
+
+## the home survives a restart
+restart
+tp A -10 -60 -10
+wait 300
+@A chat !home
+~ @A Welcome home!
+wait 500
+js [Math.floor(p('A').location.x), Math.floor(p('A').location.z)].join(' ')
+= 5 5
+
+## the compass menu: spawn, home, closing it
+@A select compass
+@A use
+until form 3000
+@A form Spawn
+~ @A Teleported to spawn
+@A use
+until form 3000
+@A form close
+@A use
+until form 3000
+@A form Home
+~ @A Welcome home!
+
+## the compass menu: to another player, and closing the player list
+@B join
+tp B 8 -60 0
+wait 300
+@A use
+until form 3000
+@A form Player
+until form 3000
+@A form ["B"]
+~ @A Teleported to B
+@A use
+until form 3000
+@A form Player
+until form 3000
+@A form close
+!~ ^E

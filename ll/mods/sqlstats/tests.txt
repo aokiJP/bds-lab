@@ -1,0 +1,15 @@
+## blocks a player breaks are counted in SQLite
+@A join
+setblock 2 -60 2 dirt
+setblock 3 -60 2 dirt
+@A dig 2 -60 2
+@A dig 3 -60 2
+wait 500
+@A cmd /stats
+~ @A cmd: A: blocks 2 joins 1
+## the database survives a restart
+restart
+@A cmd /top
+~ @A cmd: top blocks: 1\. A 2
+@A cmd /stats A
+~ @A cmd: A: blocks 2 joins 2

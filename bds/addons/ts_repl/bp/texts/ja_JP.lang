@@ -1,0 +1,2 @@
+pack.name=TS REPL
+pack.description=ゲームの中で TypeScript / JavaScript を書いて、その場で動かせます。はじめかた: /function tsrepl_start ／ 困ったら: /function tsrepl_help ／ 書く画面は3種類（サイドバー・アクションバー・フォーム）。まちがいは書いている最中に赤く出ます。※ワールド設定の「ベータ API」を入にしてください。

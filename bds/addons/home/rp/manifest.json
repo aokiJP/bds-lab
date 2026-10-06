@@ -1,0 +1,17 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Home RP",
+    "description": "Set a home and go back to it",
+    "uuid": "91e6df09-930d-4955-84dd-e9cdad0c02c3",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 26, 52]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "5ff028b5-b325-4af9-860d-db0b1f6d5712",
+      "version": [1, 0, 0]
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+## no home yet
+@A join
+@A cmd /lab:home
+~ @A You have no home yet
+
+## set a home, walk away, go back
+tp A 5 -60 5
+wait 300
+@A cmd /lab:sethome
+~ @A Home set at 5 -60 5 \(overworld\)
+tp A -10 -60 -10
+wait 300
+@A cmd /lab:home
+~ @A Welcome home
+wait 500
+js [Math.floor(p('A').location.x), Math.floor(p('A').location.z)].join(' ')
+= 5 5
+
+## home again within 10 seconds is refused
+@A cmd /lab:home
+~ @A Wait a little
+
+## a home in the nether, after a restart
+execute in nether run tp A 0 80 0
+wait 1000
+@A cmd /lab:sethome
+~ @A Home set at 0 80 0 \(nether\)
+restart
+clock +1d
+wait 11000
+@A cmd /lab:home
+~ @A Welcome home
+wait 1000
+js p('A').dimension.id
+= minecraft:nether

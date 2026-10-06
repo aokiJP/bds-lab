@@ -1,0 +1,44 @@
+## a new player starts with 50 coins on the sidebar
+@A join
+wait 500
+js world.scoreboard.getObjective('coins').getScore(p('A'))
+= 50
+js world.scoreboard.getObjectiveAtDisplaySlot('Sidebar')?.objective.id
+= coins
+
+## buying bread takes 5 coins and gives the bread
+@A cmd /lab:shop
+until form
+~ @A form action: title\("Shop"\)
+@A form Bread
+~ @A Bought Bread for 5 coins \(45 left\)
+wait 300
+js inv(p('A'))
+~ minecraft:bread\*1
+
+## a diamond is refused when coins are short
+@A cmd /lab:shop
+until form
+@A form Diamond
+~ @A Not enough coins: Diamond costs 100, you have 45
+js world.scoreboard.getObjective('coins').getScore(p('A'))
+= 45
+
+## paying another player moves the coins
+@B join
+wait 500
+@A cmd /lab:pay B 20
+~ @A Sent 20 coins to B
+~ @B A sent you 20 coins
+js [world.scoreboard.getObjective('coins').getScore(p('A')), world.scoreboard.getObjective('coins').getScore(p('B'))].join(' ')
+= 25 70
+
+## no paying a negative or zero amount, or yourself
+@A cmd /lab:pay B -10
+~ @A The amount must be at least 1
+@A cmd /lab:pay B 0
+!~ @A Sent 0 coins
+@A cmd /lab:pay A 5
+~ @A You cannot pay yourself
+js world.scoreboard.getObjective('coins').getScore(p('A'))
+= 25

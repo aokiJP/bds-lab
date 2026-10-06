@@ -1,0 +1,3 @@
+# words and phrases a person uses when this skill is needed, any language, one per line (skill route reads them; not installed)
+JSON UI, ui, look, appearance, layout, screen, HUD, gauge, bar, server_form, _ui_defs, binding, namespace, title marker
+見た目, 外観, デザイン, 画面, レイアウト, HUD, ゲージ, バー, 表示

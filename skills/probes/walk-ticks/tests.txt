@@ -1,0 +1,9 @@
+## 20 ticks forward is about 4.3 blocks, toward +z; left is +x
+@A join
+wait 500
+@A walk forward 20
+js (p('A').location.z - 0.5).toFixed(1)
+~ ^4\.[0-6]$
+@A walk left 20
+js (p('A').location.x - 0.5).toFixed(1)
+~ ^4\.[0-6]$

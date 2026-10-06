@@ -1,0 +1,16 @@
+## a change in a before-event is refused; in system.run it works
+@A join
+scoreboard objectives add probe dummy
+scoreboard players set A probe 0
+give A stick
+wait 300
+@A select stick
+@A use
+~ ^teleport refused: .*restricted execution
+= in system.run ok
+~ ^addScore refused: .*restricted execution
+~ ^setScore refused: .*restricted execution
+~ ^addTag refused: .*restricted execution
+= setDynamicProperty ok
+= worldDynamicProperty ok
+= sendMessage ok

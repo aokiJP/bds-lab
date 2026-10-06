@@ -1,0 +1,6 @@
+pack.name=Jelly
+pack.description=A jelly mob, its gel, and a jump potion
+item.lab:gel.name=Gel
+entity.lab:jelly.name=Jelly
+item.spawn_egg.entity.lab:jelly.name=Spawn Jelly
+item.lab:jump_potion.name=Jump Potion

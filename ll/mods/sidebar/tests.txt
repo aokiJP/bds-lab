@@ -1,0 +1,10 @@
+## each client gets its own numbers, never the other player's
+@A join
+@B join
+@A watch set_score,set_display_objective
+tp A 10 -60 3
+tp B -7 -60 -4
+wait 1500
+~ @A saw set_display_objective .*sidebar
+~ @A saw set_score .*"score":10\b
+!~ @A saw set_score .*"score":-7\b

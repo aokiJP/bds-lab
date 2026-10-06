@@ -1,0 +1,3 @@
+# words and phrases a person uses when this skill is needed, any language, one per line (skill route reads them; not installed)
+Endstone, Python, plugin, pip, PyPI, HTTP, web server, REST API, SQL, SQLite, database, files, per-player sidebar, boss bar, toast, IP address, ping, transfer, refuse login, kick, packets
+プラグイン, パイソン, ウェブ, データベース, ファイル, 拒否, ログイン拒否, 外部から操作, サイドバー, ボスバー

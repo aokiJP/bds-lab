@@ -1,0 +1,395 @@
+{
+  "sum": {
+    "prompt": "`scriptevent bench:sum <numbers separated by spaces>` prints `SUM <total>` (JS number formatting).",
+    "test": [
+      "scriptevent bench:sum 3 4 5",
+      "= SUM 12",
+      "scriptevent bench:sum -2.5 1",
+      "= SUM -1.5"
+    ],
+    "level": 1,
+    "area": "scriptevent, numbers",
+    "teaches": [
+      "bds-script-api",
+      "bds-tests"
+    ]
+  },
+  "blocks": {
+    "prompt": "`scriptevent bench:fill x1 y1 z1 x2 y2 z2 <blockId>` fills that box and prints `FILLED <blocks in box>`. `scriptevent bench:count x1 y1 z1 x2 y2 z2 <blockId>` prints `COUNT <number of that block in the box>`.",
+    "test": [
+      "scriptevent bench:fill 1 -60 1 3 -59 4 minecraft:stone",
+      "= FILLED 24",
+      "scriptevent bench:count 0 -60 0 3 -59 4 minecraft:stone",
+      "= COUNT 24",
+      "scriptevent bench:count -2 -61 -2 1 -61 1 minecraft:grass_block",
+      "= COUNT 16"
+    ],
+    "level": 2,
+    "area": "the world: fill and count blocks",
+    "teaches": [
+      "bds-script-api"
+    ]
+  },
+  "ruby": {
+    "prompt": "Custom item `lab:ruby`: max stack 16, a 16x16 ruby texture, English name \"Ruby\". Every player gets 3 rubies on their first spawn.",
+    "clean": true,
+    "test": [
+      "@R join",
+      "wait 300",
+      "js inv(p('R')).join()",
+      "~ lab:ruby\\*3",
+      "js new mc.ItemStack('lab:ruby').maxAmount",
+      "= 16"
+    ],
+    "level": 3,
+    "area": "a custom item, a first-join gift",
+    "teaches": [
+      "bds-content"
+    ]
+  },
+  "kills": {
+    "prompt": "Scoreboard objective `kills` (display name \"Kills\"): a player gets +1 each time they kill any mob.",
+    "test": [
+      "@K join",
+      "tp K 10.5 -60 10.5",
+      "@K cmd effect @s strength 60 20 true",
+      "js mob('minecraft:pig',10.5,-60,12)",
+      "@K attack pig",
+      "wait 300",
+      "js mob('minecraft:cow',10.5,-60,12)",
+      "@K attack cow",
+      "wait 300",
+      "js world.scoreboard.getObjective('kills')?.getScore(p('K'))",
+      "= 2",
+      "js world.scoreboard.getObjective('kills')?.displayName",
+      "= Kills"
+    ],
+    "level": 4,
+    "area": "scoreboards and kill events",
+    "teaches": [
+      "bds-script-api",
+      "bds-tests-world"
+    ]
+  },
+  "save": {
+    "prompt": "`scriptevent bench:set <key> <value>` saves a value that survives server restarts and prints `SAVED <key>`. `scriptevent bench:get <key>` prints `VALUE <value>`, or `VALUE none` if unset.",
+    "test": [
+      "scriptevent bench:set color red",
+      "= SAVED color",
+      "restart",
+      "scriptevent bench:get color",
+      "= VALUE red",
+      "scriptevent bench:get size",
+      "= VALUE none"
+    ],
+    "level": 1,
+    "area": "saved data over a restart",
+    "teaches": [
+      "bds-script-api"
+    ]
+  },
+  "shop": {
+    "prompt": "ルビー(lab:ruby)というアイテムを追加。最大スタック16、16x16のルビーのドット絵テクスチャ、名前は英語「Ruby」日本語「ルビー」。初めて参加したプレイヤーにルビーを3個配る。コマンド /lab:shop でショップのフォームが開き、1つ目のボタン「ダイヤ1個（ルビー2個）」を押すとルビー2個と引き換えにダイヤ1個もらえる。ルビーが足りないときはチャットで「ルビーが足りません」と伝える。",
+    "clean": true,
+    "test": [
+      "## shop",
+      "@S join",
+      "wait 500",
+      "js inv(p('S')).join()",
+      "~ lab:ruby\\*3",
+      "js new mc.ItemStack('lab:ruby').maxAmount",
+      "= 16",
+      "@S cmd /lab:shop",
+      "until form",
+      "@S form 0",
+      "wait 500",
+      "js inv(p('S')).join()",
+      "~ minecraft:diamond\\*1",
+      "~ lab:ruby\\*1",
+      "@S cmd /lab:shop",
+      "until form",
+      "@S form 0",
+      "wait 500",
+      "~ ルビーが足りません"
+    ],
+    "level": 4,
+    "area": "a form shop, inventory, two languages",
+    "teaches": [
+      "bds-forms",
+      "bds-content"
+    ]
+  },
+  "lamp": {
+    "prompt": "ランプブロック(lab:lamp)を追加。名前は英語「Lamp」日本語「ランプ」。ブロックの状態 lab:lit(true/false、最初はfalse)を持ち、プレイヤーが右クリック(使用)するたびに切り替わる。点いている間は明るさ15で光る。",
+    "clean": true,
+    "test": [
+      "## lamp",
+      "setblock -5 -60 5 lab:lamp",
+      "@L join",
+      "tp L -5 -60 3",
+      "wait 300",
+      "js dim.getBlock({x:-5,y:-60,z:5}).permutation.getState('lab:lit')",
+      "= false",
+      "@L useon -5 -60 5",
+      "wait 800",
+      "js dim.getBlock({x:-5,y:-60,z:5}).permutation.getState('lab:lit')",
+      "= true",
+      "@L useon -5 -60 5",
+      "wait 800",
+      "js dim.getBlock({x:-5,y:-60,z:5}).permutation.getState('lab:lit')",
+      "= false"
+    ],
+    "level": 3,
+    "area": "a custom block with a state players toggle",
+    "teaches": [
+      "bds-content"
+    ]
+  },
+  "speed": {
+    "prompt": "金ブロックの上に立っているプレイヤーに移動速度上昇II(レベル2)を付け、アクションバーに「SPEED!」と表示する。",
+    "test": [
+      "## speed",
+      "@G join",
+      "setblock -10 -61 -10 gold_block",
+      "tp G -9.5 -60 -9.5",
+      "wait 2000",
+      "js p('G').getEffect('speed')?.amplifier",
+      "= 1",
+      "~ @G actionbar: .*SPEED!"
+    ],
+    "level": 2,
+    "area": "every tick: effects, the action bar",
+    "teaches": [
+      "bds-script-api",
+      "bds-tests-world"
+    ]
+  },
+  "vote": {
+    "prompt": "/lab:vote で「好きな色」の投票フォーム(ドロップダウンで 赤・青・緑)を開き、選んだ色に1票入る。投票は1人1回まで(2回目は「もう投票しました」とチャットで伝える)。/lab:result でチャットに「赤:1 青:0 緑:1」の形で集計を表示する。サーバーを再起動しても票は残る。",
+    "test": [
+      "## vote",
+      "@V join",
+      "@W join",
+      "@V cmd /lab:vote",
+      "until form",
+      "@V form [0]",
+      "wait 800",
+      "@W cmd /lab:vote",
+      "until form",
+      "@W form [2]",
+      "wait 800",
+      "@V cmd /lab:vote",
+      "wait 1500",
+      "~ もう投票しました",
+      "restart",
+      "@V cmd /lab:result",
+      "wait 1500",
+      "~ 赤:1 青:0 緑:1"
+    ],
+    "level": 5,
+    "area": "a modal form, one vote each, kept over a restart",
+    "teaches": [
+      "bds-forms",
+      "bds-script-api"
+    ]
+  },
+  "slime": {
+    "prompt": "エンティティ lab:gel_slime(名前 英語「Gel Slime」日本語「ジェルスライム」、体力6、ゆっくり歩き回り、近くのプレイヤーを見る)を追加。倒すとアイテム lab:gel(名前 英語「Gel」日本語「ジェル」、緑色のテクスチャ)を1〜2個落とす。",
+    "clean": true,
+    "test": [
+      "## slime",
+      "summon lab:gel_slime 5 -60 -8",
+      "wait 500",
+      "js dim.getEntities({type:'lab:gel_slime'}).length",
+      "= 1",
+      "js dim.getEntities({type:'lab:gel_slime'})[0].getComponent('health').effectiveMax",
+      "= 6",
+      "js dim.getEntities({type:'lab:gel_slime'})[0].kill()",
+      "wait 1500",
+      "js dim.getEntities({type:'item'}).map(e=>e.getComponent('item').itemStack.typeId).join()",
+      "~ ^(.*,)?lab:gel(,.*)?$"
+    ],
+    "level": 3,
+    "area": "a custom mob and its drops",
+    "teaches": [
+      "bds-content"
+    ]
+  },
+  "pingtop": {
+    "lab": "end",
+    "prompt": "/ping で自分のping(ms)を「A: 12ms」の形で表示し、/pingtop でオンラインの全員をpingの小さい順に「1. A 3ms | 2. B 5ms」の形で表示する。",
+    "test": [
+      "## ping",
+      "@A join",
+      "@B join",
+      "@A cmd /ping",
+      "~ @A A: \\d+ms",
+      "@A cmd /pingtop",
+      "~ @A 1\\. [AB] \\d+ms \\| 2\\. [AB] \\d+ms"
+    ],
+    "level": 6,
+    "area": "Endstone: what BDS scripts cannot do (ping)",
+    "teaches": [
+      "endstone-plugin"
+    ]
+  },
+  "coins": {
+    "lab": "ll",
+    "prompt": "ブロックを壊すたびにそのプレイヤーのコインが1枚増え、本人だけのサイドバーに「コイン」の行で枚数を表示する。/coins でチャットに「コイン: 2」の形で枚数を表示する。",
+    "test": [
+      "## coins",
+      "@A join",
+      "setblock 2 -60 2 dirt",
+      "setblock 3 -60 2 dirt",
+      "@A dig 2 -60 2",
+      "@A dig 3 -60 2",
+      "wait 1000",
+      "@A cmd /coins",
+      "~ @A .*コイン: 2"
+    ],
+    "level": 6,
+    "area": "LeviLamina: a per-player sidebar",
+    "teaches": [
+      "levilamina-mod"
+    ]
+  },
+  "calc": {
+    "level": 1,
+    "area": "a custom command with arguments",
+    "teaches": [
+      "bds-script-api",
+      "bds-tests"
+    ],
+    "prompt": "コマンド /lab:add <a> <b>（整数 2 つ）で、実行したプレイヤーにチャットで「= 合計」と返す（例: /lab:add 2 3 → 「= 5」）。",
+    "test": [
+      "## calc: a command with two numbers",
+      "@A join",
+      "@A cmd /lab:add 2 3",
+      "wait 800",
+      "~ ^@A = 5$",
+      "@A cmd /lab:add -4 1",
+      "wait 800",
+      "~ ^@A = -3$"
+    ]
+  },
+  "countdown": {
+    "level": 2,
+    "area": "timers: runTimeout, messages to everyone",
+    "teaches": [
+      "bds-script-api"
+    ],
+    "prompt": "コマンド /lab:countdown <秒数> で、全員のチャットに 1 秒ごとに残りの秒数（3 なら 3、2、1）を出し、最後に「GO!」を出す。",
+    "test": [
+      "## countdown: 3, 2, 1, GO!",
+      "@A join",
+      "@A cmd /lab:countdown 3",
+      "until GO! 8000",
+      "~ ^3$",
+      "~ ^2$",
+      "~ ^1$",
+      "~ ^GO!$"
+    ]
+  },
+  "wandzap": {
+    "level": 3,
+    "area": "a custom item that does something on use, with a cooldown",
+    "teaches": [
+      "bds-content",
+      "bds-script-api"
+    ],
+    "prompt": "アイテム lab:zap_wand（名前は英語「Zap Wand」日本語「ザップの杖」、最大スタック 1）を追加。使う（右クリック）と使った人に「ZAP!」と伝える。続けて使っても 3 秒間は何もせず「クールダウン中」と伝える。",
+    "clean": true,
+    "test": [
+      "## wandzap: use, then a cooldown",
+      "@W join",
+      "give W lab:zap_wand",
+      "wait 500",
+      "@W select lab:zap_wand",
+      "@W use",
+      "wait 500",
+      "~ ^@W ZAP!$",
+      "@W use",
+      "wait 500",
+      "~ ^@W クールダウン中$",
+      "js new mc.ItemStack('lab:zap_wand').maxAmount",
+      "= 1"
+    ]
+  },
+  "zone": {
+    "level": 4,
+    "area": "positions over time: entering and leaving an area",
+    "teaches": [
+      "bds-script-api",
+      "bds-tests-world"
+    ],
+    "prompt": "x が 10〜14、z が 10〜14 の範囲（高さは問わない）に入ったプレイヤーにチャットで「ゾーンに入りました」、出たら「ゾーンを出ました」と、そのたびに 1 回ずつ伝える。",
+    "test": [
+      "## zone: in and out",
+      "@Z join",
+      "tp Z 0 -60 0",
+      "wait 600",
+      "tp Z 12 -60 12",
+      "wait 1200",
+      "~ ^@Z ゾーンに入りました$",
+      "tp Z 0 -60 0",
+      "wait 1200",
+      "~ ^@Z ゾーンを出ました$"
+    ]
+  },
+  "filter": {
+    "level": 5,
+    "area": "a before-event: stop a chat message",
+    "teaches": [
+      "bds-script-api"
+    ],
+    "prompt": "チャットで「badword」を含む発言は誰にも届けず、発言した人にだけ「その言葉は使えません」と伝える。それ以外の発言はふつうに全員に届く。",
+    "test": [
+      "## filter: a bad word stops, others pass",
+      "@A join",
+      "@B join",
+      "@A chat hello badword",
+      "wait 1000",
+      "~ ^@A その言葉は使えません$",
+      "!~ ^@B .*badword",
+      "@A chat hi there",
+      "wait 1000",
+      "~ ^@B chat <A> hi there$"
+    ],
+    "guards": [
+      "~ ^@B chat <A> hi there$"
+    ],
+    "about_guards": "guards: expectations that hold on the empty template too, by design (they catch a solution that does too much, here one that stops every message); bench selftest allows exactly these to pass there"
+  },
+  "daily": {
+    "level": 5,
+    "area": "once a day per player: dates, saved data, a restart",
+    "teaches": [
+      "bds-script-api",
+      "bds-tests"
+    ],
+    "prompt": "コマンド /lab:daily で、その日はじめてならエメラルドを 1 個渡して「受け取りました」、同じ日の 2 回目からは「今日はもう受け取りました」と伝える。日付が変わればまた受け取れる。サーバーを再起動しても記録は残る。",
+    "test": [
+      "## daily: the first time today",
+      "@D join",
+      "@D cmd /lab:daily",
+      "wait 800",
+      "~ ^@D 受け取りました$",
+      "js inv(p('D')).join()",
+      "~ minecraft:emerald\\*1",
+      "## daily: again the same day, after a restart too",
+      "restart",
+      "@D cmd /lab:daily",
+      "wait 800",
+      "~ ^@D 今日はもう受け取りました$",
+      "js inv(p('D')).join()",
+      "~ minecraft:emerald\\*1$",
+      "## daily: the next day",
+      "clock +1d",
+      "@D cmd /lab:daily",
+      "wait 800",
+      "~ ^@D 受け取りました$",
+      "js inv(p('D')).join()",
+      "~ minecraft:emerald\\*2"
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+#!/usr/bin/env node
+// a fake gpdl for tests/app-offline.mjs: `-a <pkg> ... <dir>`; FAKE_GPDL_APK (when set) is saved as <pkg>.apk, else it says
+// why Play refused, as the real one does (INFO / FAIL lines)
+import fs from 'node:fs';
+import path from 'node:path';
+const a = process.argv.slice(2), pkg = a[a.indexOf('-a') + 1], dir = a.at(-1);
+console.log(`STEP details ${pkg}`);
+// --details-only: what Play offers (FAKE_GPDL_VERSION="<code> <name>", else not offered)
+if (a.includes('--details-only')) { if (process.env.FAKE_GPDL_VERSION) { console.log(`INFO title="Minecraft" version=x code=x`); console.log(`VERSION ${process.env.FAKE_GPDL_VERSION}`); process.exit(0); } console.log('FAIL refused details: empty answer'); process.exit(4); }
+if (process.env.FAKE_GPDL_APK) { fs.mkdirSync(dir, { recursive: true }); fs.copyFileSync(process.env.FAKE_GPDL_APK, path.join(dir, `${pkg}.apk`)); console.log(`SAVED ${pkg}.apk`); }
+else { console.log('INFO delivery status=Some(3) (not purchased by this account) server=None'); console.log('FAIL refused delivery: ot=1 no download link'); process.exit(1); }

@@ -1,0 +1,1160 @@
+{
+  "about": "The lab's know-how, one rule per entry, each with the evidence that proves it: test or probe (re-run here; probes on the real BDS, again after each Minecraft update), measured (seen here once), source (a reference project says so; shown [source] until a test or probe proves it here). `match` (a regex) puts the rule under the E/W/Q/✘ line it explains, the moment it happens; `misses` counts how often its failure still happened in units (recounted by skill learn). `log` is one line per generation (skill growth). `node lab.mjs skill build` writes the rule lines of every skills/<skill>/SKILL.md from here; `skill learn [--from <repo>]` adds candidates from what failed and got fixed and from other skill projects; `skill bench` keeps a change only if it does not make builds worse. status: verified | candidate (not in SKILL.md) | disputed (its evidence failed) | retired. `entry` (a phrase of AGENTS.md): AGENTS.md already says this rule, which every AI in the lab has loaded, so the lab prints the skill without it (SKILL.md keeps it for installs elsewhere; if the phrase leaves AGENTS.md the rule shows again). `tags`: words (any language) a request uses for this rule; a catalog skill printed by skill route shows the lines whose words fit the request (never printed).",
+  "rules": [
+    {
+      "id": "api-early",
+      "skill": "bds-script-api",
+      "rule": "No world.* at the top level of a script (it throws while the world loads): do it in kit ready(() => ...) or world.afterEvents.worldLoad.",
+      "why": "TypeError / early execution at load; the addon does nothing",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/offline.mjs"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      },
+      "match": "early execution|EarlyExecution|in early execution",
+      "entry": "world.* at the top level throws (use events/ready)"
+    },
+    {
+      "id": "api-before-readonly",
+      "skill": "bds-script-api",
+      "rule": "A before-event is read-only: teleport, give, addScore/setScore, addTag and set blocks in system.run(() => ...) inside it (setDynamicProperty and sendMessage work directly).",
+      "why": "\"Native function ... cannot be used in restricted execution\"",
+      "evidence": {
+        "kind": "probe",
+        "ref": "skills/probes/before-readonly"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      },
+      "match": "restricted execution"
+    },
+    {
+      "id": "api-score-identity",
+      "skill": "bds-script-api",
+      "rule": "objective.getScore(p) throws \"Failed to resolve identity\" until p has a score in some objective; hasParticipant is false then. Use addScore(p, n) (it creates the score) or hasParticipant(p) ? getScore(p) : 0.",
+      "why": "works in a test that sets a score first, crashes for a new player",
+      "evidence": {
+        "kind": "probe",
+        "ref": "skills/probes/score-identity"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      },
+      "match": "Failed to resolve identity"
+    },
+    {
+      "id": "api-runcommand",
+      "skill": "bds-script-api",
+      "rule": "runCommandAsync is gone in @minecraft/server 2.x: use runCommand (or the API itself: teleport, addItem).",
+      "why": "TypeError: not a function after a game update",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/import-offline.mjs"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      },
+      "match": "runCommandAsync is not a function"
+    },
+    {
+      "id": "api-chatsend-beta",
+      "skill": "bds-script-api",
+      "rule": "world.beforeEvents.chatSend exists only in beta modules (node lab.mjs mode beta); on stable, make the chat word a custom command (kit cmd).",
+      "why": "cannot read property 'subscribe' of undefined at load",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/import-offline.mjs"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      },
+      "match": "chatSend"
+    },
+    {
+      "id": "api-beta-versions",
+      "skill": "bds-script-api",
+      "rule": "A module version x.y.z-beta exists only in the BDS it was made for; stable versions carry over to newer BDS.",
+      "why": "\"@minecraft/server 1.9.0-beta is not in this BDS\" after an update",
+      "evidence": {
+        "kind": "measured",
+        "ref": "go on BDS 1.26.52.3: it has 0.1.0 1.19.0 2.10.0 2.11.0-beta"
+      },
+      "status": "verified",
+      "match": "-beta is not in this BDS"
+    },
+    {
+      "id": "api-state-persist",
+      "skill": "bds-script-api",
+      "rule": "What scripts keep in variables (Map, object) is lost on /reload and restart; what must survive goes into dynamic properties (kit save/load).",
+      "why": "\"my homes disappear after a restart\"",
+      "evidence": {
+        "kind": "probe",
+        "ref": "skills/probes/state-persist"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "api-form-cancel",
+      "skill": "bds-forms",
+      "rule": "A closed form gives canceled (selection / formValues undefined): check it before reading the answer; kit ask/menu/input/confirm return undefined then.",
+      "why": "cannot read property 'selection' of undefined when a player presses Esc",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/dev-bds.mjs"
+      },
+      "status": "verified",
+      "match": "property '(selection|formValues)'"
+    },
+    {
+      "id": "api-busy",
+      "skill": "bds-forms",
+      "rule": "A form shown while the player has another screen open is refused (UserBusy): kit ask() retries; plain show() does not.",
+      "why": "the form never appears when opened from a chat word or right after joining",
+      "evidence": {
+        "kind": "measured",
+        "ref": "kit ask (common/kit/kit.ts)"
+      },
+      "status": "verified",
+      "match": "UserBusy"
+    },
+    {
+      "id": "api-rod-events",
+      "skill": "bds-tests-world",
+      "rule": "Count a catch by playerInventoryItemChange (a fish arrives) right after the player used the rod (itemUse); there is no fishing event.",
+      "why": "api ?fish finds nothing",
+      "evidence": {
+        "kind": "measured",
+        "ref": "events on itemUse, playerInventoryItemChange while fishing (BDS 1.26.52.3)"
+      },
+      "status": "verified"
+    },
+    {
+      "id": "test-one-world",
+      "skill": "bds-tests",
+      "rule": "tests.txt sections run in order in ONE world: items, cooldowns, saved data and joined players carry over (`@A join` again prints `@A already joined`). Give each section what it needs, or wait out a cooldown.",
+      "why": "a section passes alone and fails after the one before it",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/sim-offline.mjs"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      },
+      "match": "passes on its own",
+      "entry": "sections run in order in one world (what one leaves, the next sees)"
+    },
+    {
+      "id": "test-same-spawn",
+      "skill": "bds-tests-world",
+      "rule": "All real players spawn on the same block (0 -60 0): move one (tp B 4 -60 0) before they throw, fish or shoot, or they hit each other.",
+      "why": "\"the bobber caught on B\", projectiles hit the other player",
+      "evidence": {
+        "kind": "probe",
+        "ref": "skills/probes/same-spawn"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "test-regex",
+      "skill": "bds-tests",
+      "rule": "`~` is a regex: escape * . ( ) [ ] + ? (inventory lines are slot:id*n, so ~ minecraft:bread\\*2); use = for a whole exact line; ^ ties to the line start (a player's line starts with @A ).",
+      "why": "want and got look the same and the check still fails",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/sim-offline.mjs"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "test-random",
+      "skill": "bds-tests-world",
+      "rule": "Loot and fishing are random: never expect an exact count; check a range (~ ^[12]$) or a relation (the score equals the fish in the inventory).",
+      "why": "a test that passes sometimes",
+      "evidence": {
+        "kind": "measured",
+        "ref": "fishing: leather and cod in 2 casts (BDS 1.26.52.3)"
+      },
+      "status": "verified"
+    },
+    {
+      "id": "test-clock",
+      "skill": "bds-tests",
+      "rule": "Daily or weekly logic: `clock +1d` moves the addon's Date ahead (kept over restart); never add a test-only back door to the addon.",
+      "why": "no way to test \"the next day\"",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/sim-offline.mjs"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "test-until",
+      "skill": "bds-tests",
+      "rule": "Wait with `until <regex> [ms]` (a 10 s timer: until ... 15000), not a guessed wait; make long durations an argument or a setting so the test can shorten them.",
+      "why": "flaky timing, or a test that takes minutes",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/sim-offline.mjs"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "test-walk-ticks",
+      "skill": "bds-tests-world",
+      "rule": "`@A walk forward N`: N is ticks, not blocks (20 ticks = 4.3 blocks; forward = +z, left = +x as spawned); `@A goto x z` for a place.",
+      "why": "the player stops short of the zone",
+      "evidence": {
+        "kind": "probe",
+        "ref": "skills/probes/walk-ticks"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "test-js-helpers",
+      "skill": "bds-tests",
+      "rule": "In a js line: p('A') is the player, inv(p) gives [\"slot:id*n\"], dim is the overworld itself (dim.getEntities, not dim()), mob(type,x,y,z) spawns.",
+      "why": "dim.getEntities is not a function",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/sim-offline.mjs"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "test-fish-setup",
+      "skill": "bds-tests-world",
+      "rule": "Fishing in a test: a pool ahead of the player (fill -8 -64 2 8 -61 24 water), enchant A lure 3 (about 8 s a catch), @A fish_n n 30.",
+      "why": "\"the bobber landed on grass\"",
+      "evidence": {
+        "kind": "measured",
+        "ref": "@A fish on BDS 1.26.52.3"
+      },
+      "status": "verified"
+    },
+    {
+      "id": "test-broadcast",
+      "skill": "bds-tests-world",
+      "rule": "world.sendMessage / say prints as one plain line on BDS; a player's chat shows on every player, the sender too, as `@B chat <A> text`; in Endstone a broadcast shows as each player's line (@A ...).",
+      "why": "~ ^text misses because the line is \"@A text\"",
+      "evidence": {
+        "kind": "probe",
+        "ref": "skills/probes/broadcast"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "content-sample",
+      "skill": "bds-content",
+      "rule": "Look up vanilla files before writing JSON: `sample recipe`, `sample recipes/glass_bottle.json`, `doc minecraft:recipe_shapeless`.",
+      "why": "a guessed format the game rejects",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/sample-offline.mjs"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "content-unlock",
+      "skill": "bds-content",
+      "rule": "A shaped/shapeless recipe with format_version 1.20 or later needs \"unlock\" (e.g. [{\"item\": \"lab:gel\"}]), or it does not load.",
+      "why": "the recipe never appears",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/schema-offline.mjs"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      },
+      "match": "recipe.*unlock|unlock.*recipe"
+    },
+    {
+      "id": "content-component",
+      "skill": "bds-content",
+      "rule": "A custom item/block component needs both `ns:x={}` in the item/block components (add ... 'ns:x={}') and kit onItem/onBlock('ns:x', ...).",
+      "why": "the hook never runs (why says so)",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/dev-bds.mjs"
+      },
+      "status": "verified"
+    },
+    {
+      "id": "content-drops",
+      "skill": "bds-content",
+      "rule": "A mob's drops: add entity ... drops=ns:item*1-2 writes its loot table; test the kill with a weapon (give a diamond_sword; a fist does 1).",
+      "why": "the mob does not die in the test",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/sim-offline.mjs"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "fix-flow",
+      "skill": "bds-fix-addon",
+      "rule": "A person's addon: import <file> \"<their words>\" → read the brief (not every file) → the suggested mode → fix every use the audit lists → go with the draft tests → add a section per thing they asked.",
+      "why": "one crash per go round, files read one by one",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/import-offline.mjs"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      },
+      "entry": "prints its brief (ways in with file:line, what breaks on this BDS's APIs, which `mode`)"
+    },
+    {
+      "id": "fix-scope",
+      "skill": "bds-fix-addon",
+      "rule": "Change what they asked and what is broken, nothing else: keep their language (plain JS stays JS), names, pack UUIDs and style; say what you changed unasked.",
+      "why": "a rewrite the person cannot review",
+      "evidence": {
+        "kind": "measured",
+        "ref": "practice of the reference skills (fix what was pointed at)"
+      },
+      "status": "verified"
+    },
+    {
+      "id": "debug-read-go",
+      "skill": "bds-debug",
+      "rule": "Read the first ✘ / E line of go and its fix/hint line before editing; with no file:line go runs why itself; `why \"<title>\"` shows the values where it threw.",
+      "why": "edits that do not touch the cause (go says SAME failures)",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/dev-bds.mjs"
+      },
+      "status": "verified",
+      "entry": "A failure with no src/ line: go runs `why` itself"
+    },
+    {
+      "id": "debug-sim",
+      "skill": "bds-debug",
+      "rule": "sim (about 1 s, no server) is a hint between edits; go on the real server decides. ? UNSURE = the sandbox has not measured that part (movement, a skipped section before).",
+      "why": "trusting a sim pass",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/sim-offline.mjs"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "quality-mutate",
+      "skill": "bds-quality",
+      "rule": "After DONE: gaps (code no test runs) → mutate (bugs no test notices: write the check each one needs) → chaos; a new test must fail on the broken code.",
+      "why": "tests that pass whatever the code does",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/dev-bds.mjs"
+      },
+      "status": "verified",
+      "entry": "`mutate` (small bugs no test notices: the lines that need a check)"
+    },
+    {
+      "id": "quality-honest",
+      "skill": "bds-quality",
+      "rule": "Report what ran on the real server (go DONE, the numbers) apart from what only sim or reading showed; name what you decided without asking.",
+      "why": "claims nobody ran",
+      "evidence": {
+        "kind": "measured",
+        "ref": "practice of the reference skills (say what was not run)"
+      },
+      "status": "verified"
+    },
+    {
+      "id": "end-settable",
+      "skill": "endstone-plugin",
+      "rule": "Make waits and limits plugin attributes so a test sets them: `py plugin.idle_seconds = 3` instead of waiting 5 minutes.",
+      "why": "a test that takes minutes",
+      "evidence": {
+        "kind": "measured",
+        "ref": "AFK plugin on Endstone (BDS 1.26.52.3)"
+      },
+      "status": "verified"
+    },
+    {
+      "id": "end-deps",
+      "skill": "endstone-plugin",
+      "rule": "PyPI packages: lib add <pkg> (writes pyproject); go installs what pyproject declares and is missing.",
+      "why": "plugin fails to load: No module named ...",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/pytb-offline.mjs"
+      },
+      "status": "verified",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      },
+      "match": "No module named"
+    },
+    {
+      "id": "end-thread",
+      "skill": "endstone-plugin",
+      "rule": "The Endstone API is server-thread only: no sleep or blocking I/O there; a thread computes, then self.server.scheduler.run_task(self, fn) brings the result back.",
+      "why": "every player freezes",
+      "evidence": {
+        "kind": "measured",
+        "ref": "end/AGENTS.md (pyChecks warns)"
+      },
+      "status": "verified"
+    },
+    {
+      "id": "model-look",
+      "skill": "bds-models",
+      "rule": "Never decide a side or a look from the JSON: the game mirrors models in x (a cube's east UV shows on its low-x side). `render <id> --anim <clip>@0/@end` draws it as the game does; read the PNG before saying it looks right.",
+      "why": "text on the wrong side, a look reported but never seen",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/rp-offline.mjs",
+        "also": "https://github.com/iMasterProX/mcbemodelingmasterAI docs/02 (measured in the game there)"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "model-rotation",
+      "skill": "bds-models",
+      "rule": "A rotation [rx,ry,rz] is applied as right-handed (-rx, ry, -rz), X then Y then Z, about the pivot; animation rotations ADD to the bind pose.",
+      "why": "a part tilted the wrong way",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/rp-offline.mjs"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "model-zfight",
+      "skill": "bds-models",
+      "rule": "No two faces on one plane: move one part 0.02-0.05, then paint the thin step so it continues its neighbour (`check` names each z-fight pair).",
+      "why": "flicker, then a crack where the step is",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/rp-offline.mjs"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "match": "z-fight",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "model-uv",
+      "skill": "bds-models",
+      "rule": "texture_width/height must be the PNG's size and every UV inside it; a box UV [u,v] takes 2*(d+w) x (d+h) texels from there.",
+      "why": "a face drawn with garbage",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/rp-offline.mjs"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "match": "UV leaves the",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "model-plate",
+      "skill": "bds-models",
+      "rule": "A wing, fin, leaf or cloth is ONE zero-thickness plate cut out by transparent texels (material entity_alphatest), both faces the same size and painted by position; not a board or a fan of boxes.",
+      "why": "wings that look like boards; one face paints over the cut-out",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/rp-offline.mjs"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "match": "two-faced plate",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "model-hand-edit",
+      "skill": "bds-models",
+      "rule": "A person's Blockbench save wins: lint it (`check`: collapsed / duplicate cubes, UV off), fix only the defects named and say which; never redesign a part nobody pointed at.",
+      "why": "a rewrite the person rejects",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/rp-offline.mjs"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "match": "collapsed cube|duplicate cube",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "model-vanilla-first",
+      "skill": "bds-models",
+      "rule": "When vanilla has the thing (a wing, a held item, a mount), look first: `render minecraft:<mob>`, `sample rp/models/entity/<name>`.",
+      "why": "a guessed construction rejected 3 times",
+      "evidence": {
+        "kind": "source",
+        "ref": "https://github.com/iMasterProX/mcbemodelingmasterAI README (the drake wings)"
+      },
+      "status": "verified",
+      "added": "2026-10-03"
+    },
+    {
+      "id": "ui-defs",
+      "skill": "bds-json-ui",
+      "rule": "A new rp/ui file is loaded only when listed in rp/ui/_ui_defs.json (\"ui_defs\": [\"ui/x.json\"]); a file named like a vanilla screen (server_form.json, hud_screen.json) changes that screen and keeps its namespace.",
+      "why": "nothing changes in the game, no error anywhere",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/rp-offline.mjs"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "match": "_ui_defs|but the vanilla",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "ui-refs",
+      "skill": "bds-json-ui",
+      "rule": "Every name@base is namespace.element that exists in this pack or vanilla (`check` suggests the nearest); look the element up with `sample rp/ui/<screen>.json` instead of guessing.",
+      "why": "Type not specified (or @-base not found) in the client log",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/rp-offline.mjs"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "match": "does not exist|namespace \\\"",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "ui-texture",
+      "skill": "bds-json-ui",
+      "rule": "Only texture paths that exist (rp/textures or vanilla); an invented textures/ui/... draws nothing.",
+      "why": "an invisible image",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/rp-offline.mjs"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "match": "is in neither this pack nor vanilla",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "ui-modify",
+      "skill": "bds-json-ui",
+      "rule": "Change a vanilla screen with small `modifications` (insert_front / insert_back / replace on its controls), never a copy of the whole file: a copy breaks on the next game update and hides other packs.",
+      "why": "the screen breaks after a Minecraft update",
+      "evidence": {
+        "kind": "source",
+        "ref": "https://github.com/boredape874/mcbejsonuimasterAI docs/14, docs/26"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "match": "operation \\\""
+    },
+    {
+      "id": "ui-title-route",
+      "skill": "bds-json-ui",
+      "rule": "Custom server forms: put a marker in the form title (title('§s§h§o§p§rShop')) and show the custom control with a view binding on #title_text; tests see the raw title (`~ title\\(\"§s§h§o§p`).",
+      "why": "every form turns custom, or none does",
+      "evidence": {
+        "kind": "source",
+        "ref": "https://github.com/shawtymarco/MCBE-UI references/local-examples/npc-dialogue"
+      },
+      "status": "verified",
+      "added": "2026-10-03"
+    },
+    {
+      "id": "ui-unverified",
+      "skill": "bds-json-ui",
+      "rule": "BDS never loads RP UI and the test clients do not draw it: `check` passing is the only automatic proof. Say what was checked statically and that the look still needs a real client (`app run`, or the person).",
+      "why": "a look reported that nobody saw",
+      "evidence": {
+        "kind": "source",
+        "ref": "https://github.com/boredape874/mcbejsonuimasterAI docs/21 (confirmed / inferred / not verified)"
+      },
+      "status": "verified",
+      "added": "2026-10-03"
+    },
+    {
+      "id": "ui-binding",
+      "skill": "bds-json-ui",
+      "rule": "A view binding needs source_property_name and target_property_name; a collection binding needs binding_collection_name.",
+      "why": "a control that never shows or never updates",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/rp-offline.mjs"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "match": "binding",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "test-client-lines",
+      "skill": "bds-tests",
+      "rule": "A line is what the client shows: § colours gone, trailing spaces trimmed, a rawtext {translate:'k', with:[..]} as `@A %k [a, b]`: match that form (texts: node lab.mjs i18n).",
+      "why": "a whole go spent on a text that never comes",
+      "evidence": {
+        "kind": "measured",
+        "ref": "trials 2026-10-03 (loginbonus, homeshop): real clients, realplayer.cjs"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "entry": "Lines are as a client shows them: § colours gone, trailing spaces trimmed, a {translate} message as `%key [a, b]`"
+    },
+    {
+      "id": "test-absent-section",
+      "skill": "bds-tests",
+      "rule": "`!` and `!~` check the whole section, later lines too: to prove something did not happen before a later step makes it, give that check its own section.",
+      "why": "an absence check fails on what a later line prints",
+      "evidence": {
+        "kind": "measured",
+        "ref": "trials 2026-10-03 (loginbonus, homeshop): real clients, realplayer.cjs"
+      },
+      "status": "verified",
+      "added": "2026-10-03"
+    },
+    {
+      "id": "test-js-last",
+      "skill": "bds-tests",
+      "rule": "A js line gives its last expression: `js const l = inv(p('A')); l.length` (or `return x`); nothing printed means undefined.",
+      "why": "want = 2, got only other lines",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/sim-offline.mjs"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "recipe-daily",
+      "skill": "bds-recipes",
+      "rule": "Daily login / streak: day number from the local date, last day + streak saved per player on initialSpawn; test days with `clock +1d` → bds/addons/daily",
+      "why": "a test that cannot reach tomorrow",
+      "evidence": {
+        "kind": "unit",
+        "ref": "bds/addons/daily"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "tags": "毎日 ログインボーナス 連続 日替わり daily login streak",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "recipe-once-a-day",
+      "skill": "bds-recipes",
+      "rule": "A command once a day per player (cooldown over restarts) → bds/addons/coins",
+      "why": "a cooldown lost on restart",
+      "evidence": {
+        "kind": "unit",
+        "ref": "bds/addons/coins"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "tags": "1日1回 コイン 報酬 once a day",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "recipe-home",
+      "skill": "bds-recipes",
+      "rule": "Homes / warps: save<{dim,x,y,z}> per player, teleport with { dimension }, cooldown() → bds/addons/home",
+      "why": "homes lost on restart or in the wrong dimension",
+      "evidence": {
+        "kind": "unit",
+        "ref": "bds/addons/home"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "tags": "ホーム ワープ テレポート 戻る",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "recipe-shop",
+      "skill": "bds-recipes",
+      "rule": "Money and a shop: score() on the sidebar, balance via hasParticipant, menu() of goods, /pay refusing self, ≤0 and too much → bds/addons/shop",
+      "why": "getScore crash for a new player; negative pay",
+      "evidence": {
+        "kind": "unit",
+        "ref": "bds/addons/shop"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "tags": "ショップ お金 コイン 買う 売る 送金 経済 money shop pay",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "recipe-item",
+      "skill": "bds-recipes",
+      "rule": "A custom item with an effect, a cooldown and a use count on the sidebar; given once on first join → bds/addons/wand",
+      "why": "spam use; the gift given at every join",
+      "evidence": {
+        "kind": "unit",
+        "ref": "bds/addons/wand"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "tags": "アイテム 杖 クールダウン 効果 初参加 配る",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "recipe-zone",
+      "skill": "bds-recipes",
+      "rule": "Entering / leaving an area: every(5) checks positions, a Set remembers who is inside → bds/addons/zone",
+      "why": "a message every tick while inside",
+      "evidence": {
+        "kind": "unit",
+        "ref": "bds/addons/zone"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "tags": "エリア 範囲 入る 出る 区域",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "recipe-contest",
+      "skill": "bds-recipes",
+      "rule": "A timed contest: end tick + runTimeout(finish), sidebar scores, prize to the top player still online, seconds as an argument for tests → bds/addons/fishcup",
+      "why": "a 3-minute test; the prize to someone who left",
+      "evidence": {
+        "kind": "unit",
+        "ref": "bds/addons/fishcup"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "tags": "大会 釣り 制限時間 賞品 1位 タイマー",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "recipe-block",
+      "skill": "bds-recipes",
+      "rule": "A block players toggle (block state) and a name typed in a form, kept over restart → bds/addons/lamp",
+      "why": "state lost on restart",
+      "evidence": {
+        "kind": "unit",
+        "ref": "bds/addons/lamp"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "tags": "ブロック ランプ 切り替え 状態",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "recipe-mob",
+      "skill": "bds-recipes",
+      "rule": "A custom mob with drops, a crafting recipe and a potion effect → bds/addons/jelly",
+      "why": "the recipe never appears; drops not tested with a weapon",
+      "evidence": {
+        "kind": "unit",
+        "ref": "bds/addons/jelly"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "tags": "モブ ドロップ レシピ ポーション クラフト",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "recipe-ui",
+      "skill": "bds-recipes",
+      "rule": "A form with its own look (JSON UI server_form by title marker) → bds/addons/jsonui_demo",
+      "why": "every form changes look",
+      "evidence": {
+        "kind": "unit",
+        "ref": "bds/addons/jsonui_demo"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "tags": "見た目 フォーム JSON UI デザイン",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "recipe-fixed",
+      "skill": "bds-recipes",
+      "rule": "A person's addon that broke after an update, fixed in place (their UUIDs, plain JS kept) → bds/addons/teleport_menu (TASK.md lists every change)",
+      "why": "a rewrite instead of a fix",
+      "evidence": {
+        "kind": "unit",
+        "ref": "bds/addons/teleport_menu"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "tags": "修正 壊れた アップデート 人のアドオン",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "deliver-beta",
+      "skill": "bds-deliver",
+      "rule": "On beta modules: tell them to turn on the world's Beta APIs experiment and that it works only on this Minecraft version; prefer stable when the request allows (go tries it).",
+      "why": "the addon does nothing in their world",
+      "evidence": {
+        "kind": "measured",
+        "ref": "deploy: level.dat experiments (help deploy)"
+      },
+      "status": "verified",
+      "added": "2026-10-03"
+    },
+    {
+      "id": "deliver-honest",
+      "skill": "bds-deliver",
+      "rule": "Say which request lines a real-server test proves, and list guesses and unasked changes apart; never claim a look or a feel nobody saw.",
+      "why": "a report the person cannot trust",
+      "evidence": {
+        "kind": "source",
+        "ref": "https://github.com/iMasterProX/mcbemodelingmasterAI docs/10 (report honestly)"
+      },
+      "status": "verified",
+      "added": "2026-10-03"
+    },
+    {
+      "id": "deliver-update",
+      "skill": "bds-deliver",
+      "rule": "A fixed addon keeps its pack UUIDs and goes one version up (go does it after import): their worlds take it as an update.",
+      "why": "two copies of the addon in their world, or the old one kept",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/import-offline.mjs"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "ll-command",
+      "skill": "levilamina-mod",
+      "rule": "Commands: mc.newCommand(name, desc, PermType.Any) → mandatory/optional → overload([...]) → setCallback((_c, origin, out, r) => ...) → setup(); origin.player is null from the console (out.error); tests see `@A cmd: <success text>`.",
+      "why": "a command that never registers, or crashes from the console",
+      "evidence": {
+        "kind": "unit",
+        "ref": "ll/mods/money"
+      },
+      "status": "verified",
+      "added": "2026-10-03"
+    },
+    {
+      "id": "ll-xuid",
+      "skill": "levilamina-mod",
+      "rule": "Offline servers (the lab's, many private ones) give pl.xuid = \"\": key saved data by pl.xuid || pl.uuid.",
+      "why": "every player shares one account",
+      "evidence": {
+        "kind": "unit",
+        "ref": "ll/mods/money"
+      },
+      "status": "verified",
+      "added": "2026-10-03"
+    },
+    {
+      "id": "ll-files",
+      "skill": "levilamina-mod",
+      "rule": "Data lives under ./plugins/<n>/ (File.mkdir first; JsonConfigFile, DBSession sqlite3) and survives restart: prove it with a `restart` section.",
+      "why": "data lost, or written beside the server",
+      "evidence": {
+        "kind": "unit",
+        "ref": "ll/mods/sqlstats"
+      },
+      "status": "verified",
+      "added": "2026-10-03"
+    },
+    {
+      "id": "ll-cancel",
+      "skill": "levilamina-mod",
+      "rule": "Before-style events (onChat, onPlayerCmd, onDestroyBlock ...) are cancelled by returning false from the listener.",
+      "why": "the vanilla action still happens",
+      "evidence": {
+        "kind": "unit",
+        "ref": "ll/mods/cmdguard"
+      },
+      "status": "verified",
+      "added": "2026-10-03"
+    },
+    {
+      "id": "test-regex-js",
+      "skill": "bds-tests",
+      "rule": "`~` regexes are JavaScript and match one line: no (?s) or other inline flags (only a leading (?i)); for an order across lines, compute it in a js/py/lse line and check its value.",
+      "why": "Invalid regular expression after the server started",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/offline.mjs"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "match": "Invalid regular expression",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "end-json",
+      "skill": "endstone-plugin",
+      "rule": "A py line's value prints short, not as Python repr: a str as itself, True/False, None as -, lists and tuples as [\"B\",\"A\",0], dicts as {k=v}: write `=` in that form, or return an f-string.",
+      "why": "want [('B', 'A', 0)] never matches",
+      "evidence": {
+        "kind": "test",
+        "ref": "tests/offline.mjs"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "end-template",
+      "skill": "endstone-plugin",
+      "rule": "Start from the closest working plugin: `node lab.mjs help ideas` lists end/plugins (SQLite and restarts: sqlstats; a report system with cooldowns and an op list: report).",
+      "why": "a structure guessed from scratch",
+      "evidence": {
+        "kind": "unit",
+        "ref": "end/plugins/report"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "end-perm",
+      "skill": "endstone-plugin",
+      "rule": "The lab's players are operators: `deop B` before a section that proves a normal player is refused (\"op\" permissions).",
+      "why": "a permission check that is never tested",
+      "evidence": {
+        "kind": "unit",
+        "ref": "end/plugins/report"
+      },
+      "status": "verified",
+      "added": "2026-10-03",
+      "verified": {
+        "bds": "1.26.52.3",
+        "at": "2026-10-03",
+        "ok": true
+      }
+    },
+    {
+      "id": "ll-restart",
+      "skill": "levilamina-mod",
+      "rule": "`restart` keeps plugins/<n>/ and the world and the players rejoin: a section after it proves what must survive; `lse` lines see the mod's top-level names (lab builds).",
+      "why": "data lost on restart, untested",
+      "evidence": {
+        "kind": "unit",
+        "ref": "ll/mods/warps"
+      },
+      "status": "verified",
+      "added": "2026-10-03"
+    },
+    {
+      "id": "ll-template",
+      "skill": "levilamina-mod",
+      "rule": "Start from the closest working mod in ll/mods (`help ideas`): JSON file + op commands + cooldown → warps; SQLite → sqlstats; economy → money.",
+      "why": "a structure guessed from scratch",
+      "evidence": {
+        "kind": "unit",
+        "ref": "ll/mods/warps"
+      },
+      "status": "verified",
+      "added": "2026-10-03"
+    }
+  ],
+  "log": [
+    {
+      "gen": 1,
+      "at": "2026-10-03",
+      "verified": 47,
+      "rerun": 34,
+      "measured": 9,
+      "source": 4,
+      "candidate": 0,
+      "disputed": 0,
+      "retired": 0,
+      "missed": 0
+    },
+    {
+      "gen": 2,
+      "at": "2026-10-03",
+      "verified": 74,
+      "rerun": 57,
+      "measured": 12,
+      "source": 5,
+      "candidate": 0,
+      "disputed": 0,
+      "retired": 0,
+      "missed": 0
+    }
+  ]
+}

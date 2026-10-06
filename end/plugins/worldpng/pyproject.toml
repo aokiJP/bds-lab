@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "endstone-worldpng"
+version = "0.1.0"
+description = "A top-down picture of the land as a PNG file and a map item"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.entry-points."endstone"]
+worldpng = "endstone_worldpng:Worldpng"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/endstone_worldpng"]

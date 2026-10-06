@@ -1,0 +1,8 @@
+## an operator sees another player's address, ping and device
+@A join
+@B join os=android
+@A cmd /whois B
+~ @A cmd: B: ip 127\.0\.0\.1(:\d+)? ping \d+ms loss [\d.]+% \| (Android|Google)
+## offline names are refused
+@A cmd /whois Nobody
+~ Nobody is not online

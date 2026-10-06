@@ -1,0 +1,19 @@
+## loads
+@A join
+~ joined
+
+## touching the lamp switches it
+setblock 2 -60 2 lab:lamp
+@A interact 2 -60 2
+~ @A Lamp on
+@A interact 2 -60 2
+~ @A Lamp off
+
+## a nickname survives a restart
+@A cmd /lab:nick
+until form
+@A form ["Steve"]
+~ @A Nickname set: Steve
+restart
+@A cmd /lab:whoami
+~ @A You are Steve

@@ -1,0 +1,95 @@
+item.tsrepl:console=TS 控制台
+tile.tsrepl:script_block.name=脚本方块
+
+## 输入时出现的提示（由 JSON UI 取用）
+
+## 状态栏（由 JSON UI 取用）
+tsrepl.status.left=⧉
+tsrepl.status.right=UTF-8   LF   TypeScript
+tsrepl.editor.placeholder=§8空文件。可以从这里开始写。
+
+## コマンドの案内文（tellraw から translate で参照）
+tsrepl.start.done=§a已就绪。§r手持 §fTS 控制台§r 即可打开编辑器。
+tsrepl.start.hint=§7在聊天栏输入 §b>> §7也能打开。需要帮助请用 §b/function tsrepl_help
+tsrepl.grant.done=§aTS REPL：已授予使用权限。
+tsrepl.grant.next=§7下一步：§b/function tsrepl_start§7（领取控制台）
+tsrepl.help.head=§f— TS REPL 快速帮助 —
+tsrepl.help.start=§b/function tsrepl_start§7  开始（授权并给予控制台）
+tsrepl.help.chat=§b>>§7 单独输入  打开菜单／§b>> 代码§7  运行该行
+tsrepl.help.screens=§b/function tsrepl_menu§7 菜单  §btsrepl_board§7 侧边栏  §btsrepl_plain§7 表单
+tsrepl.help.write=§b/function tsrepl_write§7  保存当前代码
+tsrepl.help.access=§b/function tsrepl_grant§7 ／ §btsrepl_revoke§7  他人的权限
+tsrepl.help.move=§7画面内可用 §fWASD§7 移动。右上角 ✕ 关闭。
+tsrepl.revoke.done=§eTS REPL：已撤销使用权限。
+tsrepl.help.doctor=§b/function tsrepl_doctor§7  自检（遇到问题先运行这个）
+
+## パック一覧に出る名前と説明
+pack.name=TS REPL Resources
+pack.description=TS REPL 的界面外观（屏幕、图标、多行输入框）。请与行为包一起安装。
+tsrepl.coach.activity=1 Activity bar: search, run, extensions
+tsrepl.coach.explorer=2 Explorer: pick a file
+tsrepl.coach.tabs=3 Tabs: files you have open
+tsrepl.coach.editor=4 Press a line to edit it
+tsrepl.coach.panel=5 Panel: problems, output, terminal
+tsrepl.coach.status=6 Error count and cursor position
+tsrepl.coach.dismiss=Tap anywhere once to dismiss
+
+## 作業の流れ（Walkthrough）— JSON UI から引かれる
+tsrepl.wt.tab=工作流程：设置 TS REPL
+tsrepl.wt.next=下一步
+tsrepl.wt.back=返回
+tsrepl.wt.close=关闭
+tsrepl.wt.fine=TS REPL 在世界内运行你的代码。被授予权限的玩家也可以运行。
+tsrepl.wt.foot=看完后会开始教程。可以随时从欢迎页重新打开。
+tsrepl.wt.p1.title=开始使用 TS REPL
+tsrepl.wt.p1.sub=在 Minecraft 里写真正的 TypeScript
+tsrepl.wt.p1.i1=写下并运行
+tsrepl.wt.p1.i1b=写一行按运行，结果会回到下方面板。
+tsrepl.wt.p1.i2=真正的类型检查
+tsrepl.wt.p1.i2b=插件自带 TypeScript 编译器，运行之前就能发现错误。
+tsrepl.wt.p1.i3=补全与 import
+tsrepl.wt.p1.i3b=输入时给出候选，import 与编辑器里一样有效。
+tsrepl.wt.p1.go=打开编辑器
+tsrepl.wt.p2.title=写代码
+tsrepl.wt.p2.sub=和你熟悉的编辑器一样
+tsrepl.wt.p2.i1=按一行即可编辑
+tsrepl.wt.p2.i1b=每一行都是按钮，按下就打开那一行的输入框。
+tsrepl.wt.p2.i2=快捷键
+tsrepl.wt.p2.i2b=撤销、查找、注释、移动行——开启按键后就是平常的手感。
+tsrepl.wt.p2.i3=多个文件
+tsrepl.wt.p2.i3b=可以用标签打开多个文件，从左侧列表切换。
+tsrepl.wt.p2.go=试着编辑一行
+tsrepl.wt.p3.title=运行
+tsrepl.wt.p3.sub=不需要重新构建或重新加载
+tsrepl.wt.p3.i1=运行整个文件
+tsrepl.wt.p3.i1b=按左栏的运行，整个文件作为一段脚本执行。
+tsrepl.wt.p3.i2=只运行一行
+tsrepl.wt.p3.i2b=在聊天里输入 >> 加代码，就只运行那一行。
+tsrepl.wt.p3.i3=查看输出
+tsrepl.wt.p3.i3b=下方面板汇集输出、问题和终端。
+tsrepl.wt.p3.go=运行一下
+tsrepl.wt.p4.title=修正错误
+tsrepl.wt.p4.sub=错误会指向具体的行
+tsrepl.wt.p4.i1=问题列表
+tsrepl.wt.p4.i1b=错误和警告都带着出处的行。按下即可跳转。
+tsrepl.wt.p4.i2=就地标记
+tsrepl.wt.p4.i2b=行本身也会被标出，和编辑器一样。
+tsrepl.wt.p4.i3=快速修复
+tsrepl.wt.p4.i3b=编译器知道答案时，会直接给出改法。
+tsrepl.wt.p4.go=查看问题
+tsrepl.wt.p5.title=继续
+tsrepl.wt.p5.sub=接下来可以做什么
+tsrepl.wt.p5.i1=保存
+tsrepl.wt.p5.i1b=命名保存后会留在世界里，而不只是这一次。
+tsrepl.wt.p5.i2=分享
+tsrepl.wt.p5.i2b=可以把文件交给有权限的玩家。
+tsrepl.wt.p5.i3=设置
+tsrepl.wt.p5.i3b=主题、语言、按键处理和版面宽度。
+tsrepl.wt.p5.go=结束并开始教程
+tsrepl.bar.prev=◂ 退一步
+tsrepl.bar.next=看下一步 ▸
+tsrepl.bar.try=现在试试 ▸
+tsrepl.bar.skip=退出演示
+tsrepl.bar.again=◂ 再看一遍
+tsrepl.bar.step=下一节 ▸
+tsrepl.bar.close=关闭

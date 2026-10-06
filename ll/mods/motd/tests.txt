@@ -1,0 +1,7 @@
+## the server list line follows the players
+serverping
+~ PING motd="0人がプレイ中"
+@A join
+wait 500
+serverping
+~ PING motd="1人がプレイ中" players=1/

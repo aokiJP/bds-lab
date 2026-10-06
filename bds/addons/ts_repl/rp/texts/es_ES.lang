@@ -1,0 +1,95 @@
+item.tsrepl:console=Consola TS
+tile.tsrepl:script_block.name=Bloque de script
+
+## Avisos que salen mientras escribes (los toma el JSON UI)
+
+## Barra de estado (la toma el JSON UI)
+tsrepl.status.left=⧉
+tsrepl.status.right=UTF-8   LF   TypeScript
+tsrepl.editor.placeholder=§8Archivo vacío. Empieza a escribir aquí.
+
+## コマンドの案内文（tellraw から translate で参照）
+tsrepl.start.done=§aListo. §rUsa la §fConsola TS§r que tienes en la mano.
+tsrepl.start.hint=§7Escribir §b>> §7en el chat también lo abre. ¿Dudas? §b/function tsrepl_help
+tsrepl.grant.done=§aTS REPL: acceso concedido.
+tsrepl.grant.next=§7Siguiente: §b/function tsrepl_start§7 (recibe la consola)
+tsrepl.help.head=§f— Ayuda rápida de TS REPL —
+tsrepl.help.start=§b/function tsrepl_start§7  empezar (acceso + consola)
+tsrepl.help.chat=§b>>§7 solo  abre el menú / §b>> código§7  ejecuta esa línea
+tsrepl.help.screens=§b/function tsrepl_menu§7 menú  §btsrepl_board§7 barra  §btsrepl_plain§7 formulario
+tsrepl.help.write=§b/function tsrepl_write§7  guarda lo escrito
+tsrepl.help.access=§b/function tsrepl_grant§7 / §btsrepl_revoke§7  acceso de otros
+tsrepl.help.move=§7Muévete dentro con §fWASD§7. Cierra con la ✕ arriba a la derecha.
+tsrepl.revoke.done=§eTS REPL: acceso revocado.
+tsrepl.help.doctor=§b/function tsrepl_doctor§7  autodiagnóstico (empieza aquí)
+
+## パック一覧に出る名前と説明
+pack.name=TS REPL Resources
+pack.description=El aspecto de TS REPL (pantallas, iconos, campo de varias líneas). Instálalo junto con el paquete de comportamiento.
+tsrepl.coach.activity=1 Activity bar: search, run, extensions
+tsrepl.coach.explorer=2 Explorer: pick a file
+tsrepl.coach.tabs=3 Tabs: files you have open
+tsrepl.coach.editor=4 Press a line to edit it
+tsrepl.coach.panel=5 Panel: problems, output, terminal
+tsrepl.coach.status=6 Error count and cursor position
+tsrepl.coach.dismiss=Tap anywhere once to dismiss
+
+## 作業の流れ（Walkthrough）— JSON UI から引かれる
+tsrepl.wt.tab=Recorrido: configura TS REPL
+tsrepl.wt.next=Siguiente
+tsrepl.wt.back=Atrás
+tsrepl.wt.close=Cerrar
+tsrepl.wt.fine=TS REPL ejecuta tu código dentro del mundo. Quien tenga acceso también puede ejecutarlo.
+tsrepl.wt.foot=El tutorial empieza al terminar. Puedes volver a abrir esto desde la página de bienvenida.
+tsrepl.wt.p1.title=Empieza con TS REPL
+tsrepl.wt.p1.sub=TypeScript de verdad, dentro de Minecraft
+tsrepl.wt.p1.i1=Escribe y ejecuta
+tsrepl.wt.p1.i1b=Escribe una línea, pulsa Ejecutar y el resultado vuelve al panel de abajo.
+tsrepl.wt.p1.i2=Un comprobador de tipos real
+tsrepl.wt.p1.i2b=El compilador de TypeScript viene incluido, así que los fallos aparecen antes de ejecutar.
+tsrepl.wt.p1.i3=Autocompletado e import
+tsrepl.wt.p1.i3b=Sugerencias mientras escribes, e import funciona igual que en un editor.
+tsrepl.wt.p1.go=Abrir el editor
+tsrepl.wt.p2.title=Escribe código
+tsrepl.wt.p2.sub=El editor funciona como esperas
+tsrepl.wt.p2.i1=Pulsa una línea para editarla
+tsrepl.wt.p2.i1b=Cada línea es un botón. Al pulsarla se abre el cuadro de texto de esa línea.
+tsrepl.wt.p2.i2=Atajos
+tsrepl.wt.p2.i2b=Deshacer, buscar, comentar, mover una línea: las teclas de siempre, si las activas.
+tsrepl.wt.p2.i3=Varios archivos
+tsrepl.wt.p2.i3b=Abre varios como pestañas y cambia entre ellos desde el explorador.
+tsrepl.wt.p2.go=Editar una línea
+tsrepl.wt.p3.title=Ejecútalo
+tsrepl.wt.p3.sub=Nada que recompilar ni recargar
+tsrepl.wt.p3.i1=Ejecutar el archivo entero
+tsrepl.wt.p3.i1b=Pulsa Ejecutar en la barra lateral. El archivo se ejecuta como un script.
+tsrepl.wt.p3.i2=Ejecutar una sola línea
+tsrepl.wt.p3.i2b=Escribe >> seguido de código en el chat para ejecutar solo esa línea.
+tsrepl.wt.p3.i3=Ver la salida
+tsrepl.wt.p3.i3b=El panel inferior reúne salida, problemas y terminal.
+tsrepl.wt.p3.go=Ejecutar algo
+tsrepl.wt.p4.title=Arregla lo que falla
+tsrepl.wt.p4.sub=Los errores señalan la línea
+tsrepl.wt.p4.i1=Lista de problemas
+tsrepl.wt.p4.i1b=Cada error y aviso, con la línea de la que viene. Púlsalo para ir allí.
+tsrepl.wt.p4.i2=Marcado en el sitio
+tsrepl.wt.p4.i2b=La línea también queda marcada, igual que en un editor.
+tsrepl.wt.p4.i3=Correcciones rápidas
+tsrepl.wt.p4.i3b=Cuando el compilador sabe la respuesta, la ofrece.
+tsrepl.wt.p4.go=Ver los problemas
+tsrepl.wt.p5.title=Sigue adelante
+tsrepl.wt.p5.sub=Qué hacer después
+tsrepl.wt.p5.i1=Guarda tu trabajo
+tsrepl.wt.p5.i1b=Ponle nombre y se queda en el mundo, no solo en esta sesión.
+tsrepl.wt.p5.i2=Compártelo
+tsrepl.wt.p5.i2b=Los archivos se pueden pasar a otros jugadores con acceso.
+tsrepl.wt.p5.i3=Ajustes
+tsrepl.wt.p5.i3b=Tema, idioma, teclas y ancho del tablero.
+tsrepl.wt.p5.go=Terminar y empezar el tutorial
+tsrepl.bar.prev=◂ Un paso atrás
+tsrepl.bar.next=Ver lo siguiente ▸
+tsrepl.bar.try=Pruébalo ya ▸
+tsrepl.bar.skip=Salir del recorrido
+tsrepl.bar.again=◂ Ver de nuevo
+tsrepl.bar.step=Siguiente lección ▸
+tsrepl.bar.close=Cerrar

@@ -1,0 +1,3 @@
+# words and phrases a person uses when this skill is needed, any language, one per line (skill route reads them; not installed)
+tests.txt, test, tests, expectation, expect, assert, regex, section, want got, until, wait, js line, clock, sim
+テスト, 期待値, 正規表現, セクション, 検証, 一致, テストの書き方, テストが通らない, 確かめる

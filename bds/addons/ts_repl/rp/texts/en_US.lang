@@ -1,0 +1,95 @@
+item.tsrepl:console=TS Console
+tile.tsrepl:script_block.name=Script Block
+
+## Live hints shown while typing (pulled from JSON UI)
+
+## Status bar (pulled from JSON UI)
+tsrepl.status.left=⧉
+tsrepl.status.right=UTF-8   LF   TypeScript
+tsrepl.editor.placeholder=§8Empty file. Start typing here.
+
+## コマンドの案内文（tellraw から translate で参照）
+tsrepl.start.done=§aYou're set. §rHold the §fTS Console§r and use it to open the editor.
+tsrepl.start.hint=§7Typing §b>> §7in chat opens it too. Stuck? §b/function tsrepl_help
+tsrepl.grant.done=§aTS REPL: access granted.
+tsrepl.grant.next=§7Next: §b/function tsrepl_start§7 (get the console)
+tsrepl.help.head=§f— TS REPL quick help —
+tsrepl.help.start=§b/function tsrepl_start§7  set up (access + console item)
+tsrepl.help.chat=§b>>§7 alone  opens the menu / §b>> code§7  runs that one line
+tsrepl.help.screens=§b/function tsrepl_menu§7 menu  §btsrepl_board§7 sidebar  §btsrepl_plain§7 form
+tsrepl.help.write=§b/function tsrepl_write§7  save what you have written
+tsrepl.help.access=§b/function tsrepl_grant§7 / §btsrepl_revoke§7  access for others
+tsrepl.help.move=§7Move around inside with §fWASD§7. Close with the ✕ at the top right.
+tsrepl.revoke.done=§eTS REPL: access revoked.
+tsrepl.help.doctor=§b/function tsrepl_doctor§7  self check (start here when stuck)
+
+## パック一覧に出る名前と説明
+pack.name=TS REPL Resources
+pack.description=The look of TS REPL (screens, icons, multi-line input). Install it together with the behaviour pack.
+tsrepl.coach.activity=1 Activity bar: search, run, extensions
+tsrepl.coach.explorer=2 Explorer: pick a file
+tsrepl.coach.tabs=3 Tabs: files you have open
+tsrepl.coach.editor=4 Press a line to edit it
+tsrepl.coach.panel=5 Panel: problems, output, terminal
+tsrepl.coach.status=6 Error count and cursor position
+tsrepl.coach.dismiss=Tap anywhere once to dismiss
+
+## 作業の流れ（Walkthrough）— JSON UI から引かれる
+tsrepl.wt.tab=Walkthrough: Set up TS REPL
+tsrepl.wt.next=Next
+tsrepl.wt.back=Back
+tsrepl.wt.close=Close
+tsrepl.wt.fine=TS REPL runs your code inside the world. Anyone you grant access to can run code too.
+tsrepl.wt.foot=The tutorial starts when you finish. You can reopen this from the welcome page.
+tsrepl.wt.p1.title=Get started with TS REPL
+tsrepl.wt.p1.sub=Real TypeScript, inside Minecraft
+tsrepl.wt.p1.i1=Write and run
+tsrepl.wt.p1.i1b=Type a line, press Run, and the result comes back in the panel below.
+tsrepl.wt.p1.i2=A real type checker
+tsrepl.wt.p1.i2b=The TypeScript compiler ships with the add-on, so mistakes are found before the code runs.
+tsrepl.wt.p1.i3=Completion and imports
+tsrepl.wt.p1.i3b=Suggestions as you type, and import works the same as it does in an editor.
+tsrepl.wt.p1.go=Open the editor
+tsrepl.wt.p2.title=Write some code
+tsrepl.wt.p2.sub=The editor works the way you expect
+tsrepl.wt.p2.i1=Press a line to edit it
+tsrepl.wt.p2.i1b=Every line is a button. Press one and the text box opens on that line.
+tsrepl.wt.p2.i2=Shortcuts
+tsrepl.wt.p2.i2b=Undo, find, comment out, move a line — the usual keys, if you turn keys on.
+tsrepl.wt.p2.i3=More than one file
+tsrepl.wt.p2.i3b=Open several files as tabs and switch between them from the explorer.
+tsrepl.wt.p2.go=Try editing a line
+tsrepl.wt.p3.title=Run it
+tsrepl.wt.p3.sub=Nothing to rebuild, nothing to reload
+tsrepl.wt.p3.i1=Run the whole file
+tsrepl.wt.p3.i1b=Press Run in the activity bar. The file runs as one script.
+tsrepl.wt.p3.i2=Run a single line
+tsrepl.wt.p3.i2b=Type >> followed by code in chat to run just that line.
+tsrepl.wt.p3.i3=See the output
+tsrepl.wt.p3.i3b=The panel at the bottom collects output, problems and the terminal.
+tsrepl.wt.p3.go=Run something
+tsrepl.wt.p4.title=Fix what breaks
+tsrepl.wt.p4.sub=Errors point at the line, not at the void
+tsrepl.wt.p4.i1=Problems list
+tsrepl.wt.p4.i1b=Every error and warning, with the line it came from. Press one to jump there.
+tsrepl.wt.p4.i2=Squiggles in place
+tsrepl.wt.p4.i2b=The line itself is marked, the same as in an editor.
+tsrepl.wt.p4.i3=Quick fixes
+tsrepl.wt.p4.i3b=Where the compiler knows the answer, it offers it.
+tsrepl.wt.p4.go=Look at the problems
+tsrepl.wt.p5.title=Keep going
+tsrepl.wt.p5.sub=Where to take it next
+tsrepl.wt.p5.i1=Save your work
+tsrepl.wt.p5.i1b=Name a file and it stays in the world, not just in this session.
+tsrepl.wt.p5.i2=Share it
+tsrepl.wt.p5.i2b=Files can be handed to other players who have access.
+tsrepl.wt.p5.i3=Settings
+tsrepl.wt.p5.i3b=Theme, language, key handling and the width of the board.
+tsrepl.wt.p5.go=Finish and start the tutorial
+tsrepl.bar.prev=◂ Back one
+tsrepl.bar.next=See next ▸
+tsrepl.bar.try=Try it now ▸
+tsrepl.bar.skip=Leave the tour
+tsrepl.bar.again=◂ Watch again
+tsrepl.bar.step=Next lesson ▸
+tsrepl.bar.close=Close

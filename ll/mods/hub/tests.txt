@@ -1,0 +1,11 @@
+## the client is told to connect to the other server
+@A join
+@A watch transfer
+@A cmd /hub survival
+~ @A cmd: -> survival \(127\.0\.0\.1:19134\)
+wait 800
+~ @A saw transfer .*19134
+## an unknown name lists the servers
+@B join
+@B cmd /hub nowhere
+~ @B cmd: servers: lobby, survival

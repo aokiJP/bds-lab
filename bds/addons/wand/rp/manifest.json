@@ -1,0 +1,17 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Wand RP",
+    "description": "A wand that gives speed",
+    "uuid": "5d4ecb01-3df9-438a-89e8-a077625f87e1",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 26, 52]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "3996e6d2-b093-47ad-a132-87c5150b8d14",
+      "version": [1, 0, 0]
+    }
+  ]
+}

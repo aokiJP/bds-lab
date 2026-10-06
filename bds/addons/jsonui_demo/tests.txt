@@ -1,0 +1,26 @@
+# command, then expectations: = exact line | ~ regex | ! absent | !~ absent regex; '## title' = section
+## the demo form reaches a real client
+@A join
+scriptevent demo:open
+until form
+~ @A form action: title\(".*JSON UI Demo"\) body\("This form is drawn
+@A form Emerald
+~ DEMO A picked emerald
+## a player opens it with /lab:menu
+@A cmd /lab:menu
+until form
+~ @A form action: title\(".*JSON UI Demo"\) body\("This form is drawn
+@A form close
+~ DEMO A picked closed
+## the console opens it for every player with /lab:menuall
+@A join
+@B join
+wait 1000
+lab:menuall
+~ DEMO shown to 2
+wait 1500
+~ @A form action: title\(".*JSON UI Demo"\)
+~ @B form action: title\(".*JSON UI Demo"\)
+@A form close
+@B form close
+~ DEMO B picked closed

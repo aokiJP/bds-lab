@@ -1,0 +1,7 @@
+## the server list line is written live (serverping = what a client's server list gets)
+serverping
+~ PING motd="0人がプレイ中 \d\d:\d\d" players=0/\d+ level="lab world"
+## with a player on, the count and the names follow
+@A join
+serverping
+~ PING motd="1人がプレイ中 \d\d:\d\d" players=1/\d+ level="A"

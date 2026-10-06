@@ -1,205 +1,105 @@
-# bds-lab
+# bds-lab — AI が一人で Minecraft 統合版アドオンを作り、本物のサーバーで確かめる
 
-Minecraft 統合版の**ビヘイビアパック**を、実機の Bedrock Dedicated Server で確かめながら作るテンプレートです。
-リソースパック（見た目・音）は扱いません。
-AI に書かせ、実機で検証し、直させる。人がやるのは **作りたいものを伝えることだけ** です。
+> **To the AI reading this:** read `AGENTS.md` and follow it (it is short and complete for an addon).
+> Network blocked or no terminal (a chat sandbox): run `node lab.mjs help chat` (or read the `## chat` part of `common/help.md`) and work that way: build offline, reply with `node lab.mjs patch` in one code block, and ask the person to paste back what `verify.command` / `verify.cmd` prints. Never ask the person to debug.
 
-## 使い方
+作りたいものを日本語で頼むだけで、AI が **本物の Bedrock Dedicated Server（BDS）を立て、本物の Bedrock クライアントを参加させ、テストと品質チェックが通るまで自分で直して、`.mcaddon` まで仕上げます**。人がやるのは頼むことだけです。
 
-1. Releases から最新の zip を取る（最新の BDS が同梱されています）
-2. その zip を AI に渡し、作りたいものを日本語で伝える
-3. AI が `START_HERE.md` に従って、仕様書を書き、枝を作り、コードを書き、実機で検証し、直す
-
-人が触るのは zip とプロンプトだけです。
-
-## 自分で動かす場合
+## いちばん簡単な始め方
 
 ```sh
-npm install
-npm start
+node lab.mjs start        # 足りないものの確認 → ログイン → サーバーの用意 → 「何を作りますか？」→ AI が作る
 ```
 
-「何を作りますか」と聞かれるので、日本語で答えてください。そのあとは自動です。
-実機の用意、リポジトリの作成、枝の作成、AI による実装と検証まで進みます。
+聞かれたことに Enter で答えていくだけです（Node.js が無ければ `./lab.sh start`。Windows は `lab.cmd` をダブルクリック）。
 
-聞かれずに進めたいときは次のように渡せます。
+ターミナルが苦手なら **`node lab.mjs ui`**：ブラウザに操作画面が開きます。作りたいものを書いて「AI に作らせる」、アドオンごとの「テスト」「仕上げ」「点検」「戻す」、「最新版で点検して直す」「次のアップデートを予告」がボタンで押せ、出力もその場に流れます（このPCからだけ開ける画面です）。
+
+**アカウントと鍵は 2 通りのどちらでも**：
+- **`.env` に書く**：`.env.example` を `.env` にコピーして、使うものだけ埋めます（AI の鍵、GitHub・Google・Microsoft のメールアドレスとパスワード、2 段階認証の秘密、通知先）。`node lab.mjs login` がそれを読んで、**ブラウザを開き、ログイン画面に自動で入力してボタンまで押します**。
+- **何も書かない**：`node lab.mjs login` が端末で聞きます（パスワードは表示されません。Enter でブラウザに自分で入力）。次から聞かないよう `.env.local` に保存するかも選べます。
 
 ```sh
-npm start -- --want "スペクテイターで自由に飛べるカメラ"
+node lab.mjs login              # 今の状態（github / google / microsoft / ai / notify）と、足りないものをその場で設定
+node lab.mjs login github       # gh の正式なログイン（デバイスコード）をブラウザで自動入力。GH_TOKEN があればブラウザ不要
+node lab.mjs login google       # app ラボ用（Google Play から APK）
+node lab.mjs login microsoft bot  # lan ラボ用（本物のワールドに入るボットの Xbox アカウント）
+node lab.mjs login ai           # ANTHROPIC_API_KEY / OPENAI_API_KEY を確かめて保存
 ```
 
-どのコマンドも、アドオンがまだ無ければこの手順に自動で戻ります。順番を覚える必要はありません。
+- パスワードや 2 段階認証の秘密は、このPCのブラウザでそのサービスのログイン画面に入れるためだけに使います。環境変数・サーバー・AI には渡さず、`.env` / `.env.local` は git にも zip にもパッチにも入りません。
+- `GITHUB_TOTP_SECRET` を書けば 2 段階認証の 6 桁も自動です（ただしこのPCを使える人には 2 段階認証が効かなくなるので、自分専用のPCで）。書かなければ、その窓で自分で入れます。画面の無いサーバー（SSH・CI）ではブラウザを隠して動かし、コードだけ端末で聞きます。
+- gh（GitHub CLI）が無ければ `.lab-tools/` に自動で取ってきます。
 
-## 覚えるのは 6 つ
+## 迷ったらこの 3 つ
 
-```sh
-npm start                             # 作る（何を作るか日本語で答えるだけ）
-npm test                              # 実機で確かめる（-- --watch で保存のたびに）
-npm run status                        # 前回の結果を 40 行で見る（-- --full で全部）
-npm run api -- Player.setGameMode     # API を引く（-- --find <語> で探す）
-npm run fix                           # 実機を上げずに直せるものを直す
-npm run ship                          # .mcaddon にして出す
-```
-
-うまくいかないときは `npm run doctor`、全部のコマンドは `npm run help -- --all`。
-`npm run skill <語>` で、実測した落とし穴を語から引けます。
-
-## 既にある .mcaddon を持ち込む
-
-```sh
-npm run import -- ~/Downloads/something.mcaddon
-npm run inspect -- --fix        # 版の食い違い・import の拡張子・script_eval を直す
-npm run check                   # 実機で動かす
-npm run real -- --all           # 本物のクライアント越しでも通るか
-```
-
-ビヘイビアパックとリソースパックを分けて置き、**両方をワールドに入れて**起動します。
-BP が RP の UUID に依存している .mcaddon（よくある形）も、そのまま実機に載ります。
-
-検証は 2 通りの相手で流せます。書き方はどちらも同じ `t` です。
-
-| | sim | real |
-|---|---|---|
-| 誰 | サーバーの中の SimulatedPlayer | ネットワーク越しの本物のクライアント |
-| 入力 | サーバー側で動かす | クライアントが `PlayerAuthInput` を送る |
-| 値 | 実機の中で読む | **同じ**（読むのはいつも実機） |
-| 使える道具 | `t.move` `t.attack` `t.use` `t.dig` `t.entities` `t.give` `t.setBlock` `t.health` … | 同じ名前で同じ意味 |
-
-## 要るもの
-
-- Node 20 以上
-- GitHub のアカウントと `gh`（`brew install gh`）。private リポジトリを使います
-- macOS ではコンテナ（OrbStack か Docker Desktop）。Linux 版の BDS をその中で動かします
-- BDS の zip（90MB 前後）を GitHub にも置くなら `git-lfs`（`brew install git-lfs`）。無くても手元の検証は動きます
-
-### つまずきやすいところ
-
-| 症状 | 理由と直し方 |
-| --- | --- |
-| `pnpm run ...` が別の場所の依存を見る | 親の階層に `pnpm-lock.yaml` があると pnpm はそちらを根と見ます。`npm run ...` を使ってください（この道具の内部の取得は npm に `--prefix` を渡して固定してあります） |
-| 型定義が入らない | `npm run docs`。registry から `.tgz` を直接取るので、パッケージマネージャの事情には左右されません。ネットワークが無いときだけ失敗します |
-| BDS が GitHub に載らない | 45MB を超えていて `git-lfs` が無いときは、わざと載せません。手元の検証には要りません。GitHub 上の CI でも動かすなら `git-lfs` を入れてください |
-| real の本が「飛ばした」になる | `bedrock-protocol` が入らない環境です。落ちたのではありません。確かめるには `npm run real`（ネットワークが要ります） |
-| 仕組み自体が壊れていないか見たい | `npm run selftest`（実機もネットワークも要らない 29 項目） |
-| 取り込んだ .mcaddon が実機で「何も起きない」 | `npm run inspect`。`@minecraft/server` が `1.x` のままだと、いまの実機は読み込みません |
-| 実機の起動が遅い | 2 回目からは `.bds-lab/world-cache/` を使って 1 回で上がります。作り直すならそのフォルダを消してください |
-| `AI の CLI が見つかりません` で止まる | 異常ではありません。`.bds-lab/handoff/handoff-NN.zip` が出来ているので、それを AI に渡し、返信を `npm run cycle -- <返信.zip>` に食わせてください |
-| zip が大きすぎて AI に上げられない | `npm run prompt -- --no-bds`（実機抜き・数百 KB） |
-| プロジェクトが重い／どこかに送りたい・バックアップしたい | `npm run archive`（node_modules と展開済みの実機を消して、残りを zip に。`.bds-lab/archive/` に出ます） |
-
-## 誰が動かすのか
-
-| | SimulatedPlayer | RealPlayer |
-|---|---|---|
-| どこに居る | サーバーの中（偽のプレイヤー） | ネットワーク越し（本物のクライアント） |
-| 速さ | 数秒 | 1〜2 分 |
-| 分かること | API の実在・例外・状態・コンポーネント | **クライアントが送る入力**（移動ベクトル・Jump/Sneak・入力許可の効き方） |
-| 仕様書 | 既定 | `tags: ['real']` を付ける |
-
-```sh
-npm run real      # tags: ['real'] の仕様書だけを本物のクライアントで流す
-```
-
-**`npm run auto` は毎回どちらも流します。** sim が通ったその場で、同じ実機に本物のクライアントが
-入り、real の仕様書を流します。落ちればその理由が次の指示文に載り、AI が直します。
-実機は 1 台のままなので、増えるのは接続の数秒だけです（`-- --no-real` で止められます）。
-
-実機は `transport=raknet` を強制するので、この版でも RakNet で入れます。起動時に
-「NetherNet を使え」と警告は出ますが、RakNet の口は開いたままです。
-
-入力（移動ベクトル・Jump/Sneak・入力許可の効き方）は sim では再現されません。
-そこを確かめられるのは real だけです。
-
-## 仕組み
-
-実機を 1 回だけ起動し、そのまま上げっぱなしにします。コードを直すたびに入れ替えて、
-`specs/` に書いた条件を実機で流します。1 サイクルは数秒です。
-
-`main` はテンプレートのままにします。アドオンは `addon/<名前>` の枝にだけ置くので、
-GitHub の「Use this template」で複製すると、きれいな状態から始められます。
-
-BDS の zip はリポジトリに直接コミットします。CI がそれを使うので、毎回のダウンロードが要りません。
-再配布は Minecraft の利用規約で認められていないため、private なリポジトリでのみ動きます。
-
-## GitHub の扱い
-
-手元の中身が正で、GitHub はその写しです。**合流（merge / rebase）は一切しません。**
-以前は合流に失敗すると作業ファイルに衝突マーカーが残り、道具自体が動かなくなっていました。
-
-- 同じ名前の private リポジトリが既にあり、それがこの道具で作ったものなら、そのまま使って上書きします
-- この道具が作ったものでなければ、`名前-2` のように別の名前で新しく作ります。既存の中身には触れません
-- 合流あとが残っていたら、`npm start` が片づけてから進みます
-
-## Release の持ち方
-
-枝ごとに Release を 1 つだけ作り、以後は更新し続けます。
-
-| 枝 | Release | 置くもの |
-|---|---|---|
-| `main` | `template` | 作業用の zip（最新の BDS 同梱）だけ |
-| `addon/<名前>` | `addon-<名前>` | 最新の `.mcaddon`、最新のソース zip、`history.zip` |
-
-直すたびに前回の `.mcaddon` は `history.zip` に畳まれ、新しい順に最新 40 件だけが残ります。
-Release に見えるファイルは常に 3 つで、古いものは 1 つの zip にまとまります。
-
-## AI が間違えにくくする仕掛け
-
-| 仕掛け | 何をするか |
+| こんなとき | コマンド |
 |---|---|
-| `skills/` | やりたいこと別の作り方。`npm run skill <語>` で当たるカードだけ引けます |
-| 公式の型定義 | `@minecraft/server` ほかの `.d.ts` を同梱し、AI に渡します（引数・戻り値・説明つき） |
-| `api.json` | **この実機に実在する** API を毎回書き出します。型定義にあっても実機に無いものを見抜けます |
-| 手詰まりの検知 | 同じ落ち方が 3 回続くと「やり方を変えてください」と指示文に足します |
-| `specs/` の見張り | AI が受け入れ条件を書き換えたら、その場で知らせ、コミットにも残します |
-| 前回との差 | 直前の変更で壊れたものを名指しします |
-| 直し方の当たり | よくある実機の例外に、対処を添えます |
+| いまどうなっている？次は何をする？ | `node lab.mjs status` |
+| Minecraft が更新された・何かおかしい・しばらく触っていない | `node lab.mjs upkeep`（点検→片付け→最新版で全部試験・修理→結果と次の 1 コマンド。`--check` は何も変えずに見るだけ） |
+| ディスクが足りない | `node lab.mjs clean` |
+| 配布ワールド・アドオン（クラフターズコロニー）を試す・直す | `node lab.mjs colony search <言葉>` → `colony get <番号>` → `colony import <番号>`（`help colony`） |
 
-## アドオンから検証に話しかける
+どれも最後の行に「次にやること」を 1 つだけ出します。AI も人も、それをそのまま打てば進みます。
 
-`scripts/lab.js` を import すると、アドオンから検証の結果に直接書き込めます。
+## いまの状態を 1 回で見る・空きを作る
 
-```js
-import { lab } from './lab.js';
-lab.note('Δy=1.203');
-lab.metric('speed', 0.6);
-lab.fail('上昇していない');
-lab.command('tp @s 0 -50 0');
+```sh
+node lab.mjs status        # ラボ・いまのユニット・各ユニットの最後の結果・サーバー・自動操縦・ディスク・道具・次にやること
+node lab.mjs clean         # 作り直せるものを消して空きを作る（終わったベンチの作業フォルダ・古い app の結果・試験の一時フォルダ・
+                           #   古い BDS 用のサーバー置き場・古いチェックポイント）。--dry で見るだけ、--deep で BDS の zip と colony で取ったものも
 ```
 
-例外は `.js.map` があれば元のソース位置に直して報告します。Rust も外部の binary も要りません。
+`maintain` や `app run` の前には、このうち安全なもの（一時フォルダ・終わったベンチ・古い BDS 用の置き場）を自動で片付けます。
+ベンチは 1 回ごとにラボを丸ごと写すので（数百 MB）、結果を記録したら写しは消します（`--keep` で残す）。
 
-## BDS の取得
+## 全体像
 
-公式の配布 API を見に行き、読めないときは同梱の `data/bds-versions.json` にある版と
-CDN の URL から直接落とします。ネットワークが厳しい環境（CI など）でも止まりません。
+```
+頼む（日本語で）
+  │
+  ├─ 見本が近い ────── bds-recipes の見本を写して直す
+  ├─ 見本が無い ────── bds-from-scratch：依頼を行に分け → api/doc で調べ → sandbox と TS REPL で試し → テストを先に書く
+  ├─ 人のアドオン ──── import → brief → 壊れる所を先に直す
+  └─ 配布物 ────────── colony search / get / import（クラフターズコロニーの配布ワールド・アドオン）
+  │
+  sim（サンドボックス、1 秒）→ go（型検査 → 本物の BDS と本物のクライアントでテスト → 品質チェック → .mcaddon）
+  │
+  DONE → gaps / mutate / chaos でテストを鍛える → 届ける
+  │
+  失敗と直しの記録 → 候補 → 証拠つきの規則 → スキルが育つ（実機で再確認、悪くなれば戻す）
+```
 
-## 実機で分かっていること（1.26.51.1 で実測）
+- 構成・モジュールの地図・品質ゲート・安全の床：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- 道具（TS REPL・sandbox-be・bedrock-binary・deploy・c2s・スキーマ検査）：[docs/guide/tools.md](docs/guide/tools.md)
+- 使い方と自動化（AI に作らせる・Issue から・チャットだけの AI・配布・自動操縦・保守・品質）：[docs/guide/workflows.md](docs/guide/workflows.md)
+- スキルと、一から作る練習：[docs/guide/skills.md](docs/guide/skills.md)・成長の仕組み全体：[skills/GROWTH.md](skills/GROWTH.md)
+- 3 つのラボ・本物のアプリ・Endstone / LeviLamina の見本・環境：[docs/guide/labs.md](docs/guide/labs.md)
+- 秘密の扱い・AI に任せる範囲・CI の守り：[SECURITY.md](SECURITY.md)
+- 変更の記録：[CHANGES.md](CHANGES.md)
 
-`skills/70-pitfalls.md` に全部あります。特に効くもの:
+## 一から作る（練習して、学ぶ）
 
-| こと | 結果 |
-|---|---|
-| `world.getAllPlayers()` | **`undefined` を含むことがあります。**`.filter(Boolean)` が要ります |
-| `camera.setFov` | 範囲は `[30, 110]`。外すと落ちます |
-| `minecraft:flying_speed` | プレイヤーには付いていません（`minecraft:movement` は付いています） |
-| SimulatedPlayer の移動 | `inputInfo` に載りません。入力を読む機能は `tags: ['real']` で確かめます |
-| `new Proxy` | 実機が `proxy: inconsistent get` で弾きます |
-| `new Function` / `eval` | manifest に `"capabilities": ["script_eval"]` があれば**使えます**。差し替えが 1 秒以下で回ります |
-| `world.beforeEvents.chatSend` | 安定版の `@minecraft/server` 2.x にありません |
-| `transport` | NetherNet 以外は非対応と警告されます |
+見本に近いものが無い依頼のために、等級つきの課題（18 個、隠しテストつき）で「何も見ずに作る」練習ができます。
 
-## 中身
+```sh
+node lab.mjs scratch next              # 次の課題と手順
+node lab.mjs scratch check <課題>       # 隠しテストをサンドボックスで（数秒）
+node lab.mjs scratch check <課題> --real   # 本物の BDS で（判定）
+node lab.mjs scratch gaps              # サンドボックスと実機の食い違い（サンドボックスの宿題になる）
+```
 
-| 場所 | 何 |
-|---|---|
-| `START_HERE.md` | zip を受け取った AI が最初に読むもの |
-| `AGENTS.md` | 開発の決まりごと |
-| `addons/` | アドオン（AI が書くところ） |
-| `specs/` | 受け入れ条件。実機で流れる仕様書 |
-| `src/` `tools/` | 検証の仕組み |
-| `src/run/selftest.mjs` | 実機なしで仕組みを確かめる 29 項目（`npm run selftest`） |
-| `src/run/import.mjs` | `.mcaddon` / `.mcpack` の取り込み |
-| `src/run/inspect.mjs` | 実機を上げずに検める・直す |
-| `src/run/update.mjs` | BDS とモジュールの版を追いかける |
-| `skills/` | ScriptAPI の手引き（`README.md` から引く） |
-| `types/spec.d.ts` | 仕様書を書くときの補完用 |
+学ぶ場所はサンドボックス（sandbox-be）と生きた世界（TS REPL）、判定はいつも本物の BDS です。詳しくは [docs/guide/skills.md](docs/guide/skills.md)。
+
+## 品質
+
+- 27 本のオフライン試験のゲート（`node lab.mjs auto gate`。lint・コマンドの回帰・一から作る教材の検証を含む。並べて走らせて約 2 分）と、オフライン試験の全部（`node lab.mjs auto gate --all`）、push ごとの CI（全オフライン試験と ESLint）、本物の BDS での試験（`node tests/dev-bds.mjs`）。
+- AI のトークンを使うものは、明示したときだけ動きます（`--via`、自動操縦の上限。上限が読めなければ 0 として止まる）。どのコマンドも `--help` ではヘルプだけを出します。
+- 確かめていないことは「確かめていない」と書きます。
+
+## 訓練用のもの（別配布）
+
+PvP ボット・RTA のスクリプトなど、ふだんの開発に使わない訓練・検証用のもの（`training/`）は本体から外し、`bds-lab-training-<版>.zip` として別に配ります。使うときは bds-lab のフォルダに展開してください（`training/README.md`）。
+
+サンドボックスの学ぶ頭（`sandbox-be/src/play/agent/`）・PvP・目標探しなど、ラボのコマンドから使わない部分は `bds-lab-extras-<版>.zip` にあります。bds-lab の一つ上で展開すれば元の場所に戻ります（一緒に入る extras.json に載ったファイルは、`update` も `maint` も古いファイルとして消しません）。
+

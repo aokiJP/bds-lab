@@ -1,35 +1,25 @@
 name: bundle
-
+# daily: follow the newest BDS and refresh the Release "template" (the work zip with BDS inside)
 on:
   schedule:
     - cron: '0 3 * * *'
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths-ignore: ['README.md', 'AGENTS.md']
-
 permissions:
   contents: write
-
 jobs:
   bundle:
+    # private repos only (BDS may not be redistributed): elsewhere the job is skipped, not started to fail every day
+    if: github.event.repository.private
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - name: private かどうかを確かめる
-        run: |
-          if [ "${{ github.event.repository.private }}" != "true" ]; then
-            echo "::error::public なリポジトリでは動かしません（BDS を同梱するため）"
-            exit 1
-          fi
-
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-
-      - run: npm install --ignore-scripts --no-audit --no-fund
-
-      - name: 配布用の zip を作って Release を更新する
-        run: npm run bds:release
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { lfs: true }
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with: { node-version: 22 }
+      - run: node lab.mjs bds --update
+        working-directory: bds
+      - run: node lab.mjs bundle --release
+        working-directory: bds
         env:
           GH_TOKEN: ${{ github.token }}

@@ -1,0 +1,23 @@
+{
+ "format_version": "1.26.0",
+ "minecraft:item": {
+  "description": {
+   "identifier": "probe:snack",
+   "menu_category": {
+    "category": "items"
+   }
+  },
+  "components": {
+   "minecraft:icon": "stick",
+   "minecraft:max_stack_size": 16,
+   "minecraft:food": {
+    "nutrition": 1,
+    "can_always_eat": true
+   },
+   "minecraft:use_modifiers": {
+    "use_duration": 1
+   },
+   "probe:food": {}
+  }
+ }
+}

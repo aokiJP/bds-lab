@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "endstone-qrmap"
+version = "0.1.0"
+description = "A map item showing a scannable QR code of the text (the pure-Python `qrcode` library from PyPI)"
+requires-python = ">=3.10"
+dependencies = ["qrcode"]
+
+[project.entry-points."endstone"]
+qrmap = "endstone_qrmap:Qrmap"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/endstone_qrmap"]

@@ -1,0 +1,30 @@
+## a jelly drops one or two gel when killed
+@A join
+give A diamond_sword
+summon lab:jelly 0 -60 2
+wait 500
+@A select diamond_sword
+@A attack lab:jelly
+wait 1500
+js dim.getEntities({ type: 'minecraft:item' }).filter((e) => e.getComponent('item').itemStack.typeId === 'lab:gel').reduce((n, e) => n + e.getComponent('item').itemStack.amount, 0)
+~ ^[12]$
+
+## three gel and a glass bottle make a jump potion
+clear A
+give A lab:gel 3
+give A glass_bottle
+setblock 1 -60 2 crafting_table
+@A craft_at 1 -60 2 lab:jump_potion
+wait 300
+js inv(p('A'))
+~ lab:jump_potion\*1
+!~ lab:gel
+
+## drinking it gives jump boost for 30 seconds and the bottle back
+@A select lab:jump_potion
+@A eat
+~ @A You feel springy
+js p('A').getEffect('jump_boost')?.duration > 500
+= true
+js inv(p('A'))
+~ minecraft:glass_bottle\*1

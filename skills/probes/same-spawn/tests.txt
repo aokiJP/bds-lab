@@ -1,0 +1,6 @@
+## every real player spawns on the same block
+@A join
+@B join
+wait 500
+js [p('A'), p('B')].map((q) => [q.location.x, q.location.y, q.location.z].map(Math.floor).join(' ')).join(' | ')
+= 0 -60 0 | 0 -60 0

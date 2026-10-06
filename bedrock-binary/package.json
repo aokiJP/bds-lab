@@ -1,0 +1,21 @@
+{
+  "name": "bedrock-binary",
+  "version": "2.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Minecraft Bedrock のバイナリ（BDS と Android クライアント）から、公式に無い定義を復元する",
+  "bin": {
+    "bedrock-binary": "src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js start",
+    "doctor": "node src/cli.js doctor",
+    "bb": "node src/cli.js",
+    "test": "node --test test/*.test.js",
+    "guard": "node scripts/guard-binaries.js",
+    "check": "node scripts/check-syntax.js && npm test && npm run guard"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

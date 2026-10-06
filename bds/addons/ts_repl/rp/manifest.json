@@ -1,0 +1,46 @@
+{
+  "format_version": 2,
+  "metadata": {
+    "authors": ["TS REPL"],
+    "license": "MIT"
+  },
+  "header": {
+    "name": "pack.name",
+    "description": "pack.description",
+    "uuid": "d3634589-551e-403a-bec9-af8cfa9c55e1",
+    "version": [6, 11, 1],
+    "min_engine_version": [1, 21, 120]
+  },
+  "modules": [
+    {
+      "description": "TS REPL resources",
+      "type": "resources",
+      "uuid": "2929ae1e-6616-410c-b969-56ed88c17bed",
+      "version": [6, 11, 1]
+    }
+  ],
+  "dependencies": [
+    {
+      "description": "TS REPL behaviors",
+      "uuid": "0cf2da57-bb7d-4304-b680-f963a1c255e3",
+      "version": [6, 11, 0]
+    }
+  ],
+  "subpacks": [
+    {
+      "folder_name": "normal",
+      "name": "ふつう（おすすめ）",
+      "memory_tier": 0
+    },
+    {
+      "folder_name": "ghost",
+      "name": "開いたまま遊べる",
+      "memory_tier": 1
+    },
+    {
+      "folder_name": "power",
+      "name": "上級：ホイール送り・キー操作",
+      "memory_tier": 2
+    }
+  ]
+}

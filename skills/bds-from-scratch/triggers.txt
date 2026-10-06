@@ -1,0 +1,15 @@
+# words and phrases a person uses when this skill is needed, any language, one per line (skill route reads them; not installed)
+from scratch
+from nothing
+no recipe fits
+nothing similar exists
+brand new idea
+practise building
+practice lesson
+scratch lesson
+which api do I need
+一から作る
+ゼロから作る
+白紙から
+似たものがない
+練習問題

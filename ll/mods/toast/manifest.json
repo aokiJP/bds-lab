@@ -1,0 +1,12 @@
+{
+    "name": "toast",
+    "entry": "toast.js",
+    "type": "lse-quickjs",
+    "version": "0.1.0",
+    "description": "Toasts (the card that slides in at the top): a welcome, and /notify <text> for everyone",
+    "dependencies": [
+        {
+            "name": "legacy-script-engine-quickjs"
+        }
+    ]
+}

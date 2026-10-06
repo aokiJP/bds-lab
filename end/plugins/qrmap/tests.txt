@@ -1,0 +1,11 @@
+## a QR code map for a URL
+@A join
+@A watch clientbound_map_item_data
+@A cmd /qr https://example.com/ルビー
+~ @A QR \d+x\d+ for https://example.com/ルビー
+@A select filled_map
+wait 1000
+~ @A saw clientbound_map_item_data
+## the code is a real QR (finder patterns in three corners)
+py from endstone_qrmap.plugin import matrix\nm = matrix("hello")\nf = lambda y, x: all(m[y + i][x] and m[y + i][x + 6] and m[y][x + i] and m[y + 6][x + i] for i in range(7))\nreturn f(2, 2) and f(2, len(m) - 9) and f(len(m) - 9, 2)
+= True

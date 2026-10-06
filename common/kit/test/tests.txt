@@ -1,0 +1,137 @@
+## ready + first join gift (once)
+@A join
+until KIT welcome
+~ ^KIT ready$
+js inv(p('A')).join()
+~ minecraft:emerald\*3
+## once: rejoin gives nothing more
+@A leave
+@A join
+wait 500
+js inv(p('A')).join()
+~ minecraft:emerald\*3
+## form + take + give (a button by its text)
+@A cmd /kit:shop
+until form
+@A form Diamond
+until KIT bought
+js inv(p('A')).join()
+~ minecraft:diamond\*1
+~ minecraft:emerald\*1
+## take is all or nothing
+@A cmd /kit:shop
+until form
+@A form 0
+until KIT poor
+js inv(p('A')).join()
+~ minecraft:emerald\*1
+## busy: chat open, the form waits until it closes
+@A typing
+@A cmd /kit:shop
+wait 600
+@A typing off
+until form
+@A form close
+until KIT closed
+## modal form values
+@A cmd /kit:name
+until form
+@A form ["Steve"]
+until KIT name
+~ KIT name Steve
+## command args + enum + optional
+@A cmd /kit:args 5 down
+until KIT args
+= @A KIT args 5 down
+@A cmd /kit:args 7
+until KIT args 7
+~ KIT args 7 -
+## give overflows stacks, count sums them
+@A cmd /kit:give 130
+until KIT count
+~ KIT count 130
+## a huge amount is capped at 64 stacks instead of hanging the server
+clear A
+@A cmd /kit:give 2147483647
+until KIT count
+~ KIT count 2304
+kill @e[type=item]
+clear A
+give A emerald 1
+## save/load survive a restart
+@A cmd /kit:save red
+until KIT saved
+restart
+@A join
+wait 300
+@A cmd /kit:load
+until KIT load
+~ KIT load red
+## item component + cooldown
+give A kit:ping
+@A select kit:ping
+@A use
+until KIT used
+@A use
+wait 300
+~ KIT used ready
+~ KIT used wait
+## sidebar score follows emeralds
+wait 1200
+js world.scoreboard.getObjective('kit').getScore(p('A'))
+= 1
+## console: cmd says players only, cmdAny runs
+kit:args 3
+~ players only
+kit:save blue
+~ KIT saved
+## block state toggled by a player (onBlock + getState/setState)
+setblock 2 -60 2 kit:lamp
+@A useon 2 -60 2
+until KIT lit
+~ KIT lit true
+js dim.getBlock({x:2,y:-60,z:2}).permutation.getState('kit:lit')
+= true
+## menu: the chosen button's function runs, its index comes back
+@A cmd /kit:menu
+until form
+@A form Beta
+until KIT menu index
+~ KIT menu beta
+~ KIT menu index 1
+## confirm: yes / closed
+@A cmd /kit:confirm
+until form
+@A form Yes
+until KIT confirm
+~ KIT confirm true
+@A cmd /kit:confirm
+until form
+@A form close
+until KIT confirm undefined
+## input: text, number, slider, dropdown (the chosen string), toggle
+@A cmd /kit:input
+until form
+@A form ["Steve","7",4,1,true]
+until KIT input
+~ KIT input \{"Name":"Steve","Count":7,"Level":4,"Mode":"sell","On":true\}
+## item: a name and lore
+clear A
+@A cmd /kit:item
+until KIT item
+js (() => { const c = p('A').getComponent('inventory').container; for (let i = 0; i < c.size; i++) { const s = c.getItem(i); if (s?.nameTag === 'Gem') return s.amount + ' ' + s.getLore().join(','); } return 'none'; })()
+= 2 shiny,rare
+## count and take read a bare id the way give does
+clear A
+give A emerald 3
+@A cmd /kit:pay 2
+until KIT (paid|short)
+~ @A KIT paid, left 1
+## a command's reply to a player who left meanwhile is no error
+@A cmd /kit:later
+until form
+@A leave
+wait 800
+@A join
+wait 300
+!~ KIT later

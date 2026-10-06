@@ -1,0 +1,12 @@
+{
+    "name": "money",
+    "entry": "money.js",
+    "type": "lse-quickjs",
+    "version": "0.1.0",
+    "description": "An economy other mods share (LegacyMoney): 1 coin per block broken, /balance, /pay <player> <amount> with a hi",
+    "dependencies": [
+        {
+            "name": "legacy-script-engine-quickjs"
+        }
+    ]
+}

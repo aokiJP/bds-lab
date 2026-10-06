@@ -1,0 +1,19 @@
+[package]
+name = "gpdl"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "bds-lab: an app the account owns from Google Play, saying exactly why when Play refuses"
+publish = false
+
+[dependencies]
+# EFF rs-google-play (MIT) at the commit build.sh pins, with two private functions made public
+gpapi = { path = "../.lab/rs-google-play/gpapi" }
+googleplay-protobuf = "3"   # the same crate gpapi uses (a path copy would be a different type)
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util"] }
+reqwest = { version = "0.13", features = ["native-tls-no-alpn", "stream"] }
+futures = "0.3"
+configparser = "3"
+
+[profile.release]
+strip = true

@@ -1,0 +1,34 @@
+#!/usr/bin/env node
+// a fake gh for tests/app-offline.mjs (`app ci`): one workflow run (123, finished, failed) whose check runs come from
+// FAKE_GH_CHECKS (a JSON array); every call is appended to FAKE_GH_LOG
+import fs from 'node:fs';
+const a = process.argv.slice(2);
+if (process.env.FAKE_GH_LOG) fs.appendFileSync(process.env.FAKE_GH_LOG, a.join(' ') + '\n');
+const say = (x) => process.stdout.write(typeof x === 'string' ? x : JSON.stringify(x) + '\n');
+if (a[0] === '--version') { say('gh version 2.0.0 (fake)\n'); process.exit(0); }
+if (a[0] === 'workflow' && a[1] === 'run') { say('✓ Created workflow_dispatch event for app.yml\nhttps://github.com/o/r/actions/runs/123\n'); process.exit(0); }
+if (a[0] !== 'api') { process.stderr.write('fake gh: ' + a.join(' ') + '\n'); process.exit(1); }
+// the live issue (app live): FAKE_GH_LIVE = a JSON state { issues, comments }; a command comment gets the held run's
+// answer at once (text and a small PNG), as app hold would write it
+if (a[1] === '-X' && a[2] === 'POST' && /^repos\/o\/r\/issues\/\d+\/comments$/.test(a[3] ?? '') && process.env.FAKE_GH_LIVE) {
+  const st = JSON.parse(fs.readFileSync(process.env.FAKE_GH_LIVE, 'utf8')), body = a[5].replace(/^body=/, ''), now = new Date().toISOString();
+  const c = { id: 1000 + st.comments.length, body, created_at: now, user: { login: 'me' } };
+  st.comments.push(c);
+  const run = /^lab@(\d+) /.exec(body)?.[1];
+  if (run && !process.env.FAKE_GH_LIVE_SILENT) st.comments.push({ id: 2000 + st.comments.length, created_at: now, user: { login: 'github-actions[bot]' }, body: `lab-reply@${run} #${c.id}\n\`\`\`\n> ${body.split('\n')[0].replace(/^lab@\d+ /, '')}\nfake answer\n\`\`\`\n<!--png:${Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2]).toString('base64')}-->` });
+  fs.writeFileSync(process.env.FAKE_GH_LIVE, JSON.stringify(st));
+  say(c); process.exit(0);
+}
+const p = a[1];
+const live = () => JSON.parse(fs.readFileSync(process.env.FAKE_GH_LIVE, 'utf8'));
+if (process.env.FAKE_GH_LIVE && /^repos\/o\/r\/issues\?state=open/.test(p)) { say(live().issues); process.exit(0); }
+if (process.env.FAKE_GH_LIVE && /^repos\/o\/r\/issues\/\d+\/comments\?/.test(p)) { say(live().comments); process.exit(0); }
+if (process.env.FAKE_GH_LIVE && /^repos\/o\/r\/issues\/comments\?/.test(p)) { say([...live().comments].reverse()); process.exit(0); }
+if (process.env.FAKE_GH_LIVE && /^repos\/o\/r\/issues\/comments\/\d+$/.test(p)) { const c = live().comments.find((x) => String(x.id) === p.split('/').pop()); if (!c) { process.stderr.write('HTTP 404\n'); process.exit(1); } say(c); process.exit(0); }
+if (process.env.FAKE_GH_LIVE && /^repos\/o\/r\/actions\/workflows\/app\.yml\/runs\?status=in_progress/.test(p)) { say({ workflow_runs: [{ id: 123 }] }); process.exit(0); }
+if (/^repos\/o\/r\/actions\/runs\/123$/.test(p)) say({ id: 123, status: 'completed', conclusion: 'failure', head_sha: 'abc' });
+else if (/^repos\/o\/r\/actions\/runs\/123\/jobs$/.test(p)) say({ jobs: [{ id: 9, name: 'アプリで確かめる', status: 'completed', conclusion: 'failure', steps: [{ number: 1, name: 'アプリで確かめる', status: 'completed', conclusion: 'failure' }] }, { id: 10, name: '結果をチェックに出す', status: 'completed', conclusion: 'success', steps: [] }] });
+else if (/^repos\/o\/r\/check-runs\/9\/annotations$/.test(p)) say([{ annotation_level: 'failure', title: 'アプリで確かめた記録', message: '✘ 3 until stable' }]);
+else if (/^repos\/o\/r\/check-runs\/10\/annotations$/.test(p)) say([]);
+else if (/^repos\/o\/r\/commits\/abc\/check-runs\?/.test(p) && a.includes('--jq')) for (const c of JSON.parse(fs.readFileSync(process.env.FAKE_GH_CHECKS, 'utf8'))) say({ name: c.name, external_id: c.external_id, output: c.output });
+else { process.stderr.write('fake gh: unknown ' + p + '\n'); process.exit(1); }

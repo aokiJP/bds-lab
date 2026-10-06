@@ -1,0 +1,49 @@
+{
+ "_": "the units that are part of bds-lab itself. utility: the handy addons every live server gets by default (up, the real app, lan, deploy) and every release carries. bds/end/ll: working samples the docs point at (help ideas, the app lab). node lab.mjs share ships these and no other unit; everything else for training and checks lives in training/.",
+ "bds": [
+  "jsonui_demo"
+ ],
+ "end": [
+  "webapi",
+  "bossbar",
+  "toast",
+  "sidebar",
+  "whois",
+  "guard",
+  "antispam",
+  "hub",
+  "motd",
+  "sqlstats",
+  "skinpng",
+  "pixelmap",
+  "qrmap",
+  "abilities",
+  "i18n",
+  "tempban",
+  "worldpng",
+  "livemap",
+  "cmdguard",
+  "report"
+ ],
+ "ll": [
+  "sidebar",
+  "bossbar",
+  "toast",
+  "whois",
+  "hub",
+  "motd",
+  "sqlstats",
+  "chatlog",
+  "unbreakable",
+  "money",
+  "i18n",
+  "tempban",
+  "cmdguard",
+  "warps"
+ ],
+ "utility": {
+  "bds": [
+   "ts_repl"
+  ]
+ }
+}

@@ -1,0 +1,2 @@
+pack.name=TS REPL
+pack.description=Write TypeScript / JavaScript inside the game and run it on the spot. Start with /function tsrepl_start, or /function tsrepl_help if you get stuck. Three editing surfaces (sidebar, action bar, form). Mistakes show up in red as you type. Turn on "Beta APIs" in the world settings.

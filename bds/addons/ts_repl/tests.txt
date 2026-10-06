@@ -1,0 +1,69 @@
+## loads on BDS and asks a new player to start
+@A join
+~ tsrepl_start
+!~ requesting dependency
+
+## start gives the console and opens the workbench
+@A join
+wait 2000
+@A cmd /function tsrepl_start
+until form
+~ console1
+~ tsrepl.start.done
+~ form action: title\("ワークベンチ +TS REPL"\)
+@A form close
+
+## doctor answers the player who asked
+@A join
+wait 2000
+@A cmd /function tsrepl_doctor
+until 診断
+~ TS REPL の診断 +v6\.11\.0
+
+## the console item opens the workbench
+@A join
+wait 2000
+@A cmd /function tsrepl_start
+until form
+@A form close
+wait 300
+@A select tsrepl:console
+@A use
+until form
+~ form action: title\("ワークベンチ +TS REPL"\)
+@A form close
+
+## a script block with nothing bound opens its binding screen
+@A join
+wait 2000
+@A cmd /function tsrepl_start
+until form
+@A form close
+wait 300
+give A tsrepl:script_block
+wait 500
+@A place tsrepl:script_block 2 -60 2
+wait 500
+@A useon 2 -60 2
+until スクリプトブロック
+~ form action: title\("ワークベンチ +スクリプトブロック"\).*button\(" *2, -60, 2"\)
+@A form close
+
+## the server console runs TypeScript through the AI bridge (bds-lab: no switch, no token)
+scriptevent tsrepl:ai {"id":"c1","kind":"eval","code":"const n: number = 6 * 7; n"}
+until «TSREPL»\{"id":"c1" 20000
+~ «TSREPL»\{"id":"c1","ok":true,"kind":"eval","data":\{"output":"42"
+scriptevent tsrepl:ai {"id":"c2","kind":"eval","code":"const s: string = 5"}
+until «TSREPL»\{"id":"c2"
+~ «TSREPL»\{"id":"c2","ok":false,"kind":"error","data":\{"diagnostics":\[\{"line":1,"column":7,"code":2322
+
+## a slot's handlers are swapped by its next run, and removed by stop (no /reload)
+scriptevent tsrepl:ai {"id":"h1","kind":"eval","slot":"t","code":"import { world } from \"@minecraft/server\"; world.afterEvents.playerJoin.subscribe(() => {}); 1"}
+until «TSREPL»\{"id":"h1" 20000
+~ «TSREPL»\{"id":"h1","ok":true
+scriptevent tsrepl:ai {"id":"h2","kind":"eval","slot":"t","code":"import { world } from \"@minecraft/server\"; world.afterEvents.playerJoin.subscribe(() => {}); 2"}
+until «TSREPL»\{"id":"h2"
+~ «TSREPL»\{"id":"h2","ok":true.*前の実行ぶんの購読・常駐処理を 1 件外しました
+scriptevent tsrepl:ai {"id":"h3","kind":"stop","slot":"t"}
+until «TSREPL»\{"id":"h3"
+~ «TSREPL»\{"id":"h3","ok":true,"kind":"stop","data":\{"cleared":1\}

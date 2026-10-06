@@ -1,0 +1,37 @@
+## an operator bans a player for some minutes: kicked now with the reason
+@A join
+@B join
+@A cmd /tempban B 10 spamming chat
+~ ^@A (cmd: )?B banned for 10 min: spamming chat
+~ ^@B disconnected: .*Banned: spamming chat \((9m 5\d|10m 0)s left\)
+## the banned player cannot log in again until the time is up, and sees why
+wait 500
+@B join
+~ ^@B disconnected: .*Banned: spamming chat \(9m \d+s left\)
+!~ ^@B joined
+## the ban survives a server restart and is listed
+restart alone
+@B join
+~ ^@B disconnected: .*Banned: spamming chat
+bans
+~ timed bans: B: spamming chat \(\d+m \d+s left\)
+## it ends by itself when the time is up
+tempban C 0.05 short
+~ C banned for 0.05 min: short
+wait 3500
+@C join
+~ ^@C joined
+## /unban2 lets them in early
+unban2 B
+~ B can join again
+@B join
+~ ^@B joined
+## wrong input is refused
+tempban B -3
+~ minutes: more than 0
+unban2 Nobody
+~ Nobody is not banned
+## players without op cannot ban
+deop C
+@C cmd /tempban A 5
+!~ A banned

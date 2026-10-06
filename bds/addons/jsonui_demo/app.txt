@@ -1,0 +1,22 @@
+# 本物のアプリで JSON UI を確かめる: node lab.mjs app run -a jsonui_demo
+# （JSON UI の画面を全部試すなら: node lab.mjs app ui -a jsonui_demo）
+section title
+launch                                    # 準備済みの端末なら、もうタイトル画面で起動済み（app prepare）
+until title 600000                        # タイトル画面まで（初めての起動はとても重いので長め）
+shot title
+section join
+join                                      # ラボの BDS へ直接参加（報告の「参加」がかかった秒数）
+until joined 300000
+wait 3000
+shot world                                # 何も開いていないワールド（changed と、失敗したときの戻り先の基準）
+section form
+do scriptevent demo:open                  # サーバーがフォームを送る（見た目はアプリ側の rp/ui/server_form.json）
+until server DEMO shown to 1 30000
+wait 2500
+shot jsonui-form                          # ← JSON UI の成果
+changed                                   # フォームが本当に出た（ワールドの画面と違う）
+key BACK                                  # 閉じる
+until server DEMO .* picked closed 30000
+wait 1000
+shot closed
+absent clientlog \bERROR\b                # クライアントのコンテンツログに、JSON UI などのエラーが無い

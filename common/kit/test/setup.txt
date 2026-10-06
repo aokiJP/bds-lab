@@ -1,0 +1,2 @@
+add item kit:ping "Ping" ja=ピン tex=orb kit:ping={}
+add block kit:lamp "Lamp" ja=ランプ tex=glass:f0d060 states={"kit:lit":[false,true]} kit:toggle={}

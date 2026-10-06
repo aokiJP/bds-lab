@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "endstone-cmdguard"
+version = "0.1.0"
+description = "Mute chat and whispers, command aliases, a log of every command"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.entry-points."endstone"]
+cmdguard = "endstone_cmdguard:Cmdguard"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/endstone_cmdguard"]

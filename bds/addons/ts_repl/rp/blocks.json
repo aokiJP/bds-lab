@@ -1,0 +1,7 @@
+{
+  "format_version": [ 1, 1, 0 ],
+  "tsrepl:script_block": {
+    "textures": "tsrepl_script_block",
+    "sound": "stone"
+  }
+}

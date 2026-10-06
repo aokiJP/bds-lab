@@ -1,10 +1,53 @@
 node_modules/
-vendor/*
-!vendor/bedrock-server.zip
-worlds/
+.lab/
+.lab-current
 dist/
-.bds-lab/
+# vendored code under common/ keeps its dist/ (common/nethernet-connect/dist: what `lan` runs; not a build output of the lab)
+!common/*/dist/
+__pycache__/
+*.pyc
+build/
+.xmake/
+*/addons/*/tsconfig.json
+ll/mods/*/tsconfig.json
+bds/vendor/*
+!bds/vendor/bedrock-server.zip
+!bds/vendor/bds-version.txt
+bds/docs/coverage/last-run.txt
+bds/docs/coverage/.spec-run.txt
+bds/docs/coverage/.lab/
+bds/docs/coverage/tsconfig.json
+# (the same for the verbs table's unit: its run log and the tsconfig that points into this machine's cache)
+bds/docs/verbs/last-run.txt
+bds/docs/verbs/tsconfig.json
+runs/
 .DS_Store
-*.log
-refs/
 github.token
+.lab-kind
+.lab-run.txt
+.lab-run.json
+.lab-cache-for
+bds-lab-cache.tgz
+.lab-node/
+.lab-node.tmp/
+verify-result.txt
+# the extras zip's list of the files put back from it (this lab's own; update and maint leave those alone)
+extras.json
+.lab-base.json
+.lab-patch.txt
+# app lab: the Google secrets and any APK never go into git
+.env
+.env.local
+*.apk
+*.apks
+*.xapk
+.lab-tools/
+# the autopilot's scratch (auto/ itself — ledger, backlog, lessons, policy, STOP — is committed: it is its memory)
+auto/.work/
+auto/.lease.json
+auto/.scheduled.log
+auto/.lock
+# the lab writes a lab.mjs into each unit (`node lab.mjs` from inside the unit folder): generated, not the unit's
+bds/addons/*/lab.mjs
+end/plugins/*/lab.mjs
+ll/mods/*/lab.mjs

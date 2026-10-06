@@ -1,0 +1,6 @@
+{
+ "format_version": "beta",
+ "minecraft:server_sound_definitions": [
+  { "sound_event_name": "probe:beep", "duration_info": { "mode": "real_time", "seconds": 0.5 }, "music_info": { "title": "Beep", "artist": "probe" }, "tags": { "kind": "test" } }
+ ]
+}

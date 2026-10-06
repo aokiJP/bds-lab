@@ -1,0 +1,10 @@
+{
+  "format_version": "1.20.10",
+  "minecraft:recipe_shapeless": {
+    "description": { "identifier": "lab:jump_potion" },
+    "tags": ["crafting_table"],
+    "ingredients": [{ "item": "lab:gel", "count": 3 }, { "item": "minecraft:glass_bottle" }],
+    "unlock": [{ "item": "lab:gel" }],
+    "result": { "item": "lab:jump_potion" }
+  }
+}

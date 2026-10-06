@@ -1,0 +1,11 @@
+{
+ "format_version": "1.26.50",
+ "minecraft:entity": {
+  "description": { "identifier": "probe:upgrader", "is_spawnable": false, "is_summonable": true,
+   "entity_version": { "upgrades": [ { "upgrade_to": 1, "name": "probe:to_v1" } ] } },
+  "component_groups": { "probe:v1": { "minecraft:variant": { "value": 1 } } },
+  "components": { "minecraft:physics": {}, "minecraft:collision_box": { "width": 0.6, "height": 0.6 }, "minecraft:health": { "value": 10 } },
+  "upgrades": { "probe:to_v1": { "add": { "component_groups": ["probe:v1"] } } },
+  "events": {}
+ }
+}

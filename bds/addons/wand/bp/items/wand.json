@@ -1,0 +1,16 @@
+{
+  "format_version": "1.21.90",
+  "minecraft:item": {
+    "description": {
+      "identifier": "lab:wand",
+      "menu_category": {
+        "category": "items"
+      }
+    },
+    "components": {
+      "minecraft:icon": "lab_wand",
+      "minecraft:max_stack_size": 1,
+      "lab:wand": {}
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "probe same-spawn",
+    "description": "proves: test-same-spawn",
+    "uuid": "251422c4-fd3a-5bbc-9771-b0fd53d0bce6",
+    "version": [
+      1,
+      0,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      0
+    ]
+  },
+  "modules": [
+    {
+      "type": "data",
+      "uuid": "9009c800-bd59-56b2-bed3-3943b5fa817d",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "6c6df512-f4af-5a15-87a1-faaa492ddcc8",
+      "version": [
+        1,
+        0,
+        0
+      ],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.0.0"
+    }
+  ]
+}

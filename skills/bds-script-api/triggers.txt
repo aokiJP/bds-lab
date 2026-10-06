@@ -1,0 +1,3 @@
+# words and phrases a person uses when this skill is needed, any language, one per line (skill route reads them; not installed)
+Script API, @minecraft/server, main.ts, world, system, afterEvents, beforeEvents, subscribe, runTimeout, runInterval, setTimeout, dynamic property, scoreboard, getScore, runCommand, runCommandAsync, TypeError, early execution, restricted execution
+スクリプト, イベント, 保存, 再起動, データ, スコアボード, スコア, エラー, 例外, 読み込み, タイマー, 定期的

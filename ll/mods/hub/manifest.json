@@ -1,0 +1,12 @@
+{
+    "name": "hub",
+    "entry": "hub.js",
+    "type": "lse-quickjs",
+    "version": "0.1.0",
+    "description": "Sends the player to another server (a lobby network)",
+    "dependencies": [
+        {
+            "name": "legacy-script-engine-quickjs"
+        }
+    ]
+}

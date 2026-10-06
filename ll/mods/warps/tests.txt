@@ -1,0 +1,95 @@
+## loads
+ll list
+~ warps
+## no warps yet: /warps says so
+@A join
+@A cmd /warps
+~ ^@A .*ワープ地点はまだありません
+## an OP sets a warp where they stand with /setwarp <name>
+tp A 10 -60 5
+wait 1000
+@A cmd /setwarp home
+~ ^@A .*ワープ地点「home」を作成しました: 10\.\d, -60, 5\.\d \(overworld\)
+## anyone (a non-OP player too) warps there with /warp <name>
+@B join
+deop B
+tp B -20 -60 -20
+wait 1000
+@B cmd /warp home
+~ ^@B .*「home」へワープしました
+wait 1000
+lse const q = p('B').feetPos; return [Math.floor(q.x), Math.round(q.y), Math.floor(q.z)].join(',')
+= 10,-60,5
+## /warps lists every warp for anyone
+@A cmd /setwarp 広場
+~ ^@A .*「広場」を作成しました
+@B cmd /warps
+~ ^@B .*ワープ地点 \(2\): home \[10\.\d, -60, 5\.\d \(overworld\)\] \| 広場 \[
+## a player can warp only once per 10 seconds
+tp B -20 -60 -20
+wait 500
+@B cmd /warp 広場
+~ ^@B .*ワープはあと([1-9]|10)秒待ってください
+!~ ^@B .*「広場」へワープしました
+wait 1000
+lse const q = p('B').feetPos; return Math.floor(q.x)
+= -20
+wait 9000
+@B cmd /warp 広場
+~ ^@B .*「広場」へワープしました
+## the cooldown is per player: A can still warp
+@A cmd /warp home
+~ ^@A .*「home」へワープしました
+## a non-OP cannot /setwarp or /delwarp
+@B cmd /setwarp trap
+!~ 「trap」を作成しました
+@B cmd /delwarp home
+!~ 「home」を削除しました
+lse return Object.keys(JSON.parse(File.readFrom('./plugins/warps/warps.json'))).sort().join(',')
+= home,広場
+warps
+!~ trap
+## warps survive a server restart
+restart
+@B cmd /warps
+~ ^@B .*ワープ地点 \(2\): home .* \| 広場
+tp B -20 -60 -20
+wait 1000
+@B cmd /warp home
+~ ^@B .*「home」へワープしました
+wait 1000
+lse const q = p('B').feetPos; return [Math.floor(q.x), Math.floor(q.z)].join(',')
+= 10,5
+## an OP deletes a warp with /delwarp, and it stays deleted after restart
+@A cmd /delwarp 広場
+~ ^@A .*ワープ地点「広場」を削除しました
+@A cmd /warp 広場
+~ ^@A .*ワープ地点「広場」はありません
+restart
+@A cmd /warps
+~ ^@A .*ワープ地点 \(1\): home \[
+## wrong input and the console are refused politely
+@A cmd /delwarp nothing
+~ ^@A .*ワープ地点「nothing」はありません
+warp home
+~ プレイヤーだけが使えます
+warps
+~ ワープ地点 \(1\): home
+## warp names: 1 to 32 characters (a 33-character name is refused), setting a name again moves it
+@A cmd /setwarp a
+~ ^@A .*ワープ地点「a」を作成しました
+@A cmd /setwarp abcdefghijklmnopqrstuvwxyz012345
+~ ^@A .*ワープ地点「abcdefghijklmnopqrstuvwxyz012345」を作成しました
+@A cmd /setwarp abcdefghijklmnopqrstuvwxyz0123456
+~ ^@A .*名前は空白なしの1〜32文字にしてください
+!~ 「abcdefghijklmnopqrstuvwxyz0123456」を作成しました
+tp A 3 -60 7
+wait 1000
+@A cmd /setwarp A
+~ ^@A .*ワープ地点「A」を更新しました: 3\.5, -60, 7\.5
+@A cmd /delwarp a
+~ ^@A .*ワープ地点「A」を削除しました
+
+## lse sees the mod top-level names
+lse typeof warps + " " + typeof FILE
+= object string

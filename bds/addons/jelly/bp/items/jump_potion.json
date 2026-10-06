@@ -1,0 +1,24 @@
+{
+  "format_version": "1.21.90",
+  "minecraft:item": {
+    "description": {
+      "identifier": "lab:jump_potion",
+      "menu_category": {
+        "category": "items"
+      }
+    },
+    "components": {
+      "minecraft:icon": "lab_jump_potion",
+      "minecraft:max_stack_size": 1,
+      "minecraft:food": {
+        "nutrition": 0,
+        "saturation_modifier": 0,
+        "can_always_eat": true
+      },
+      "minecraft:use_modifiers": {
+        "use_duration": 1.6
+      },
+      "minecraft:use_animation": "drink"
+    }
+  }
+}

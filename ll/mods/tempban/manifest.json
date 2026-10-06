@@ -1,0 +1,12 @@
+{
+    "name": "tempban",
+    "entry": "tempban.js",
+    "type": "lse-quickjs",
+    "version": "0.1.0",
+    "description": "Timed bans that refuse the login and show the reason and time left",
+    "dependencies": [
+        {
+            "name": "legacy-script-engine-quickjs"
+        }
+    ]
+}

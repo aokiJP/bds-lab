@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "endstone-pixelmap"
+version = "0.1.0"
+description = "A map item with pixel art drawn by the plugin, even the player's own face"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.entry-points."endstone"]
+pixelmap = "endstone_pixelmap:Pixelmap"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/endstone_pixelmap"]

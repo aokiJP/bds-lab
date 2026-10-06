@@ -1,0 +1,19 @@
+## a new player gets 3 rubies
+@A join
+wait 800
+js inv(p('A'))
+~ lab:ruby\*3
+## the shop trades 2 rubies for a diamond
+@A cmd /lab:shop
+until form
+@A form 0
+until ダイヤを買いました
+js inv(p('A'))
+~ lab:ruby\*1
+~ minecraft:diamond\*1
+## not enough rubies: told in chat
+clear A
+@A cmd /lab:shop
+until form
+@A form 0
+~ ルビーが足りません

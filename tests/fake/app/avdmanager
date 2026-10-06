@@ -1,0 +1,10 @@
+#!/usr/bin/env node
+// a fake avdmanager for tests/app-offline.mjs: `create avd -n <name> -k <image> …` writes the AVD's config.ini and .ini
+import fs from 'node:fs';
+import path from 'node:path';
+const a = process.argv.slice(2), at = (k) => a[a.indexOf(k) + 1];
+if (a[0] !== 'create' || a[1] !== 'avd') process.exit(1);
+const home = process.env.ANDROID_AVD_HOME, name = at('-n'), img = at('-k');
+fs.mkdirSync(path.join(home, `${name}.avd`), { recursive: true });
+fs.writeFileSync(path.join(home, `${name}.avd`, 'config.ini'), `image.sysdir.1=${img.split(';').slice(1).join('/')}/\nhw.lcd.width=1080\n`);
+fs.writeFileSync(path.join(home, `${name}.ini`), `path=${path.join(home, `${name}.avd`)}\n`);

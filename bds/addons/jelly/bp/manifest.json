@@ -1,0 +1,33 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Jelly",
+    "description": "A jelly mob, its gel, and a jump potion",
+    "uuid": "fc402455-6222-44fd-9fbc-31c0520c7543",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 26, 52]
+  },
+  "modules": [
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "a4404bb8-5a0d-46cb-b941-b6d41abeb8ea",
+      "version": [1, 0, 0],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.10.0"
+    },
+    {
+      "module_name": "@minecraft/server-ui",
+      "version": "2.2.0"
+    },
+    {
+      "uuid": "27a2a4d4-6e29-4c47-bd49-5acdd491d902",
+      "version": [1, 0, 0]
+    }
+  ]
+}

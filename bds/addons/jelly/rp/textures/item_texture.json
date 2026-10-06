@@ -1,0 +1,12 @@
+{
+  "resource_pack_name": "lab",
+  "texture_name": "atlas.items",
+  "texture_data": {
+    "lab_gel": {
+      "textures": "textures/items/gel"
+    },
+    "lab_jump_potion": {
+      "textures": "textures/items/jump_potion"
+    }
+  }
+}

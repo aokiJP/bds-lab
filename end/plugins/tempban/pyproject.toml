@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "endstone-tempban"
+version = "0.1.0"
+description = "Timed bans that refuse the login and show the reason and time left"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.entry-points."endstone"]
+tempban = "endstone_tempban:Tempban"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/endstone_tempban"]

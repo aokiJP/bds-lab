@@ -1,0 +1,33 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Home",
+    "description": "Set a home and go back to it",
+    "uuid": "50fe0158-e226-4a75-b338-8bb8a415286f",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 26, 52]
+  },
+  "modules": [
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "3647c05f-6335-4464-858a-24c1388988e7",
+      "version": [1, 0, 0],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.10.0"
+    },
+    {
+      "module_name": "@minecraft/server-ui",
+      "version": "2.2.0"
+    },
+    {
+      "uuid": "91e6df09-930d-4955-84dd-e9cdad0c02c3",
+      "version": [1, 0, 0]
+    }
+  ]
+}

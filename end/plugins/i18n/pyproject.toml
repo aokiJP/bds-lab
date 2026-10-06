@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "endstone-i18n"
+version = "0.1.0"
+description = "Every player reads the server in their own game language"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.entry-points."endstone"]
+i18n = "endstone_i18n:I18n"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/endstone_i18n"]

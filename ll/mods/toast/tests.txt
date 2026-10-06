@@ -1,0 +1,10 @@
+## a welcome toast on join
+@A join
+until toast
+~ @A toast: ようこそ \| Aさん、1人目のプレイヤーです
+## /notify reaches everyone
+@B join
+@A cmd /notify イベント開始！
+wait 800
+~ @A toast: .*A \| イベント開始！
+~ @B toast: .*A \| イベント開始！

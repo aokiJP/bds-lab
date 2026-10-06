@@ -1,0 +1,2 @@
+pack.name=TS REPL
+pack.description=在游戏中编写 TypeScript / JavaScript 并当场运行。开始：/function tsrepl_start，遇到问题：/function tsrepl_help。三种编辑界面（侧边栏、快捷栏、表单）。错误会在输入时以红色显示。请在世界设置中开启“Beta API”。

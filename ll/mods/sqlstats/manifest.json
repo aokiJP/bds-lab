@@ -1,0 +1,12 @@
+{
+    "name": "sqlstats",
+    "entry": "sqlstats.js",
+    "type": "lse-quickjs",
+    "version": "0.1.0",
+    "description": "A real SQL database (SQLite through DBSession): blocks broken and joins per player, /stats and /top.",
+    "dependencies": [
+        {
+            "name": "legacy-script-engine-quickjs"
+        }
+    ]
+}

@@ -1,0 +1,18 @@
+## blocks a player breaks are counted in SQLite
+@A join
+setblock 2 -60 2 dirt
+setblock 3 -60 2 dirt
+@A dig 2 -60 2
+@A dig 3 -60 2
+wait 500
+@A cmd /stats
+~ @A A: blocks 2 deaths 0 joins 1
+## the database survives a restart, joins keep counting
+restart
+@A cmd /top blocks
+~ @A top blocks: 1\. A 2
+@A cmd /stats A
+~ @A A: blocks 2 deaths 0 joins 2
+## the file is a normal SQLite database other programs can read
+py import sqlite3\nreturn sqlite3.connect(plugin.data_folder / "stats.db").execute("select count(*) from stats").fetchone()[0]
+= 1

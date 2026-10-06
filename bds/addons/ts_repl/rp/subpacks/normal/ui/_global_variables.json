@@ -1,0 +1,307 @@
+{
+ "$tsrepl_code_color": [
+  0.8,
+  0.8,
+  0.8
+ ],
+ "$tsrepl_caption_color": [
+  0.43137,
+  0.46275,
+  0.50588
+ ],
+ "$tsrepl_gutter_color": [
+  0.8,
+  0.8,
+  0.8
+ ],
+ "$tsrepl_tab_color": [
+  0.61569,
+  0.61569,
+  0.61569
+ ],
+ "$tsrepl_status_color": [
+  0.8,
+  0.8,
+  0.8
+ ],
+ "$tsrepl_backdrop_color": [
+  0.12157,
+  0.12157,
+  0.12157
+ ],
+ "$tsrepl_chrome_color": [
+  0.09412,
+  0.09412,
+  0.09412
+ ],
+ "$tsrepl_sidebar_color": [
+  0.09412,
+  0.09412,
+  0.09412
+ ],
+ "$tsrepl_line_color": [
+  0.16863,
+  0.16863,
+  0.16863
+ ],
+ "$tsrepl_button_color": [
+  0.16863,
+  0.16863,
+  0.16863
+ ],
+ "$tsrepl_accent_color": [
+  0,
+  0.47059,
+  0.83137
+ ],
+ "$tsrepl_code_font": "unicode",
+ "$tsrepl_font_type": "default",
+ "$tsrepl_font_scale": 1,
+ "$tsrepl_kw_color": [
+  0.33725,
+  0.61176,
+  0.83922
+ ],
+ "$tsrepl_err_color": [
+  0.9451,
+  0.29804,
+  0.29804
+ ],
+ "$tsrepl_warn_color": [
+  0.8,
+  0.6549,
+  0
+ ],
+ "$tsrepl_flow_color": [
+  0.77255,
+  0.52549,
+  0.75294
+ ],
+ "$tsrepl_str_color": [
+  0.80784,
+  0.56863,
+  0.47059
+ ],
+ "$tsrepl_cmt_color": [
+  0.41569,
+  0.6,
+  0.33333
+ ],
+ "$tsrepl_editor_color": [
+  0.12157,
+  0.12157,
+  0.12157
+ ],
+ "$tsrepl_activity_color": [
+  0.09412,
+  0.09412,
+  0.09412
+ ],
+ "$tsrepl_panel_color": [
+  0.09412,
+  0.09412,
+  0.09412
+ ],
+ "$tsrepl_active_color": [
+  0.01569,
+  0.22353,
+  0.36863
+ ],
+ "$tsrepl_icon_color": [
+  0.52549,
+  0.52549,
+  0.52549
+ ],
+ "$tsrepl_icon_on_color": [
+  0.84314,
+  0.84314,
+  0.84314
+ ],
+ "$tsrepl_tab_on_color": [
+  1,
+  1,
+  1
+ ],
+ "$tsrepl_tab_bg_color": [
+  0.12157,
+  0.12157,
+  0.12157
+ ],
+ "$tsrepl_tabbar_color": [
+  0.09412,
+  0.09412,
+  0.09412
+ ],
+ "$tsrepl_input_color": [
+  0.19216,
+  0.19216,
+  0.19216
+ ],
+ "$tsrepl_input_border": [
+  0.23529,
+  0.23529,
+  0.23529
+ ],
+ "$tsrepl_input_hint_color": [
+  0.59608,
+  0.59608,
+  0.59608
+ ],
+ "$tsrepl_quick_color": [
+  0.13333,
+  0.13333,
+  0.13333
+ ],
+ "$tsrepl_widget_color": [
+  0.12549,
+  0.12549,
+  0.12549
+ ],
+ "$tsrepl_widget_border": [
+  0.19216,
+  0.19216,
+  0.19216
+ ],
+ "$tsrepl_menu_color": [
+  0.12157,
+  0.12157,
+  0.12157
+ ],
+ "$tsrepl_menu_sel_color": [
+  0,
+  0.47059,
+  0.83137
+ ],
+ "$tsrepl_list_hover_color": [
+  0.16471,
+  0.17647,
+  0.18039
+ ],
+ "$tsrepl_list_idle_color": [
+  0.21569,
+  0.21569,
+  0.23922
+ ],
+ "$tsrepl_badge_color": [
+  0.38039,
+  0.38039,
+  0.38039
+ ],
+ "$tsrepl_desc_color": [
+  0.61569,
+  0.61569,
+  0.61569
+ ],
+ "$tsrepl_primary_color": [
+  0,
+  0.47059,
+  0.83137
+ ],
+ "$tsrepl_primary_hover": [
+  0.00784,
+  0.43137,
+  0.75686
+ ],
+ "$tsrepl_remote_color": [
+  0,
+  0.47059,
+  0.83137
+ ],
+ "$tsrepl_line_hl_color": [
+  0.15686,
+  0.15686,
+  0.15686
+ ],
+ "$tsrepl_indent_color": [
+  0.25098,
+  0.25098,
+  0.25098
+ ],
+ "$tsrepl_slider_color": [
+  0.47451,
+  0.47451,
+  0.47451
+ ],
+ "$tsrepl_find_color": [
+  0.61961,
+  0.41569,
+  0.01176
+ ],
+ "$tsrepl_info_color": [
+  0.21569,
+  0.58039,
+  1
+ ],
+ "$tsrepl_num_color": [
+  0.7098,
+  0.80784,
+  0.65882
+ ],
+ "$tsrepl_type_color": [
+  0.30588,
+  0.78824,
+  0.6902
+ ],
+ "$tsrepl_func_color": [
+  0.86275,
+  0.86275,
+  0.66667
+ ],
+ "$tsrepl_var_color": [
+  0.61176,
+  0.86275,
+  0.99608
+ ],
+ "$tsrepl_bracket1_color": [
+  1,
+  0.84314,
+  0
+ ],
+ "$tsrepl_bracket2_color": [
+  0.8549,
+  0.43922,
+  0.83922
+ ],
+ "$tsrepl_bracket3_color": [
+  0.0902,
+  0.62353,
+  1
+ ],
+ "$tsrepl_hit_size": [
+  "100%",
+  "100%"
+ ],
+ "$tsrepl_screen_size": [
+  "100%",
+  "100%"
+ ],
+ "$tsrepl_screen_offset": [
+  0,
+  0
+ ],
+ "$tsrepl_ghost": false,
+ "$container_transition_time_push": 0,
+ "$transition_time_pop": 0,
+ "$tsrepl_cursor_font": "MinecraftSeven",
+ "$tsrepl_wheel_keys": true,
+ "$tsrepl_shortcut_keys": false,
+ "$tsrepl_arrow_keys": false,
+ "$tsrepl_page_keys": false,
+ "$tsrepl_code_scale": 1.75,
+ "$tsrepl_ui_scale_pct": 100,
+ "$tsrepl_close_anchor": "top_right",
+ "$tsrepl_close_size": [
+  "9px",
+  "9px"
+ ],
+ "$tsrepl_close_offset": [
+  "-2px",
+  "2px"
+ ],
+ "$tsrepl_demo_scrim_alpha": 0.62,
+ "$tsrepl_demo_hint_alpha": 0.28,
+ "$tsrepl_demo_cursor_size": [
+  "12px",
+  "17px"
+ ]
+}

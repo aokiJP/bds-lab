@@ -1,0 +1,17 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Jelly RP",
+    "description": "A jelly mob, its gel, and a jump potion",
+    "uuid": "27a2a4d4-6e29-4c47-bd49-5acdd491d902",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 26, 52]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "25187459-fb71-4721-a65b-91712dfd3ccd",
+      "version": [1, 0, 0]
+    }
+  ]
+}

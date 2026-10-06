@@ -1,0 +1,181 @@
+name: redroid
+# the real Minecraft on redroid (the real Android in a container: no VM, the prepared /data restored in 0.1 s), then app/'s own
+# `app run` / `app ui` on it. By hand: node lab.mjs app ci --device redroid [-a <addon>] [--mode run|ui] [--bench]
+# (or Actions → redroid → Run workflow). Kept cheap, since the account's Actions minutes ran out once (2026-10-04, ~240 min):
+#   - never on its own: by hand, or a push whose commit message says [redroid ci] (main or claude/redroid-*, and only when
+#     app/redroid/ or this file changed)
+#   - the secrets (GOOGLE_EMAIL / GOOGLE_AAS_TOKEN) reach the prep step only; while the app workflow runs it waits a few
+#     minutes, then skips the account's part (one Google account on two devices at once is not done)
+#   - the prepared device (/data) comes from app's encrypted vault when the repository is private and a run saved one; it is
+#     saved only when asked (input keep: the repository's 10 GB is shared and near its limit, saving can push app's device out)
+#   - small artifacts only (JSON, a few game pictures, app run's report), 3 days; a newer run on the same ref cancels the older
+run-name: "redroid ${{ github.event_name == 'workflow_dispatch' && format('{0} {1}', inputs.mode, inputs.addon) || 'push' }} ${{ github.sha }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      addon:
+        description: the addon (bds/addons/<name>)
+        default: jsonui_demo
+      mode:
+        description: run (app.txt) or ui (every JSON UI screen of the addon)
+        type: choice
+        options: [run, ui]
+        default: run
+      bench:
+        description: also time the starts (restore → boot → title, 3 rounds)
+        type: boolean
+        default: false
+      keep:
+        description: keep the prepared device in the encrypted cache for the next run (private repository only; ~1 GB of the shared 10 GB)
+        type: boolean
+        default: false
+      fresh:
+        description: make the device again even when the cache has one
+        type: boolean
+        default: false
+  push:
+    branches: [main, 'claude/redroid-*']
+    paths: ['app/redroid/**', '.github/workflows/redroid.yml']
+
+concurrency:
+  group: redroid-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  game:
+    name: game (account, Play installs, seconds to the title, app ${{ inputs.mode || 'run' }})
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[redroid ci]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: wait while the app workflow runs (the same Google account)
+        id: turn
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          for i in $(seq 1 4); do
+            n=0
+            for s in in_progress queued; do
+              c=$(gh api "repos/$REPO/actions/workflows/app.yml/runs?status=$s&per_page=1" --jq .total_count 2>/dev/null || echo 0); n=$((n + c))
+            done
+            [ "$n" = 0 ] && { echo "ok=true" >> "$GITHUB_OUTPUT"; echo "::notice title=順番::app ワークフローは動いていません（$i 回目の確認）"; exit 0; }
+            echo "app ワークフローが $n 本動いています: 1 分待ちます（$i/4）"; sleep 60
+          done
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+          echo "::warning title=順番::app ワークフローが動いています: アカウントを使う段階は飛ばします（空いたときに push し直す）"
+
+      - name: binder, tesseract
+        if: steps.turn.outputs.ok == 'true'
+        run: |
+          k=$(uname -r)
+          sudo modprobe binder_linux devices=binder,hwbinder,vndbinder 2>/dev/null || { sudo apt-get install -y -qq "linux-modules-extra-$k" >/dev/null 2>&1; sudo modprobe binder_linux devices=binder,hwbinder,vndbinder; }
+          sudo apt-get install -y -qq tesseract-ocr tcpdump >/dev/null 2>&1 || echo "::warning::tesseract を入れられません（タイトルは見ません）"
+          sudo modprobe uinput || true   # (the lab's controller on the device: /dev/uinput)
+          sudo mkdir -p /mnt/redroid && sudo chown "$USER" /mnt/redroid
+
+      - name: image
+        if: steps.turn.outputs.ok == 'true'
+        run: node app/redroid/redroid.mjs setup /mnt/redroid/gapps
+
+      - name: doctor
+        if: steps.turn.outputs.ok == 'true'
+        run: node app/redroid/redroid.mjs doctor || true
+
+      - name: the prepared device in the cache?
+        id: cache
+        if: steps.turn.outputs.ok == 'true' && github.event.repository.visibility == 'private' && !inputs.fresh
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /mnt/redroid/data.bin
+          key: redroid-data-v1-${{ github.run_id }}
+          restore-keys: redroid-data-v1-
+
+      - name: open it (the vault's key from the token; nothing is printed)
+        id: open
+        if: steps.cache.outputs.cache-matched-key != ''
+        env:
+          APP_REPO_VISIBILITY: ${{ github.event.repository.visibility }}
+          GOOGLE_AAS_TOKEN: ${{ secrets.GOOGLE_AAS_TOKEN }}
+          APP_CACHE_KEY: ${{ secrets.APP_CACHE_KEY }}
+        run: |
+          sudo -E env "PATH=$PATH" GITHUB_OUTPUT="$GITHUB_OUTPUT" node app/redroid/game.mjs open --data /mnt/redroid/data --file /mnt/redroid/data.bin
+          sudo rm -f /mnt/redroid/data.bin; sudo chown -R "$USER" app/redroid/.lab
+
+      - name: prep (account, checkin, Play installs the game, first start)
+        id: prep
+        if: steps.turn.outputs.ok == 'true' && steps.open.outputs.opened != 'true'
+        env:
+          GOOGLE_EMAIL: ${{ secrets.GOOGLE_EMAIL }}
+          GOOGLE_AAS_TOKEN: ${{ secrets.GOOGLE_AAS_TOKEN }}
+        run: node app/redroid/game.mjs prep --data /mnt/redroid/data --shots /mnt/redroid/shots/prep
+
+      - name: bench (start → the game's title)
+        if: steps.turn.outputs.ok == 'true' && (steps.prep.outputs.game_ok == 'true' || steps.open.outputs.opened == 'true') && (github.event_name == 'push' || inputs.bench)
+        run: node app/redroid/game.mjs bench --data /mnt/redroid/data --rounds 3 --shots /mnt/redroid/shots/bench
+
+      - name: app ${{ inputs.mode || 'run' }} on the redroid device
+        if: steps.turn.outputs.ok == 'true' && (steps.prep.outputs.game_ok == 'true' || steps.open.outputs.opened == 'true')
+        env:
+          ADDON: ${{ inputs.addon || 'jsonui_demo' }}
+          MODE: ${{ inputs.mode || 'run' }}
+        run: node app/redroid/game.mjs debug --data /mnt/redroid/data --addon "$ADDON" --mode "$MODE" --shots /mnt/redroid/shots/debug
+
+      - name: seal the prepared device (input keep)
+        id: seal
+        if: inputs.keep && steps.prep.outputs.game_ok == 'true' && github.event.repository.visibility == 'private'
+        env:
+          APP_REPO_VISIBILITY: ${{ github.event.repository.visibility }}
+          GOOGLE_AAS_TOKEN: ${{ secrets.GOOGLE_AAS_TOKEN }}
+          APP_CACHE_KEY: ${{ secrets.APP_CACHE_KEY }}
+        run: |
+          docker rm -f bdslab-redroid >/dev/null 2>&1 || true; sudo umount /mnt/redroid/data.run/merged 2>/dev/null || true
+          sudo -E env "PATH=$PATH" node app/redroid/game.mjs seal --data /mnt/redroid/data --file /mnt/redroid/data.bin
+          sudo chown -R "$USER" app/redroid/.lab
+          [ -f /mnt/redroid/data.bin ] && sudo chown "$USER" /mnt/redroid/data.bin && echo "ok=true" >> "$GITHUB_OUTPUT" || true
+
+      - name: save it
+        if: steps.seal.outputs.ok == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /mnt/redroid/data.bin
+          key: redroid-data-v1-${{ github.run_id }}
+
+      - name: report (app run's, in notices of its own)
+        if: always() && steps.turn.outputs.ok == 'true'
+        env:
+          REDROID_LAN_FILE: /mnt/redroid/lan.txt
+        run: node app/redroid/game.mjs report
+
+      - name: after
+        if: always()
+        run: |
+          docker logs --tail 30 bdslab-redroid 2>&1 | tail -n 30 || true
+          docker rm -f bdslab-redroid >/dev/null 2>&1 || true
+          mkdir -p out
+          cp app/redroid/.lab/game-*.json out/ 2>/dev/null || true
+          # (pictures of the game only, a few: never Play's pages, which show the account)
+          for d in prep bench debug; do for f in $(printf '%s\n' /mnt/redroid/shots/$d/launch-*.png | tail -n 4); do [ -f "$f" ] && cp "$f" "out/$d-$(basename "$f")"; done; done
+          # app run's report (no APK, no token: app guard checks the run folder before it writes it)
+          # shellcheck disable=SC2012  # (the newest run folder: ls -t sorts by time, the names are the lab's own)
+          r=$(ls -td app/runs/*/ 2>/dev/null | head -1); [ -n "$r" ] && { cp "$r/report.md" out/ 2>/dev/null; cp "$r/run.txt" out/ 2>/dev/null; for f in $(printf '%s\n' "$r"shots/*.png | tail -n 6); do [ -f "$f" ] && cp "$f" "out/run-$(basename "$f")"; done; }
+          ls -la out
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: redroid-game
+          path: out/
+          retention-days: 3
+          if-no-files-found: ignore

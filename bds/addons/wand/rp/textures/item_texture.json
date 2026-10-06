@@ -1,0 +1,9 @@
+{
+  "resource_pack_name": "lab",
+  "texture_name": "atlas.items",
+  "texture_data": {
+    "lab_wand": {
+      "textures": "textures/items/wand"
+    }
+  }
+}

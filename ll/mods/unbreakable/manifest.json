@@ -1,0 +1,12 @@
+{
+    "name": "unbreakable",
+    "entry": "unbreakable.js",
+    "type": "lse-quickjs",
+    "version": "0.1.0",
+    "description": "The item in hand never wears out (NBT tag Unbreakable), /nbt shows the held item's full NBT.",
+    "dependencies": [
+        {
+            "name": "legacy-script-engine-quickjs"
+        }
+    ]
+}

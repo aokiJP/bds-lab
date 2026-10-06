@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "endstone-abilities"
+version = "0.1.0"
+description = "/fly and /walkspeed <0.05..1>: flight and walking speed per player, no effects needed"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.entry-points."endstone"]
+abilities = "endstone_abilities:Abilities"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/endstone_abilities"]

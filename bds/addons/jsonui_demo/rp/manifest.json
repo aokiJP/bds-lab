@@ -1,0 +1,17 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "JSON UI Demo RP",
+    "description": "タイトルに印の付いたフォームを独自デザインで表示",
+    "uuid": "5e2ab18f-cedb-41f7-a609-5c6be838c77c",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 26, 52]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "c8e37634-8506-4682-9511-6dcf4cf678f2",
+      "version": [1, 0, 0]
+    }
+  ]
+}

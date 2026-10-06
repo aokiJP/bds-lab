@@ -1,0 +1,24 @@
+## walking into the zone is stopped at its edge
+@A join
+@A cmd /guard 5 -10 15 10
+~ zone 5,-10 .. 16,11
+tp A 2 -60 0.5
+@A look -90 0
+@A walk forward 40
+wait 500
+py round(p("A").location.x, 1) < 5
+= True
+## the zone survives a restart (saved in the plugin's folder)
+restart
+tp A 2 -60 0.5
+@A look -90 0
+@A walk forward 40
+wait 500
+py p("A").location.x < 5
+= True
+## off: free to walk in
+@A cmd /guard off
+@A walk forward 40
+wait 500
+py p("A").location.x > 5
+= True

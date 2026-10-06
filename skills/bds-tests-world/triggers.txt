@@ -1,0 +1,3 @@
+# words and phrases a person uses when this skill is needed, any language, one per line (skill route reads them; not installed)
+walk, move, goto, position, enter an area, fishing, fish, rod, bow, arrow, projectile, shoot, fight, attack a mob, kill, two players, apart, broadcast, spawn block
+歩く, 歩かせ, 移動, 位置, 釣り, 魚, 釣竿, 弓, 矢, 撃つ, 戦う, モブを倒す, 2人, 離れ, 全員に, ブロードキャスト

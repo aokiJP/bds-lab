@@ -1,0 +1,528 @@
+{
+  "about": "Requests as people write them (Japanese and English) and the skill that owns each (want[0]; others also acceptable). `node lab.mjs skill route --eval` scores the router on them; skill grade's `routed` and skill refine's gate use the result. dev cases may be read while improving triggers.txt and descriptions; held cases must not be (they measure whether a change generalises: never copy their words into a skill). want [] = no skill owns it (the router must name none: a skill that grabs it is loaded for nothing). Add a case when a real request was routed wrong.",
+  "cases": [
+    {
+      "q": "毎日ログインしたらエメラルドを1個配るアドオンを作って",
+      "want": [
+        "bds-recipes"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "/sethome と /home でホームに戻れるようにしたい",
+      "want": [
+        "bds-recipes"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "お金とショップの仕組みが欲しい",
+      "want": [
+        "bds-recipes",
+        "bds-forms"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "右クリックで火の玉を撃つ杖、クールダウン付き",
+      "want": [
+        "bds-recipes",
+        "bds-content"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "make a timed fishing contest with a sidebar of catches",
+      "want": [
+        "bds-recipes"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "world.afterEvents を読み込み時に触ってエラーになる",
+      "want": [
+        "bds-script-api"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "getScore throws Failed to resolve identity for a new player",
+      "want": [
+        "bds-script-api"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "runCommandAsync is not a function after updating",
+      "want": [
+        "bds-script-api",
+        "bds-fix-addon"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "再起動してもデータが消えないように保存したい dynamic property",
+      "want": [
+        "bds-script-api"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "beforeEvents の中でテレポートしたら restricted execution と出る",
+      "want": [
+        "bds-script-api"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "ActionFormData でメニューを出したい",
+      "want": [
+        "bds-forms"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "フォームを閉じるとスクリプトが落ちる",
+      "want": [
+        "bds-forms"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "ModalFormData で名前と数を入力させたい",
+      "want": [
+        "bds-forms"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "tests.txt の書き方がわからない",
+      "want": [
+        "bds-tests"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "my test expects a line but the regex never matches",
+      "want": [
+        "bds-tests",
+        "bds-debug"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "テストでプレイヤーを歩かせてエリアに入らせたい",
+      "want": [
+        "bds-tests-world"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "test that an arrow hits the mob when the player shoots a bow",
+      "want": [
+        "bds-tests-world"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "カスタムアイテムを追加したい",
+      "want": [
+        "bds-content"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "新しいブロックとレシピを作って",
+      "want": [
+        "bds-content"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "add a custom mob that drops gel",
+      "want": [
+        "bds-content",
+        "bds-recipes"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "このmcaddonがアップデートで動かなくなったので直して",
+      "want": [
+        "bds-fix-addon"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "here is a .mcpack someone made, add a feature to it",
+      "want": [
+        "bds-fix-addon"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "go が失敗するけど原因がわからない",
+      "want": [
+        "bds-debug"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "the event handler never seems to run, how do I see the events",
+      "want": [
+        "bds-debug"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "DONE になった後、テストが十分か確かめたい",
+      "want": [
+        "bds-quality"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "find code no test covers and bugs the tests miss",
+      "want": [
+        "bds-quality"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "完成したアドオンの渡し方と導入方法を説明して",
+      "want": [
+        "bds-deliver"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "how does my friend enable Beta APIs to install this",
+      "want": [
+        "bds-deliver"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "フォームの見た目をカスタムしたい JSON UI",
+      "want": [
+        "bds-json-ui"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "HUD に体力ゲージを出したい",
+      "want": [
+        "bds-json-ui"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "モブのモデルを作りたい geo.json",
+      "want": [
+        "bds-models"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "the texture shows on the wrong side of the model",
+      "want": [
+        "bds-models"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "HTTP サーバーを立ててゲーム外から操作したい",
+      "want": [
+        "endstone-plugin"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "per-player sidebar and boss bar on my server",
+      "want": [
+        "endstone-plugin"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "LeviLamina のサーバーで動く mod を作って",
+      "want": [
+        "levilamina-mod"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "a LegacyScriptEngine plugin with SQLite",
+      "want": [
+        "levilamina-mod"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "新しいスキルを1から作りたい",
+      "want": [
+        "skill-forge"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "improve a SKILL.md and measure whether it got better",
+      "want": [
+        "skill-forge"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "7日連続でログインしたらボーナスを増やす",
+      "want": [
+        "bds-recipes"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "teleport home command that remembers each player's spot",
+      "want": [
+        "bds-recipes"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "コインを貯めてアイテムを買えるようにして",
+      "want": [
+        "bds-recipes",
+        "bds-forms"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "スコアボードの値が新しいプレイヤーで例外を投げる",
+      "want": [
+        "bds-script-api"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "system.runTimeout と setTimeout の違いで動かない",
+      "want": [
+        "bds-script-api"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "a confirm dialog before deleting the player's home",
+      "want": [
+        "bds-forms"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "ボタンを押したら別のメニューに移るフォーム",
+      "want": [
+        "bds-forms"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "テストの期待値を正規表現で書くには",
+      "want": [
+        "bds-tests"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "two players standing far apart in a test, one must not hear the broadcast",
+      "want": [
+        "bds-tests-world"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "釣りをしたときに魚が釣れるかテストしたい",
+      "want": [
+        "bds-tests-world"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "食べられるアイテムで満腹度を回復させたい",
+      "want": [
+        "bds-content"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "a loot table so the boss drops diamonds",
+      "want": [
+        "bds-content"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "友達のアドオンがクラッシュするので修正してほしい",
+      "want": [
+        "bds-fix-addon"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "I want to see the local variables at the line where it throws",
+      "want": [
+        "bds-debug"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "テストが甘くないか、わざとバグを入れて確認",
+      "want": [
+        "bds-quality"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "write the hand-over message for the person in Japanese",
+      "want": [
+        "bds-deliver"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "サーバーフォームのボタンを画像付きのグリッドにしたい",
+      "want": [
+        "bds-json-ui"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "wings that flicker where two cubes overlap",
+      "want": [
+        "bds-models"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "ログイン時に特定のIPを拒否したい",
+      "want": [
+        "endstone-plugin"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "Python でプラグインを書いて SQL に記録",
+      "want": [
+        "endstone-plugin"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "mc.listen で動く経済 mod",
+      "want": [
+        "levilamina-mod"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "このスキルの説明文が弱いので採点して直したい",
+      "want": [
+        "skill-forge"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "明日の大阪の天気を教えて",
+      "want": [],
+      "set": "dev"
+    },
+    {
+      "q": "write a short poem about autumn leaves",
+      "want": [],
+      "set": "dev"
+    },
+    {
+      "q": "この英文を日本語に訳して: good morning",
+      "want": [],
+      "set": "dev"
+    },
+    {
+      "q": "カレーの作り方",
+      "want": [],
+      "set": "held"
+    },
+    {
+      "q": "what is the capital of Australia",
+      "want": [],
+      "set": "held"
+    },
+    {
+      "q": "履歴書の書き方を教えて",
+      "want": [],
+      "set": "held"
+    },
+    {
+      "q": "おすすめのラーメン屋を教えて",
+      "want": [],
+      "set": "held"
+    },
+    {
+      "q": "取引先へのメールの返信を書いて",
+      "want": [],
+      "set": "held"
+    },
+    {
+      "q": "add a countdown bar to the HUD while a contest runs",
+      "want": [
+        "bds-json-ui"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "ショップで買う前に確認ダイアログを出したい",
+      "want": [
+        "bds-forms",
+        "bds-recipes"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "プラグインで参加者のIPとpingを記録してファイルに書き出す",
+      "want": [
+        "endstone-plugin"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "Nothing like this exists yet: build a brand new kind of addon from scratch",
+      "want": [
+        "bds-from-scratch"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "見本に似たものがないので、ゼロから新しいアドオンを作って",
+      "want": [
+        "bds-from-scratch"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "give me a practice lesson with hidden tests to build from nothing",
+      "want": [
+        "bds-from-scratch"
+      ],
+      "set": "dev"
+    },
+    {
+      "q": "どの API を使えばいいか分からないので調べて試しながら一から作りたい",
+      "want": [
+        "bds-from-scratch"
+      ],
+      "set": "held"
+    },
+    {
+      "q": "I want to train on building addons from zero, one lesson at a time",
+      "want": [
+        "bds-from-scratch"
+      ],
+      "set": "held"
+    }
+  ]
+}

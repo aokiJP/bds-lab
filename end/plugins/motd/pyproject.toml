@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "endstone-motd"
+version = "0.1.0"
+description = "The server list line (MOTD) written live: players online and the time, per ping (ServerListPingEvent)"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.entry-points."endstone"]
+motd = "endstone_motd:Motd"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/endstone_motd"]

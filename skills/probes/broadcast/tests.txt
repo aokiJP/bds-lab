@@ -1,0 +1,15 @@
+## a message to everyone is one plain line; to one player it is @A
+@A join
+@B join
+scriptevent probe:say
+= hello everyone
+! @A hello everyone
+scriptevent probe:tell
+= @A hello A
+
+## a player's chat reaches every player, the sender too, as `@X chat <A> text` (not one plain line)
+@A chat hi there
+wait 1000
+~ ^@A chat <A> hi there$
+~ ^@B chat <A> hi there$
+!~ ^<A> hi there$

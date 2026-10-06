@@ -1,0 +1,66 @@
+#!/usr/bin/env node
+// A docker CLI stand-in for tests/offline.mjs (LAB_RUNTIME=docker LAB_DOCKER=<this>): no daemon, no image. `run` checks the
+// arguments the lab builds (same-path mounts, working dir inside a mount, host user, UDP ports on 127.0.0.1, host.docker.internal)
+// and runs the program on the host with only the -e variables added; `rm -f <name>` kills it. Every call is logged as one JSON
+// line to $FAKE_DOCKER_LOG so the test can assert what a real docker would have been asked.
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawn } = require('node:child_process');
+const STATE = process.env.FAKE_DOCKER_STATE || path.join(require('node:os').tmpdir(), 'fake-docker');
+fs.mkdirSync(STATE, { recursive: true });
+const argv = process.argv.slice(2);
+const log = (o) => { if (process.env.FAKE_DOCKER_LOG) fs.appendFileSync(process.env.FAKE_DOCKER_LOG, JSON.stringify(o) + '\n'); };
+const fail = (m) => { process.stderr.write('fake-docker: ' + m + '\n'); log({ error: m, argv }); process.exit(125); };
+
+const [cmd, ...rest] = argv;
+if (cmd === 'version') { process.stdout.write('27.0.0-fake\n'); process.exit(0); }
+if (cmd === 'image' && rest[0] === 'inspect') process.exit(fs.existsSync(path.join(STATE, 'img-' + rest[1].replace(/[^\w.-]/g, '_'))) ? 0 : 1);
+if (cmd === 'build') {
+  const t = rest[rest.indexOf('-t') + 1];
+  const df = fs.readFileSync(0, 'utf8');
+  if (!/^FROM --platform=linux\/amd64 /m.test(df)) fail('build: the Dockerfile must pin linux/amd64');
+  fs.writeFileSync(path.join(STATE, 'img-' + t.replace(/[^\w.-]/g, '_')), df);
+  log({ build: t, lines: df.split('\n').length });
+  process.exit(0);
+}
+if (cmd === 'rm') {
+  const name = rest.filter((a) => !a.startsWith('-'))[0];
+  const f = path.join(STATE, name + '.pid');
+  log({ rm: name });
+  if (fs.existsSync(f)) { const pid = Number(fs.readFileSync(f, 'utf8')); try { process.kill(-pid, 'SIGKILL'); } catch { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } fs.rmSync(f, { force: true }); }
+  process.exit(0);
+}
+if (cmd !== 'run') fail('unsupported: ' + cmd);
+
+const o = { env: {}, mounts: [], ports: [], flags: [] };
+let i = 0;
+const val = () => { const v = rest[++i]; if (v === undefined) fail('missing value after ' + rest[i - 1]); return v; };
+for (; i < rest.length; i++) {
+  const a = rest[i];
+  if (a === '--rm' || a === '--init' || a === '-i') { o.flags.push(a); continue; }
+  if (a === '--platform') { o.platform = val(); continue; }
+  if (a === '--name') { o.name = val(); continue; }
+  if (a === '--user') { o.user = val(); continue; }
+  if (a === '--add-host') { o.addHost = val(); continue; }
+  if (a === '-e') { const kv = val(), k = kv.indexOf('='); o.env[kv.slice(0, k)] = kv.slice(k + 1); continue; }
+  if (a === '-v') { o.mounts.push(val()); continue; }
+  if (a === '-w') { o.cwd = val(); continue; }
+  if (a === '-p') { o.ports.push(val()); continue; }
+  if (a.startsWith('-')) fail('unknown run flag ' + a);
+  break;
+}
+o.image = rest[i]; o.cmd = rest[i + 1]; o.args = rest.slice(i + 2);
+if (o.platform !== 'linux/amd64') fail('run without --platform linux/amd64');
+if (!o.image || !o.cmd) fail('run: no image or command');
+for (const m of o.mounts) { const [h, c] = m.split(':'); if (h !== c || !path.isAbsolute(h)) fail('mount not at the same absolute path: ' + m); }
+if (!o.cwd || !o.mounts.some((m) => o.cwd === m.split(':')[0] || o.cwd.startsWith(m.split(':')[0] + path.sep))) fail('working dir outside the mounts: ' + o.cwd);
+for (const p of o.ports) if (!/^127\.0\.0\.1:(\d+):\1\/(udp|tcp)$/.test(p)) fail('port not published as 127.0.0.1:N:N/udp|tcp: ' + p);
+if (o.addHost !== 'host.docker.internal:host-gateway') fail('no host.docker.internal');
+if (!o.env.HOME) fail('no HOME');
+log({ run: o });
+
+const child = spawn(o.cmd, o.args, { cwd: o.cwd, env: { ...process.env, ...o.env }, stdio: [o.flags.includes('-i') ? 'inherit' : 'ignore', 'inherit', 'inherit'], detached: true });
+if (o.name) fs.writeFileSync(path.join(STATE, o.name + '.pid'), String(child.pid));
+child.on('error', (e) => fail('exec ' + o.cmd + ': ' + e.message));
+child.on('exit', (code, sig) => { if (o.name) fs.rmSync(path.join(STATE, o.name + '.pid'), { force: true }); process.exit(code ?? (sig ? 137 : 0)); });
+for (const s of ['SIGTERM', 'SIGINT']) process.on(s, () => { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ } });

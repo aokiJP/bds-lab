@@ -1,0 +1,37 @@
+## the contest counts caught fish on the sidebar and pays the winner
+@A join
+@B join
+fill -8 -64 2 8 -61 24 water
+tp B 4 -60 0
+give A fishing_rod
+give B fishing_rod
+wait 500
+@A select fishing_rod
+@B select fishing_rod
+enchant A lure 3
+enchant B lure 3
+@A cmd /lab:fish 40
+~ Fishing contest started: 40 seconds
+js world.scoreboard.getObjectiveAtDisplaySlot('Sidebar').objective.id
+= fishcup
+@A fish_n 3 30
+js (() => { const o = world.scoreboard.getObjective('fishcup'), f = (q) => inv(p(q)).filter((s) => /:(cod|salmon|tropical_fish|pufferfish)\*/.test(s)).reduce((n, s) => n + Number(s.split('*')[1]), 0); return [o.getScore(p('A')) ?? 0, f('A')].join(' '); })()
+~ ^([1-9]\d*) \1$
+until Fishing contest over 60000
+~ Fishing contest over: A wins with [1-9]\d* fish \(3 diamonds\)
+wait 300
+js inv(p('A')).join(' ')
+~ minecraft:diamond\*3
+
+## fish that do not come from the rod do not count
+give A cod 5
+@A cmd /lab:fish 10
+give A cod 5
+until Fishing contest over 30000
+~ Fishing contest over: nobody caught a fish
+
+## only one contest at a time
+@A cmd /lab:fish 10
+@A cmd /lab:fish 10
+~ @A A contest is already running
+until Fishing contest over 30000

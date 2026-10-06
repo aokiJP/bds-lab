@@ -1,0 +1,20 @@
+{
+ "format_version": "1.26.0",
+ "minecraft:entity": {
+  "description": { "identifier": "probe:pinger", "is_spawnable": false, "is_summonable": true },
+  "components": {
+   "minecraft:physics": {},
+   "minecraft:collision_box": { "width": 0.6, "height": 0.6 },
+   "minecraft:health": { "value": 10 },
+   "minecraft:movement": { "value": 0.2 },
+   "minecraft:behavior.place_block": {
+    "affected_by_griefing_rule": false, "priority": 1, "chance": 1.0, "xz_range": 0, "y_range": 0,
+    "randomly_placeable_blocks": [{ "block": "probe:ghost" }],
+    "on_place": { "event": "probe:placed", "target": "self" }
+   }
+  },
+  "events": {
+   "probe:placed": { "trigger": { "event": "probe:ping", "target": "block" } }
+  }
+ }
+}

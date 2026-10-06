@@ -1,0 +1,33 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Coins",
+    "description": "Get a coin once a day",
+    "uuid": "64a92415-5185-4292-9376-81d1608be8f0",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 26, 52]
+  },
+  "modules": [
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "59f7e07f-7901-4103-b185-0913a7bbf9cc",
+      "version": [1, 0, 0],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.10.0"
+    },
+    {
+      "module_name": "@minecraft/server-ui",
+      "version": "2.2.0"
+    },
+    {
+      "uuid": "d3dc74c0-30ea-4070-a874-8d529cd8860d",
+      "version": [1, 0, 0]
+    }
+  ]
+}

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>nethernet-connect</title>
+<link rel="icon" href="data:,">
+<style>
+:root {
+  --bg: #f4f5f7; --panel: #ffffff; --panel-2: #eef0f3; --line: #dcdfe4; --text: #1b1f24; --muted: #5d6673;
+  --accent: #2f7d4f; --accent-ink: #ffffff; --accent-soft: #e3f1e8; --warn: #9a5b00; --warn-soft: #fbf0dc;
+  --bad: #b3261e; --bad-soft: #fbe6e4; --info: #2458a6; --info-soft: #e5edfa; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius: 10px; --shadow: 0 1px 2px rgba(0,0,0,.06), 0 2px 8px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418; --panel: #191d22; --panel-2: #20252c; --line: #2c333b; --text: #e7eaee; --muted: #9aa4b1;
+    --accent: #4fb77a; --accent-ink: #0c1a12; --accent-soft: #173524; --warn: #e3a748; --warn-soft: #3a2c14;
+    --bad: #ef7d74; --bad-soft: #3b1c1a; --info: #7aa7ec; --info-soft: #1a2638; --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 6px 12px; }
+button:hover:not(:disabled) { border-color: var(--muted); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.danger { color: var(--bad); }
+button.small { padding: 3px 9px; font-size: 13px; }
+input[type=text], select { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; min-width: 0; }
+.top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 12px; margin-right: auto; }
+.mark { width: 34px; height: 34px; border-radius: 8px; background:
+  linear-gradient(135deg, var(--accent) 0 50%, transparent 50%), var(--panel-2); box-shadow: inset 0 0 0 2px var(--accent); }
+.brand h1 { font-size: 17px; margin: 0; letter-spacing: .01em; }
+.brand p { margin: 0; color: var(--muted); font-size: 12.5px; }
+.net { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12.5px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
+.chip b { color: var(--text); font-weight: 600; }
+.chip.ok { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.chip.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.chip.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+.chip.info { background: var(--info-soft); color: var(--info); border-color: transparent; }
+main { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 20px; padding: 20px; max-width: 1400px; margin: 0 auto; }
+@media (max-width: 960px) { main { grid-template-columns: 1fr; padding: 16px; } .top { padding: 12px 16px; } }
+h2 { font-size: 14px; margin: 0; color: var(--muted); font-weight: 600; letter-spacing: .02em; }
+.section-head { display: flex; align-items: baseline; gap: 6px 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.section-head .sub { color: var(--muted); font-size: 12.5px; }
+.tabs { display: flex; gap: 4px; margin-left: auto; }
+.tabs button { border-radius: 999px; padding: 2px 10px; font-size: 13px; white-space: nowrap; }
+.tabs button[aria-pressed=true] { background: var(--text); color: var(--bg); border-color: var(--text); }
+.cards { display: grid; gap: 10px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 16px; display: grid; grid-template-columns: 44px minmax(0,1fr) auto; gap: 4px 14px; align-items: start; }
+.card.off { opacity: .62; }
+.icon { grid-row: span 3; width: 44px; height: 44px; border-radius: 9px; display: grid; place-items: center; font-weight: 700; font-size: 18px; color: var(--accent-ink); }
+.icon.world { background: linear-gradient(180deg, #6cc26f 0 42%, #8a5a36 42%); }
+.icon.server { background: linear-gradient(180deg, #56606c, #353c45); color: #cfd6de; }
+.icon.server::before { content: ""; width: 22px; height: 4px; border-radius: 2px; background: #8fe0a8; box-shadow: 0 8px 0 #cfd6de, 0 -8px 0 #cfd6de; }
+.title { font-weight: 650; font-size: 15.5px; overflow-wrap: anywhere; }
+.meta { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.badges { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 3px; }
+.act { grid-row: span 3; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.bar { width: 90px; height: 5px; border-radius: 3px; background: var(--panel-2); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); }
+.note { grid-column: 2 / 4; font-size: 12.5px; color: var(--warn); }
+.reason { grid-column: 2 / 4; font-size: 12.5px; color: var(--bad); }
+.empty { border: 1px dashed var(--line); border-radius: var(--radius); padding: 24px; text-align: center; color: var(--muted); background: var(--panel); }
+.side { display: grid; gap: 18px; align-content: start; }
+.box { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; box-shadow: var(--shadow); }
+.box + .box { margin-top: 8px; }
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.row .grow { flex: 1 1 auto; min-width: 0; }
+.steps { display: flex; gap: 3px; margin: 8px 0; }
+.steps span { flex: 1; height: 5px; border-radius: 3px; background: var(--panel-2); }
+.steps span.done { background: var(--accent); }
+.steps span.fail { background: var(--bad); }
+.steplabel { font-size: 12px; color: var(--muted); }
+pre.log { margin: 8px 0 0; max-height: 220px; overflow: auto; background: var(--panel-2); border-radius: 8px; padding: 8px 10px; font: 12px/1.45 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+pre.log .deny { color: var(--bad); } pre.log .chat { color: var(--info); } pre.log .phase { color: var(--accent); }
+form.chat { display: flex; gap: 6px; margin-top: 8px; }
+form.chat input { flex: 1; }
+details { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 12px; }
+details summary { cursor: pointer; color: var(--muted); font-size: 13.5px; }
+details pre { font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; }
+.banner { margin: 16px 20px 0; padding: 12px 16px; border-radius: var(--radius); background: var(--info-soft); color: var(--text); }
+.banner code, .code { font: 600 20px/1.2 var(--mono); letter-spacing: .08em; }
+dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text); padding: 0; width: min(480px, calc(100vw - 32px)); }
+dialog::backdrop { background: rgba(0,0,0,.45); }
+dialog form { padding: 18px 20px; display: grid; gap: 12px; }
+dialog h3 { margin: 0; font-size: 16px; }
+dialog label { display: grid; gap: 4px; font-size: 13.5px; color: var(--muted); }
+dialog .check { display: flex; gap: 8px; align-items: center; color: var(--text); font-size: 14px; }
+dialog .foot { display: flex; justify-content: flex-end; gap: 8px; }
+.muted { color: var(--muted); font-size: 13px; }
+.toast { position: fixed; right: 16px; bottom: 16px; max-width: min(420px, calc(100vw - 32px)); background: var(--text); color: var(--bg); padding: 10px 14px; border-radius: 10px; font-size: 14px; z-index: 10; box-shadow: 0 6px 24px rgba(0,0,0,.2); }
+.spin { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: s .8s linear infinite; vertical-align: -1px; }
+@keyframes s { to { transform: rotate(360deg); } }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="mark" aria-hidden="true"></span><div><h1>nethernet-connect</h1><p>自分のネットワークだけのワールド・サーバー一覧</p></div></div>
+  <div class="net" id="net"></div>
+  <button id="scan" class="primary">探す</button>
+</header>
+
+<div class="banner" id="token-box" hidden>
+  <div class="row"><span class="grow">この画面を使うにはトークンが必要です。起動時にコンソールに表示された URL から開くか、トークンを入力してください。</span></div>
+  <form class="row" id="token-form" style="margin-top:8px"><input type="text" id="token-input" class="grow" placeholder="トークン" autocomplete="off"><button class="primary">開く</button></form>
+</div>
+<div class="banner" id="auth-box" hidden></div>
+
+<main>
+  <section>
+    <div class="section-head">
+      <h2>ワールド・サーバー</h2><span class="sub" id="scanned"></span>
+      <div class="tabs" role="group" aria-label="種類">
+        <button data-f="all" aria-pressed="true">すべて</button><button data-f="world" aria-pressed="false">ワールド</button><button data-f="server" aria-pressed="false">サーバー</button>
+      </div>
+    </div>
+    <div id="endpoints" class="cards"></div>
+    <details id="denied" style="margin-top:12px" hidden><summary id="denied-sum"></summary><div id="denied-list" class="cards" style="margin-top:10px"></div></details>
+  </section>
+  <aside class="side">
+    <div><div class="section-head"><h2>接続中のボット</h2></div><div id="sessions"></div></div>
+    <div><div class="section-head"><h2>元に戻す</h2></div><div id="restore"></div></div>
+    <div><div class="section-head"><h2>ボットのアカウント</h2></div><div id="accounts"></div></div>
+    <details><summary>ネットワークの範囲</summary><pre id="scope"></pre></details>
+    <details><summary>ログ</summary><pre id="glog" class="log"></pre></details>
+  </aside>
+</main>
+
+<dialog id="join-dlg">
+  <form method="dialog" id="join-form">
+    <h3 id="join-title"></h3>
+    <div class="muted" id="join-sub"></div>
+    <label>方式<select id="j-transport"></select></label>
+    <label id="j-account-wrap">ボットのアカウント<select id="j-account"></select></label>
+    <div class="check"><input type="checkbox" id="j-observe"><label for="j-observe" style="display:inline;color:inherit">観戦モード（ボットは何も変えない）</label></div>
+    <div class="check"><input type="checkbox" id="j-chat"><label for="j-chat" style="display:inline;color:inherit">観戦中もチャットだけは送れる</label></div>
+    <label id="j-snap-wrap">接続前にスナップショットを取る<select id="j-snap"></select></label>
+    <div class="foot"><button value="cancel" formnovalidate>やめる</button><button class="primary" value="ok" id="j-ok">参加する</button></div>
+  </form>
+</dialog>
+
+<dialog id="confirm-dlg">
+  <form method="dialog"><h3 id="c-title"></h3><div id="c-body" class="muted"></div><div class="foot"><button value="cancel">やめる</button><button class="primary" value="ok" id="c-ok">実行</button></div></form>
+</dialog>
+
+<div class="toast" id="toast" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>

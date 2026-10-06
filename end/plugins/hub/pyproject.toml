@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "endstone-hub"
+version = "0.1.0"
+description = "Sends the player to another server (TransferPacket), a lobby network in one command"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.entry-points."endstone"]
+hub = "endstone_hub:Hub"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/endstone_hub"]

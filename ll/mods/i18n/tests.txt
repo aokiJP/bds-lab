@@ -1,0 +1,35 @@
+## each player is greeted in their own game language
+@A join locale=en_US
+~ ^@A Welcome, A!
+@B join locale=ja_JP
+~ ^@B ようこそ、Bさん！
+@C join locale=es_MX
+~ ^@C ¡Bienvenido, C!
+## /rules answers in the player's language
+@B cmd /rules
+~ ^@B .*ルール: 1\. やさしく
+@A cmd /rules
+~ ^@A .*Rules: 1\. Be kind
+## one /announce reaches everyone, each in their language
+announce restart
+~ announced restart to 3 players
+wait 1000
+~ ^@A .*The server restarts in 5 minutes
+~ ^@B .*5分後にサーバーを再起動します
+~ ^@C .*El servidor se reinicia en 5 minutos
+## an unknown language falls back to English
+@D join locale=xx_XX
+~ ^@D Welcome, D!
+## /lang overrides the game language and is remembered after a restart
+@A cmd /lang de
+~ ^@A .*Sprache: de
+restart
+@A cmd /rules
+~ ^@A .*Regeln: 1\. Sei nett
+@A cmd /lang auto
+~ ^@A .*Language: en
+## wrong input is refused politely
+@A cmd /lang zz
+~ languages: auto en ja
+announce nope
+~ keys: restart event

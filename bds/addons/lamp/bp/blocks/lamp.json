@@ -1,0 +1,27 @@
+{
+  "format_version": "1.21.90",
+  "minecraft:block": {
+    "description": {
+      "identifier": "lab:lamp",
+      "menu_category": {
+        "category": "construction"
+      },
+      "states": {
+        "lab:lit": [false, true]
+      }
+    },
+    "components": {
+      "minecraft:geometry": "minecraft:geometry.full_block",
+      "minecraft:material_instances": {
+        "*": {
+          "texture": "lab_lamp",
+          "render_method": "opaque"
+        }
+      },
+      "minecraft:destructible_by_mining": {
+        "seconds_to_destroy": 1
+      },
+      "lab:lamp": {}
+    }
+  }
+}

@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "endstone-report"
+version = "0.1.0"
+description = "Players report others with /report; operators review with /reports and mark them handled"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.entry-points."endstone"]
+report = "endstone_report:Report"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/endstone_report"]

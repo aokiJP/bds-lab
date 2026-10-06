@@ -1,0 +1,18 @@
+{
+  "format_version": "1.17",
+  "minecraft:npc_dialogue": {
+    "scenes": [
+      {
+        "scene_tag": "probe_scene",
+        "npc_name": "Probe",
+        "text": "pick one",
+        "on_open_commands": ["/tag @initiator add npc_open"],
+        "on_close_commands": ["/tag @initiator add npc_close"],
+        "buttons": [
+          { "name": "Tag", "commands": ["/tag @initiator add npc_b0"] },
+          { "name": "Custom", "commands": ["/probe:npc"] }
+        ]
+      }
+    ]
+  }
+}

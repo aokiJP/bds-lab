@@ -1,0 +1,33 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Shop",
+    "description": "A coin shop",
+    "uuid": "d3aeaf54-876d-4c5b-a232-629ed8bed1ea",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 26, 52]
+  },
+  "modules": [
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "be38d4f1-a208-49cc-82f7-6012321ce67f",
+      "version": [1, 0, 0],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.10.0"
+    },
+    {
+      "module_name": "@minecraft/server-ui",
+      "version": "2.2.0"
+    },
+    {
+      "uuid": "3c31877e-dc9a-4292-a61c-c9be74d94d7e",
+      "version": [1, 0, 0]
+    }
+  ]
+}

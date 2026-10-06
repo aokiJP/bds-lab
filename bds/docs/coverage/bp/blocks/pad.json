@@ -1,0 +1,40 @@
+{
+ "format_version": "1.26.0",
+ "minecraft:block": {
+  "description": {
+   "identifier": "probe:pad",
+   "menu_category": {
+    "category": "construction"
+   },
+   "states": {
+    "probe:on": [
+     false,
+     true
+    ]
+   }
+  },
+  "components": {
+   "minecraft:tick": {
+    "interval_range": [
+     10,
+     10
+    ],
+    "looping": false
+   },
+   "minecraft:geometry": "minecraft:geometry.full_block",
+   "minecraft:destructible_by_mining": {
+    "seconds_to_destroy": 0.2
+   },
+   "probe:hooks": {},
+   "minecraft:redstone_consumer": {
+    "min_power": 1
+   },
+   "minecraft:material_instances": {
+    "*": {
+     "texture": "stone",
+     "render_method": "opaque"
+    }
+   }
+  }
+ }
+}

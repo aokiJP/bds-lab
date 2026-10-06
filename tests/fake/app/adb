@@ -1,0 +1,324 @@
+#!/usr/bin/env node
+// a fake adb for tests/app-offline.mjs: one emulator with the Minecraft app, driven by a JSON state file (FAKE_APP_STATE).
+// Screens are flat colours per phase (home, title, world, form); the deep link makes the player join the fake server's log.
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const SF = process.env.FAKE_APP_STATE;
+// one fake process at a time reads, changes and writes the state (the fake emulator, adb and the fake BDS run at once:
+// without it an update could be lost). logcat only reads and runs for long: it takes no lock
+const LOCK = `${SF}.lock`;
+const takeLock = () => { for (let k = 0; k < 2000; k++) { try { fs.mkdirSync(LOCK); return; } catch { try { if (Date.now() - fs.statSync(LOCK).mtimeMs > 10_000) fs.rmSync(LOCK, { recursive: true, force: true }); } catch { /* gone */ } Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5); } } };
+if (process.argv[2] !== 'logcat' && process.argv[4] !== 'logcat') { takeLock(); process.on('exit', () => fs.rmSync(LOCK, { recursive: true, force: true })); }
+const S = JSON.parse(fs.readFileSync(SF, 'utf8'));
+// (written whole and renamed into place: a reader never sees half of it)
+const save = () => { const t = `${SF}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify(S)); fs.renameSync(t, SF); };
+const srv = (line) => { if (S.tail) fs.appendFileSync(S.tail, line + '\n'); };
+let a = process.argv.slice(2);
+if (a[0] === '-s') a = a.slice(2);
+// (logcat runs alongside everything else: it must not write the state back, or it undoes what happened meanwhile)
+if (a[0] !== 'logcat') { (S.calls ??= []).push(a.join(' ')); save(); }
+const say = (t) => process.stdout.write(t);
+const sh = a[0] === 'shell' ? a.slice(1).join(' ') : null;
+// the player goes in (the deep link, or the LAN world played from PLAY): FAKE_JOIN_PROMPTS = the game's own questions first
+// (an unknown external server: Continue; online play not rated: Proceed), answered by taps; FAKE_JOIN_REFUSE = it wants a
+// Microsoft sign-in instead; FAKE_REAL_JOIN = the lab's own real Bedrock client joins the real live BDS in the app's place
+// (tests the server side for real); FAKE_NOJOIN = connected, never in the world
+async function joined() {
+  // (FAKE_LAN_PROMPTS: the LAN way's questions, as on the CI device: online play not rated, then the server's packs — each
+  // goes on with the controller's A, its focus on the button that goes on)
+  S.phase = process.env.FAKE_JOIN_REFUSE ? 'join-refused' : process.env.FAKE_JOIN_PROMPTS ? 'join-external' : process.env.FAKE_LAN_PROMPTS ? 'join-rated' : 'world'; save();
+  if (process.env.FAKE_JOIN_PROMPTS || process.env.FAKE_JOIN_REFUSE || process.env.FAKE_LAN_PROMPTS) return;
+  if (process.env.FAKE_REAL_JOIN) { const { spawnSync } = await import('node:child_process'); spawnSync(process.execPath, [path.join(TOP, 'bds', 'lab.mjs'), 'do', '@Steve join'], { cwd: path.join(TOP, 'bds'), stdio: 'ignore' }); }
+  // (FAKE_LOADING=n: the server spawns the player while the app still loads for n more pictures, as on the CI device)
+  else if (!process.env.FAKE_NOJOIN) { if (process.env.FAKE_LOADING) { S.phase = 'loading'; S.loadLeft = Number(process.env.FAKE_LOADING); save(); } srv('Player connected: Steve, xuid: 2535400000000000'); srv('Player Spawned: Steve xuid: 2535400000000000, pfid: 1'); }
+  else srv('Player connected: Steve, xuid: 2535400000000000');
+}
+// a controller button (the shell's injected key, or the device's controller: the same screens move)
+async function padPress(k) {
+
+    S.pads = [...(S.pads ?? []), k]; save();
+    // FAKE_NEWTITLE: the new player's title first (Get started / More options): the first press turns the focus on (on Get
+    // started), DOWN moves it to More options, A there opens the classic menu; A on Get started opens its game mode screen
+    if (process.env.FAKE_NEWTITLE && S.phase === 'title' && !S.classic) {
+      if (k === 'DPAD_DOWN') S.newDowns = (S.newDowns ?? 0) + 1;
+      else if (k === 'BUTTON_A') { if ((S.newDowns ?? 0) >= 2) S.classic = true; else S.phase = 'gamemode'; S.newDowns = 0; }
+      save();
+    }
+    // FAKE_SIGNIN: the menu's Sign In (bottom left) is LEFT of the focused Play; A there opens the Xbox library's WebView
+    else if (process.env.FAKE_SIGNIN && S.phase === 'title' && k === 'DPAD_LEFT' && S.titleFocus) { S.titleFocus = 'signin'; save(); }
+    else if (process.env.FAKE_SIGNIN && S.phase === 'title' && k === 'BUTTON_A' && S.titleFocus === 'signin') { S.phase = 'ms-start'; S.titleFocus = null; save(); }
+    // (the classic title: the first move turns the focus on, on its Play — drawn green — and A opens PLAY)
+    else if (k === 'DPAD_UP' && S.phase === 'title') { S.titleFocus = 'play'; save(); }
+    else if (k === 'BUTTON_A' && ['title', 'home'].includes(S.phase) && S.launched) { S.phase = process.env.FAKE_LAN_NONE ? 'lanempty' : 'lanlist'; S.titleFocus = null; save(); }
+    // FAKE_OWN_WORLD: the player's own world listed first — the first DOWN focuses its card (the hint "A Play" all the same;
+    // A there opens it), the next the LAN world's
+    else if (k === 'DPAD_DOWN' && S.phase === 'lanlist') { S.phase = process.env.FAKE_OWN_WORLD ? 'lanown' : 'lanfocus'; save(); }
+    else if (k === 'DPAD_DOWN' && S.phase === 'lanown') { S.phase = 'lanfocus'; save(); }
+    else if (k === 'BUTTON_A' && S.phase === 'lanown') { S.phase = 'ownworld'; S.openedOwn = true; save(); }
+    else if (k === 'BUTTON_A' && S.phase === 'lanfocus') { S.uri = 'lan'; save(); await joined(); }
+    else if (k === 'BUTTON_A' && S.phase === 'join-rated' && process.env.FAKE_LAN_PROMPTS) { S.phase = 'join-packs'; save(); }
+    else if (k === 'BUTTON_A' && S.phase === 'join-packs') { S.phase = 'world'; save(); srv('Player connected: , xuid: '); srv('Player Spawned: Alex xuid: , pfid: '); }
+    else if (k === 'BUTTON_B' && ['lanlist', 'lanfocus', 'lanempty', 'join-refused'].includes(S.phase)) { S.phase = 'title'; save(); }
+  }
+const COLORS = { loading: [24, 24, 24], 'join-packs': [58, 58, 58], lanown: [52, 52, 62], ownworld: [120, 160, 220], 'ms-start': [16, 124, 16], 'ms-email': [250, 250, 250], 'ms-password': [248, 250, 250], 'ms-code': [250, 248, 250], 'ms-approve': [250, 250, 248], 'ms-stay': [246, 246, 246], 'ms-error': [250, 244, 244], home: [40, 40, 40], title: [60, 120, 200], gamemode: [64, 64, 64], lanlist: [52, 52, 60], lanfocus: [52, 52, 64], lanempty: [52, 52, 56], welcome: [70, 60, 50], 'join-external': [50, 50, 50], 'join-rated': [55, 55, 55], 'join-refused': [45, 45, 45], world: [90, 160, 80], form: [230, 180, 40], anr: [235, 235, 235], pause: [70, 70, 90], screen: [150, 110, 60], play: [255, 255, 255], paywall: [248, 248, 248] };
+// the game's license (PairIP asks the Play Store at each start): FAKE_PAIRIP_UNTIL_PLAY = Play's paywall until Play itself
+// installed or updated the game (its page's button tapped); FAKE_PAIRIP_ALWAYS = always; FAKE_NOT_OWNED = Play's page shows a price
+const paywalled = () => Boolean(process.env.FAKE_PAIRIP_ALWAYS || (process.env.FAKE_PAIRIP_UNTIL_PLAY && !S.byPlay));
+const PLAY_BTN = [100, 500, 400, 580];   // the page's main button on the fake screen
+const playLabel = () => (process.env.FAKE_NOT_OWNED ? '$6.99' : S.installed ? 'Update' : 'Install');
+// FAKE_ANR=n: Android's "Process system isn't responding" dialog over the game, n times in a row from the launch (each
+// answer with "Wait" brings the next); FAKE_NO_UIAUTOMATOR: the layout cannot be read (a busy device), only keys work
+const anrUp = () => (S.anr ?? 0) > 0;
+const WAIT = [700, 560, 1640, 640];   // aerr_wait's bounds on the fake screen
+const MAYBE_LATER = [38, 26, 62, 34];   // the welcome screen's Maybe later on the fake picture (64x36; tests/fake/app/tesseract)
+// FAKE_EMU_POWER=1: the device is up only between an emulator start (this script run as the emulator, `-avd …`) and
+// `emu kill`; a start with `-snapshot <name>` comes back with the game as it was saved (`emu avd snapshot save <name>`
+// writes the snapshot folder into the AVD, like the real one). Without it the device is always up (the older tests)
+// (the power and a start's effect live in files of their own: the emulator starts detached while the lab's next adb calls
+// already run, and each of those writes the whole state back — a flag in the state could be lost between them)
+const POWER = `${SF}.power`, BOOT = `${SF}.boot`;
+const powered = () => !process.env.FAKE_EMU_POWER || (fs.existsSync(POWER) && fs.readFileSync(POWER, 'utf8') === 'on');
+if (fs.existsSync(BOOT)) { try { Object.assign(S, JSON.parse(fs.readFileSync(BOOT, 'utf8'))); fs.rmSync(BOOT, { force: true }); save(); } catch { /* another call took it */ } }
+if (a[0] === '-avd') {
+  const snap = a.includes('-snapshot') ? a[a.indexOf('-snapshot') + 1] : null;
+  const boot = snap && S.snapshots?.[snap] ? { ...S.snapshots[snap], restored: snap } : { restored: null, launched: false, phase: 'home', ...(a.includes('-wipe-data') ? { installed: false, sql: null } : {}) };
+  fs.writeFileSync(BOOT, JSON.stringify({ ...boot, emuArgs: a.join(' ') }));
+  fs.writeFileSync(POWER, 'on');
+  process.exit(0);
+}
+if (a[0] === 'emu' && a[1] === 'kill') { fs.writeFileSync(POWER, 'off'); process.exit(0); }
+if (a[0] === 'emu' && a.slice(1, 4).join(' ') === 'avd snapshot save') {
+  const name = a[4], home = process.env.ANDROID_AVD_HOME || path.join(process.env.HOME ?? '', '.android', 'avd');
+  fs.mkdirSync(path.join(home, `${process.env.APP_AVD || 'bdslab_app'}.avd`, 'snapshots', name), { recursive: true });
+  fs.writeFileSync(path.join(home, `${process.env.APP_AVD || 'bdslab_app'}.avd`, 'snapshots', name, 'snapshot.pb'), 'fake');
+  (S.snapshots ??= {})[name] = { launched: S.launched, phase: S.phase, installed: S.installed };
+  save(); say('OK\n'); process.exit(0);
+}
+// FAKE_EMU_SHOT: the emulator's console draws the same picture from the host side (screenrecord screenshot <dir>)
+if (a[0] === 'emu' && a[1] === 'screenrecord' && a[2] === 'screenshot' && process.env.FAKE_EMU_SHOT) { S.emuShots = (S.emuShots ?? 0) + 1; save(); fs.writeFileSync(path.join(a[3], 'Screenshot_1.png'), await shotPng()); process.exit(0); }
+if (a[0] === 'start-server' || a[0] === 'root' || a[0] === 'wait-for-device' || a[0] === 'emu') process.exit(0);
+if (a[0] === 'get-state') { if (process.env.FAKE_UNAUTHORIZED) { process.stderr.write('error: device unauthorized.\n'); process.exit(1); } if (!powered()) { process.stderr.write('error: device \'emulator-5554\' not found\n'); process.exit(1); } say('device\n'); process.exit(0); }
+// `adb keygen <file>`: a key pair (the lab makes one before an emulator starts)
+if (a[0] === 'keygen') { fs.writeFileSync(a[1], 'PRIVATE'); fs.writeFileSync(a[1] + '.pub', 'PUBLIC fake@host'); process.exit(0); }
+// plan B (app account): remount / push / reboot for Play Store as a system app
+if (a[0] === 'remount') { if (process.env.FAKE_NOREMOUNT) { say('remount of /system failed: not running with -writable-system\n'); process.exit(1); } say('Remount succeeded\n'); process.exit(0); }
+// (the player's own world: its files kept in the state, as pushed)
+if (a[0] === 'push' && a[2] === '/data/local/tmp/lab-world') { S.worldPushed = Object.fromEntries(fs.readdirSync(a[1]).map((f) => [f, fs.readFileSync(path.join(a[1], f)).toString('base64')])); save(); process.exit(0); }
+if (a[0] === 'push') { if (/\/lib$/.test(a[1] ?? '') && /priv-app/.test(a[2] ?? '')) S.privLib = true; if (/priv-app/.test(a[2] ?? '')) S.privApk = true; if (/privapp-permissions/.test(a[2] ?? '')) S.privXml = fs.readFileSync(a[1], 'utf8'); save(); process.exit(0); }
+if (a[0] === 'reboot') { if (S.privApk && S.privXml) S.vending = 'system'; S.system = 'running'; save(); process.exit(0); }
+if (a[0] === 'install-multiple') { if (process.env.FAKE_NO_INSTALLER && a.includes('-i')) { say('Failure [INSTALL_FAILED_INVALID_INSTALLER: no such installer]\n'); process.exit(1); } S.installed = true; save(); say('Success\n'); process.exit(0); }
+// the game's content log (FAKE_CONTENT_LOG: a file on this machine standing in for the one on the device)
+if (a[0] === 'exec-out' && /^tail -c \+\d+ /.test(a[1] ?? '')) {
+  const from = Number(/^tail -c \+(\d+)/.exec(a[1])[1]) - 1;
+  if (process.env.FAKE_CONTENT_LOG && fs.existsSync(process.env.FAKE_CONTENT_LOG)) process.stdout.write(fs.readFileSync(process.env.FAKE_CONTENT_LOG).subarray(from));
+  process.exit(0);
+}
+// the screen as a PNG: a flat colour per phase (FAKE_BLACK: the game runs but draws nothing — its title is a black screen)
+async function shotPng() {
+  const { pngEncode } = await import(pathToFileURL(path.join(TOP, 'common', 'extra.mjs')).href);   // (only here: logcat must start at once)
+  const black = process.env.FAKE_BLACK && S.phase === 'title';
+  const [r, g, b] = black ? [0, 0, 0] : COLORS[anrUp() ? 'anr' : S.phase ?? 'home'], w = 64, h = 36, data = Buffer.alloc(w * h * 4);
+  for (let i = 0; i < w * h; i++) { data[i * 4] = r; data[i * 4 + 1] = g; data[i * 4 + 2] = black ? 0 : (b + (i % 7 === 0 ? 20 : 0)) & 255; data[i * 4 + 3] = 255; }
+  if (S.hud && !anrUp()) for (let i = 0; i < w * 8; i++) { data[i * 4] = 250; data[i * 4 + 1] = 250; data[i * 4 + 2] = 250; }   // a title across the top
+  // FAKE_NEWTITLE: the classic menu looks other than the new player's title (a band of buttons)
+  if (S.phase === 'title' && S.classic && !anrUp()) for (let y = 28; y <= 33; y++) for (let x = 20; x <= 44; x++) { const o = (y * w + x) * 4; data[o] = 130; data[o + 1] = 130; data[o + 2] = 130; }
+  // the classic title's Play button with the gamepad's focus: green around the word (tests/fake/app/tesseract: Play at 28,12 8x3)
+  if (S.phase === 'title' && S.titleFocus === 'play' && !anrUp()) for (let y = 8; y <= 19; y++) for (let x = 26; x <= 37; x++) { const o = (y * w + x) * 4; data[o] = 60; data[o + 1] = 133; data[o + 2] = 39; }
+  // the focused card on PLAY: a white ring round it (tests/fake/app/tesseract: the LAN card's words at 4..31,28, the own
+  // world's at 40..50,28)
+  const ring = (x0, x1) => { for (const y of [25, 33]) for (let x = x0; x <= x1; x++) { const o = (y * w + x) * 4; data[o] = 250; data[o + 1] = 250; data[o + 2] = 250; } };
+  if (S.phase === 'lanown' && !anrUp()) ring(39, 51);
+  if (S.phase === 'lanfocus' && !anrUp()) ring(3, 32);
+  // FAKE_SIGNIN: the menu's Sign In focused (green around it: tests/fake/app/tesseract Sign at 2,26 5x3); signed in, a
+  // profile's picture where it was
+  if (S.phase === 'title' && S.titleFocus === 'signin' && !anrUp()) for (let y = 22; y <= 32; y++) for (let x = 0; x <= 12; x++) { const o = (y * w + x) * 4; data[o] = 60; data[o + 1] = 133; data[o + 2] = 39; }
+  if (S.phase === 'title' && S.signedIn && !anrUp()) for (let y = 24; y <= 30; y++) for (let x = 2; x <= 8; x++) { const o = (y * w + x) * 4; data[o] = 200; data[o + 1] = 90; data[o + 2] = 200; }
+  // FAKE_MAGENTA: an opened screen shows a texture the client could not find (the magenta and black checkerboard)
+  if (process.env.FAKE_MAGENTA && S.phase === 'screen') for (let y = 10; y < 20; y++) for (let x = 10; x < 20; x++) { const o = (y * w + x) * 4, on = (x + y) % 2 === 0; data[o] = on ? 248 : 0; data[o + 1] = 0; data[o + 2] = on ? 248 : 0; }
+  return pngEncode({ w, h, data });
+}
+if (a[0] === 'exec-out' && a[1] === 'screencap') {
+  S.adbShots = (S.adbShots ?? 0) + 1;
+  // (FAKE_SIGNIN=approve: the person approves on their phone after the page was looked at three times)
+  if (S.phase === 'ms-approve' && (S.approveLooks = (S.approveLooks ?? 0) + 1) > 3) S.phase = 'ms-stay';
+  if (S.phase === 'loading' && --S.loadLeft < 0) S.phase = 'world';
+  save(); process.stdout.write(await shotPng()); process.exit(0); }
+if (a[0] === 'logcat') {
+  if (a.includes('-c')) process.exit(0);
+  say('09-30 10:00:00.000  4242  4242 I MinecraftPE: starting\n09-30 10:00:01.000  4242  4242 I MinecraftPE: Connecting\n');
+  if (process.env.FAKE_PAIRIP) say('09-30 10:00:02.000   524  1848 I ActivityTaskManager: START u0 {flg=0x10010000 cmp=com.mojang.minecraftpe/com.pairip.licensecheck.LicenseActivity (has extras)}\n');
+  setInterval(() => {}, 1000);
+} else if (a[0] === 'pull') {
+  // the Google Play image: its Play Store APK (FAKE_PLAYSTORE_APK)
+  if (/Phonesky\.apk$/.test(a[1] ?? '') && process.env.FAKE_PLAYSTORE_APK) { fs.copyFileSync(process.env.FAKE_PLAYSTORE_APK, a[2]); process.exit(0); }
+  if (a[1] === '/product/priv-app/Phonesky/lib' && process.env.FAKE_PLAYSTORE_LIB) { fs.mkdirSync(path.join(a[2], 'lib', 'x86_64'), { recursive: true }); fs.writeFileSync(path.join(a[2], 'lib', 'x86_64', 'libfake.so'), 'x'); process.exit(0); }
+  process.exit(1);
+}
+else if (sh !== null) {
+  // the account databases: sqlite3 gets its SQL on stdin (kept in the state so the test can look; the token there is a fake)
+  if (/^sqlite3 /.test(sh)) {
+    const db = sh.split(' ')[1], sql = fs.readFileSync(0, 'utf8');
+    // what the lab reads about the license (lib/license.mjs): canned answers, the way sqlite3 prints them
+    if (/^\s*(SELECT|PRAGMA)\b/i.test(sql)) {
+      if (/gservices\.db$/.test(db)) say('あり\n');
+      else if (/accounts_ce\.db$/.test(db)) say('3 個: SID, LSID, oauth2:https://www.googleapis.com/auth/googleplay\n');
+      else if (/library\.db$/.test(db)) say(/doc_id=/.test(sql) ? (process.env.FAKE_NOT_OWNED ? '無し\n' : 'library 3 type 1 offer 1\n') : '12 件（アプリ 3）、アカウント 1\n');
+      else if (/localappstate\.db$/.test(db)) say(/^\s*PRAGMA/i.test(sql) ? '0|package_name|TEXT|0||1\n1|auto_update|INTEGER|0||0\n2|installer_state|INTEGER|0||0\n3|account|TEXT|0||0\n' : `auto_update=1 installer_state=${S.byPlay ? 0 : 1}\n`);
+      process.exit(0);
+    }
+    if (S.system !== 'stopped') { say('Error: database is locked\n'); process.exit(1); }
+    (S.sql ??= {})[db] = sql; save();
+    if (/accounts_de/.test(db)) say('7\n');
+    process.exit(0);
+  }
+  if (/^id -u$/.test(sh)) { say(process.env.FAKE_NOROOT ? '2000\n' : '0\n'); process.exit(0); }
+  // (1.26: the content log in the app's external folder; FAKE_CONTENT_LOG_INTERNAL: the private one, as older versions)
+  if (/^ls -t \/sdcard\/Android\/data\/com\.mojang\.minecraftpe\/files\/games\/com\.mojang\/logs\/\*\.txt /.test(sh)) { if (process.env.FAKE_CONTENT_LOG) say(`${process.env.FAKE_CONTENT_LOG_INTERNAL ? '/data/data/com.mojang.minecraftpe/games/com.mojang/logs' : '/sdcard/Android/data/com.mojang.minecraftpe/files/games/com.mojang/logs'}/ContentLog__lab.txt\n`); process.exit(0); }
+  if (sh === 'nproc') { say('2\n'); process.exit(0); }
+  // the game's options.txt (FAKE_OPTIONS: what the game wrote on its first start); written back through `cat >`
+  if (/^cat \/data\/data\/com\.mojang\.minecraftpe\/games\/com\.mojang\/minecraftpe\/options\.txt$/.test(sh)) { say(S.options ?? (process.env.FAKE_OPTIONS ?? '').replace(/\\n/g, '\n')); process.exit(0); }
+  if (/^cat > \/data\/data\/com\.mojang\.minecraftpe\/games\/com\.mojang\/minecraftpe\/options\.txt$/.test(sh)) { S.options = fs.readFileSync(0, 'utf8'); save(); process.exit(0); }
+  // the screen's shape (lib/scenario.mjs size / density / cutout): kept in the state for the test to look at
+  if (/^wm (size|density) /.test(sh) || /^cmd overlay /.test(sh)) { (S.shape ??= []).push(sh); save(); process.exit(0); }
+  if (/^cat \/data\/data\/com\.google\.android\.gms\/shared_prefs\/Checkin\.xml/.test(sh)) { say('name="CheckinTask_lastCheckinSuccessTime" value="1790000000000"\n'); process.exit(0); }
+  // Play's page for the game (market://details): its button, Play installing or updating the game when it is tapped
+  if (/^am start -a android\.intent\.action\.VIEW -d '?market:\/\/details\?id=com\.mojang\.minecraftpe/.test(sh)) { S.phase = 'play'; S.launched = false; save(); say('Starting: Intent { act=android.intent.action.VIEW }\n'); process.exit(0); }
+  if (/^input tap \d+ \d+$/.test(sh) && S.phase === 'play') {
+    const [x, y] = sh.split(' ').slice(2).map(Number);
+    // FAKE_PLAY_FAIL=n: the first n downloads fail (a slow line: the page offers its button again)
+    if (x >= PLAY_BTN[0] && x <= PLAY_BTN[2] && y >= PLAY_BTN[1] && y <= PLAY_BTN[3] && /^(Update|Install)$/.test(playLabel())) {
+      if ((S.playFailed ?? 0) < Number(process.env.FAKE_PLAY_FAIL || 0)) S.playFailed = (S.playFailed ?? 0) + 1; else { S.installed = true; S.byPlay = true; }
+      save();
+    }
+    process.exit(0);
+  }
+  if (/^am force-stop com\.mojang\.minecraftpe$/.test(sh)) { S.launched = false; if (S.phase === 'paywall') S.phase = 'home'; save(); process.exit(0); }
+  if (/^input keyevent 3$/.test(sh)) { if (['play', 'paywall'].includes(S.phase)) { S.phase = 'home'; S.launched = false; save(); } process.exit(0); }
+  if (sh === 'cat /proc/loadavg') { say('0.42 0.80 1.10 1/300 4242\n'); process.exit(0); }
+  if (/^getevent -pl/.test(sh)) { say('add device 1: /dev/input/event3\n  name:     "qwerty2"\n  events:\n    KEY (0001): KEY_ESC KEY_W KEY_A KEY_S KEY_D KEY_SPACE\n'); process.exit(0); }
+  if (/^sendevent /.test(sh)) { (S.held ??= []).push(sh); save(); process.exit(0); }
+  if (/^command -v sqlite3$/.test(sh)) process.exit(process.env.FAKE_NOSQLITE ? 1 : 0);
+  if (/^ls \/data\/system_(de|ce)\/0\/accounts_/.test(sh)) process.exit(0);
+  if (sh === 'ls -d /sdcard/Android') process.exit(process.env.FAKE_NOSTORAGE ? 1 : 0);
+  if (sh === 'ls -d /product/priv-app/Phonesky/lib') process.exit(process.env.FAKE_PLAYSTORE_LIB ? 0 : 1);
+  if (/^pm disable-user --user 0 /.test(sh)) { say(`Package ${sh.split(' ').pop()} new state: disabled-user\n`); process.exit(0); }
+  if (/^settings put /.test(sh)) { (S.settings ??= []).push(sh.replace(/^settings put /, '')); save(); process.exit(0); }
+  if (/^cmd jobscheduler /.test(sh)) process.exit(0);
+  if (sh === 'pm path com.android.vending') { if (process.env.FAKE_PLAYSTORE_APK) say('package:/product/priv-app/Phonesky/Phonesky.apk\n'); process.exit(0); }
+  // Google APIs images: LicenseChecker under the Play Store's name (state vending: 'stub')
+  if (sh === 'ls -d /product/app/LicenseChecker') process.exit(S.vending === 'stub' ? 0 : 1);
+  if (sh === 'rm -rf /product/app/LicenseChecker') { if (S.vending === 'stub') S.vending = null; S.stubRemoved = true; save(); process.exit(0); }
+  if (sh === 'stop') { S.system = 'stopped'; save(); process.exit(0); }
+  if (sh === 'start') { S.system = 'running'; save(); process.exit(0); }
+  if (sh === 'dumpsys account') {
+    const ce = S.sql?.['/data/system_ce/0/accounts_ce.db'] ?? '', name = /VALUES \(\d+, '([^']+)', 'com\.google'/.exec(ce)?.[1];
+    say(`User UserInfo{0:Owner:c13}:\n  Accounts: ${name && S.system === 'running' && !process.env.FAKE_ACCOUNT_IGNORED ? 1 : 0}\n${name && S.system === 'running' && !process.env.FAKE_ACCOUNT_IGNORED ? `    Account {name=${name}, type=com.google}\n` : ''}`);
+    process.exit(0);
+  }
+  if (/^dumpsys package com\.android\.vending/.test(sh)) {
+    if (S.vending === 'system') say('    codePath=/system/priv-app/Phonesky\n    versionName=41.2.21-31\n');
+    else if (S.vending === 'stub') say('    codePath=/product/app/LicenseChecker\n    versionName=1.0\n');
+    else if (S.vending === 'user') say('    codePath=/data/app/~~x/com.android.vending-1\n    versionName=41.2.21-31\n    requested permissions:\n      android.permission.INTERNET\n      android.permission.INSTALL_PACKAGES\n      android.permission.DELETE_PACKAGES\n    install permissions:\n      android.permission.INTERNET: granted=true\n');
+    process.exit(0);
+  }
+  if (/^pm install -r \/data\/local\/tmp\/vending\.apk/.test(sh)) { S.vending = 'user'; save(); say('Success\n'); process.exit(0); }
+  if (/^pm uninstall com\.android\.vending/.test(sh)) { S.vending = null; save(); say('Success\n'); process.exit(0); }
+  if (/^getprop sys\.boot_completed/.test(sh)) say(powered() ? '1\n' : '');
+  else if (/^getprop ro\.product\.cpu\.abilist/.test(sh)) say('x86_64,x86,arm64-v8a,armeabi-v7a,armeabi\n');
+  else if (/^getprop ro\.product\.model/.test(sh)) say('sdk_gphone_x86_64\n');
+  else if (/^getprop ro\.build\.version\.release/.test(sh)) say('11\n');
+  // (the properties set on the device — the framework restarted with them: lib/android.mjs frameworkWith — and read back;
+  // a ro. one only while it was unset)
+  else if (/(^|; )setprop \S+ \S+/.test(sh)) { for (const m of sh.matchAll(/setprop (\S+) ([^\s;]+)/g)) if (!(m[1].startsWith('ro.') && S.props?.[m[1]])) (S.props ??= {})[m[1]] = m[2]; save(); }
+  else if (/^getprop [\w.]+$/.test(sh)) say(`${S.props?.[sh.split(' ')[1]] ?? ''}\n`);
+  // (who installed it: adb install -i com.android.vending names Play as the installer, but the shell started it; Play itself
+  // starts its own installs)
+  else if (/^dumpsys package/.test(sh)) say(!S.installed ? '' : S.byPlay ? '    primaryCpuAbi=x86_64\n    versionCode=912605300 minSdk=24\n    versionName=1.26.52.04\n    firstInstallTime=2026-10-03 12:00:00\n    installerPackageName=com.android.vending\n    initiatingPackageName=com.android.vending\n'
+    : '    primaryCpuAbi=arm64-v8a\n    versionCode=912605203 minSdk=24\n    versionName=1.26.52.03\n    firstInstallTime=2026-10-03 12:00:00\n    installerPackageName=com.android.vending\n    initiatingPackageName=com.android.shell\n');
+  // FAKE_WELCOME: the game's first start shows "WELCOME TO MINECRAFT!" (Sign in now / Maybe later) until Maybe later is tapped
+  else if (/^monkey -p com\.mojang\.minecraftpe/.test(sh)) { S.launched = true; S.phase = paywalled() ? 'paywall' : process.env.FAKE_WELCOME && !S.welcomed ? 'welcome' : 'title'; S.anr = Number(process.env.FAKE_ANR) || 0; save(); say('Events injected: 1\n'); }
+  // the focused window: the dialog while it is up, else the game (or the home screen)
+  // (the whole dump, not its displays section, starts with the state saved at the last ANR: the launcher, stale — as on
+  // Android 14, where it misled the lab for 2 hours after "Pixel Launcher isn't responding")
+  else if (/^dumpsys window (displays )?\| grep -E mCurrentFocus= \|\| true$/.test(sh)) say(`${!/displays/.test(sh) && S.waited ? '    mCurrentFocus=Window{f6a381f u0 com.android.launcher3/com.android.launcher3.Launcher}\n' : ''}  mCurrentFocus=Window{1a2b3c u0 ${anrUp() ? 'Application Not Responding: system' : S.phase === 'paywall' ? 'com.android.vending/com.google.android.finsky.activities.MainActivityPrivate' : S.phase === 'play' ? 'com.android.vending/com.google.android.finsky.activities.MainActivity' : /^ms-/.test(S.phase ?? '') ? 'com.mojang.minecraftpe/com.microsoft.xal.browser.WebKitWebViewController' : S.launched ? 'com.mojang.minecraftpe/com.mojang.minecraftpe.MainActivity' : 'com.android.launcher3/com.android.launcher3.Launcher'}}\n`);
+  else if (/^uiautomator dump /.test(sh)) {
+    if (process.env.FAKE_NO_UIAUTOMATOR) say('ERROR: could not get idle state.\n');
+    else if (S.phase === 'play' && !anrUp()) say(`<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="1"><node index="0" text="Minecraft" class="android.widget.TextView" package="com.android.vending" bounds="[100,200][600,260]" /><node index="1" text="Mojang" class="android.widget.TextView" package="com.android.vending" bounds="[100,270][400,310]" /><node index="2" text="" content-desc="${playLabel()}" clickable="true" enabled="true" class="android.view.View" package="com.android.vending" bounds="[${PLAY_BTN[0]},${PLAY_BTN[1]}][${PLAY_BTN[2]},${PLAY_BTN[3]}]" />${S.installed ? '<node index="3" text="Uninstall" clickable="true" class="android.view.View" package="com.android.vending" bounds="[500,500][800,580]" />' : ''}</hierarchy>`);
+    else if (anrUp()) say(`<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="1"><node index="0" text="Close app" resource-id="android:id/aerr_close" class="android.widget.Button" package="android" bounds="[700,440][1640,520]" /><node index="1" text="Wait" resource-id="android:id/aerr_wait" class="android.widget.Button" package="android" bounds="[${WAIT[0]},${WAIT[1]}][${WAIT[2]},${WAIT[3]}]" /></hierarchy>`);
+    else say(`<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="1"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.mojang.minecraftpe" bounds="[0,0][2340,1080]" /></hierarchy>`);
+  }
+  // FAKE_SLOW_TAP: a game too slow for input tap (down and up in one frame): only a held press (input swipe x y x y ms) counts
+  // FAKE_DEAF: the welcome screen takes no input at all (as on a GitHub runner: every way of pressing, keys too)
+  else if ((/^input tap \d+ \d+$/.test(sh) && !process.env.FAKE_SLOW_TAP || /^input swipe (\d+) (\d+) \1 \2 \d+$/.test(sh)) && S.phase === 'welcome' && !anrUp() && !process.env.FAKE_DEAF) {
+    const [x, y] = sh.split(' ').slice(2).map(Number);
+    if (x >= MAYBE_LATER[0] && x <= MAYBE_LATER[2] && y >= MAYBE_LATER[1] && y <= MAYBE_LATER[3]) { S.phase = 'title'; S.welcomed = true; save(); }
+  }
+  else if (/^input tap \d+ \d+$/.test(sh) && anrUp()) {
+    const [x, y] = sh.split(' ').slice(2).map(Number);
+    if (x >= WAIT[0] && x <= WAIT[2] && y >= WAIT[1] && y <= WAIT[3]) { S.anr--; S.waited = (S.waited ?? 0) + 1; save(); }
+  }
+  else if (/^input keyevent (20|66)$/.test(sh) && anrUp()) {
+    S.keys = [...(S.keys ?? []), Number(sh.split(' ')[2])].slice(-3);
+    if (S.keys.join(',') === '20,20,66') { S.anr--; S.waited = (S.waited ?? 0) + 1; S.keys = []; }
+    save();
+  }
+  else if (/^input tap \d+ \d+$/.test(sh) && ['join-external', 'join-rated'].includes(S.phase)) {
+    const [x, y] = sh.split(' ').slice(2).map(Number), box = S.phase === 'join-external' ? [24, 19, 36, 24] : [24, 23, 36, 28];
+    if (x >= box[0] && x <= box[2] && y >= box[1] && y <= box[3]) {
+      if (S.phase === 'join-external') S.phase = 'join-rated';
+      else { S.phase = 'world'; srv('Player connected: Steve, xuid: 2535400000000000'); srv('Player Spawned: Steve xuid: 2535400000000000, pfid: 1'); }
+      save();
+    }
+  }
+  // FAKE_SIGNIN (password | code | approve | wrong): the Xbox library's WebView. SIGN IN tapped → Microsoft's e-mail page;
+  // a value typed (from stdin, never the command line: kept in S.typed) and Enter → the password page → (FAKE_SIGNIN=code: a
+  // code / approve: the number to approve, approved after a few looks / wrong: an error) → Stay signed in? → the game's menu
+  else if (/^input tap \d+ \d+$/.test(sh) && S.phase === 'ms-start') { S.phase = 'ms-email'; save(); }
+  else if (/^input tap \d+ \d+$/.test(sh) && S.phase === 'ms-stay') { S.phase = 'title'; S.signedIn = true; save(); }
+  else if (sh === 'read -r v; input text "$v"' && /^ms-/.test(S.phase ?? '')) { S.typed = [...(S.typed ?? []), fs.readFileSync(0, 'utf8').replace(/\n$/, '')]; save(); }
+  else if (/^input keyevent 66$/.test(sh) && /^ms-/.test(S.phase ?? '')) {
+    const typed = S.typed?.at(-1) ?? '', mode = process.env.FAKE_SIGNIN;
+    if (S.phase === 'ms-email' && typed) S.phase = 'ms-password';
+    else if (S.phase === 'ms-password' && typed) S.phase = mode === 'wrong' ? 'ms-error' : mode === 'code' ? 'ms-code' : mode === 'approve' ? 'ms-approve' : 'ms-stay';
+    else if (S.phase === 'ms-code' && /^\d{6}$/.test(typed)) S.phase = 'ms-stay';
+    else if (S.phase === 'ms-stay') { S.phase = 'title'; S.signedIn = true; }
+    save();
+  }
+  // the player's own world put in the game's folders (lib/world.mjs placeLine): the private one exists after the first start
+  else if (/minecraftWorlds\/lab-ready/.test(sh)) { S.world = Boolean(S.worldPushed); save(); if (S.world) say('world /data/data/com.mojang.minecraftpe/games/com.mojang/minecraftWorlds/lab-ready\n'); }
+  // the gamepad (1.26's PLAY screen takes it): A opens PLAY from the title, DOWN brings the focus to the LAN world, A joins
+  // it (FAKE_LAN_NONE: no LAN world listed), B goes back
+  else if (/^input gamepad keyevent KEYCODE_\w+$/.test(sh)) await padPress(sh.split('KEYCODE_')[1]);
+  // the device's controller (lib/android.mjs startPad: lab-pad on uinput): plugged in by nohup, its presses through a FIFO
+  else if (/nohup \/data\/local\/tmp\/lab-pad /.test(sh)) { S.padUp = true; save(); }
+  else if (/^pidof lab-pad/.test(sh)) say(S.padUp ? '888\n' : '');
+  else if (/^echo '[\w ]*' > \/data\/local\/tmp\/lab-pad\.fifo$/.test(sh)) {
+    const W = { A: 'BUTTON_A', B: 'BUTTON_B', X: 'BUTTON_X', Y: 'BUTTON_Y', LB: 'BUTTON_L1', RB: 'BUTTON_R1', UP: 'DPAD_UP', DOWN: 'DPAD_DOWN', LEFT: 'DPAD_LEFT', RIGHT: 'DPAD_RIGHT', START: 'BUTTON_START', SELECT: 'BUTTON_SELECT' };
+    S.viaPad = (S.viaPad ?? 0) + 1; save();
+    for (const w of /'([\w ]*)'/.exec(sh)[1].split(' ').filter(Boolean)) if (W[w]) await padPress(W[w]);
+  }
+  // the lab's relays on the device (lib/android.mjs startRelay): started by nohup in one line, seen by pidof
+  else if (/nohup \/data\/local\/tmp\/lab-relay /.test(sh)) { if (/pkill -f lab-relay/.test(sh)) process.exit(0); S.relays = [...sh.matchAll(/nohup (\/data\/local\/tmp\/lab-relay [^>]*?) >/g)].map((m) => m[1].trim()); S.relay = S.relays[0]; save(); }
+  else if (/^pidof lab-relay/.test(sh)) say(S.relays?.length ? `${S.relays.map((_, i) => 777 + i).join(' ')}\n` : '');
+  else if (/^pidof/.test(sh)) say(S.launched && !S.crash ? '4242\n' : '');
+  else if (/^am start -a android\.intent\.action\.VIEW -d /.test(sh)) {
+    // FAKE_JOIN_PROMPTS: the game's own questions first (an unknown external server: Continue; online play not rated:
+    // Proceed), answered by taps; FAKE_JOIN_REFUSE: it wants a Microsoft sign-in instead
+    S.uri = sh; save();
+    say('Starting: Intent { act=android.intent.action.VIEW }\n');
+    await joined();
+  }
+  else if (/^input keyevent 4$/.test(sh) && process.env.FAKE_REAL_JOIN) { const { spawnSync } = await import('node:child_process'); spawnSync(process.execPath, [path.join(TOP, 'bds', 'lab.mjs'), 'do', '@Steve form close'], { cwd: path.join(TOP, 'bds'), stdio: 'ignore' }); }
+  else if (/^input keyevent 4$/.test(sh) && S.phase === 'form') { S.phase = 'world'; save(); srv('[Scripting] DEMO Steve picked closed'); }
+  // the world's own screens: BACK pauses (and resumes), E / T / a tap on the world open one, BACK closes it
+  else if (/^input keyevent 4$/.test(sh) && ['pause', 'screen'].includes(S.phase)) { S.phase = 'world'; save(); }
+  else if (/^input keyevent 4$/.test(sh) && S.phase === 'world') { S.phase = 'pause'; save(); }
+  else if ((/^input keyevent (33|48)$/.test(sh) || /^input tap \d+ \d+$/.test(sh)) && S.phase === 'world') { S.phase = 'screen'; save(); }
+  else if (/^input tap \d+ \d+$/.test(sh) && S.dead) { S.phase = 'world'; S.dead = false; save(); }
+  // Android's crash records: one app crash when the player never joins (FAKE_NOJOIN)
+  else if (/^dumpsys dropbox --print data_app_crash$/.test(sh) && process.env.FAKE_NOJOIN) say('Drop box contents: 1 entries\n========================================\n2026-10-03 00:40:00 data_app_crash (text, 300 bytes)\nProcess: com.mojang.minecraftpe\nPID: 4242\n\njava.lang.IllegalStateException: boom\n\tat a.b.C.d(C.java:1)\n');
+  else if (/^dumpsys dropbox/.test(sh)) say('Drop box contents: 0 entries\n');
+  else if (/^ls /.test(sh)) process.exit(1);
+}

@@ -1,0 +1,21 @@
+## /fly lets a survival player fly
+@A join
+@A cmd /fly
+~ @A flight on
+py p("A").allow_flight
+= True
+@A fly 20
+wait 500
+py p("A").is_flying
+= True
+## /walkspeed doubles the speed: the client walks further in the same time
+@A cmd /walkspeed 0.2
+~ @A walk speed 0.2
+tp A 0 -60 0
+@A look -90 0
+@A walk forward 20
+py round(p("A").location.x) >= 7
+= True
+## out of range is refused
+@A cmd /walkspeed 5
+~ speed: 0.01 .. 1

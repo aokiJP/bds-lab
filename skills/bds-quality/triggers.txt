@@ -1,0 +1,3 @@
+# words and phrases a person uses when this skill is needed, any language, one per line (skill route reads them; not installed)
+gaps, mutate, mutation, chaos, coverage, untested code, surviving mutants, quality, trust the tests, after DONE
+品質, カバレッジ, 網羅, テストが十分, ミューテーション, バグを仕込む, 完成後, DONE の後に確かめる

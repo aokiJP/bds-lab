@@ -1,0 +1,85 @@
+# command, then expectations: = exact line | ~ regex | ! absent | !~ absent regex; '## title' = section
+## loads
+py plugin.is_enabled
+= True
+## /report saves a report in the database and the operator is told
+@A join
+@B join
+@C join
+@B cmd /report A 空を飛んでいる
+~ ^@B 通報 #1 を受け付けました: A \(空を飛んでいる\)
+~ ^@A \[通報\] #1 B → A: 空を飛んでいる
+py import sqlite3\nreturn sqlite3.connect(plugin.data_folder / "reports.db").execute("select reporter, target, reason, handled from reports").fetchall()
+= [["B","A","空を飛んでいる",0]]
+## bad targets are refused
+@B cmd /report B 自分
+~ ^@B .*自分自身は通報できません
+@B cmd /report Nobody123 だれ
+~ ^@B .*Nobody123 が見つかりません
+py import sqlite3\nreturn sqlite3.connect(plugin.data_folder / "reports.db").execute("select count(*) from reports").fetchone()[0]
+= 1
+## the same reporter cannot report the same player again within a minute
+@B cmd /report A もう一回
+~ ^@B .*A はさっき通報しました。あと \d+ 秒待ってください
+@C cmd /report A 別の人なら通る
+~ ^@C 通報 #2 を受け付けました
+@B cmd /report C 違う相手なら通る
+~ ^@B 通報 #3 を受け付けました
+py import sqlite3\nreturn sqlite3.connect(plugin.data_folder / "reports.db").execute("select count(*) from reports").fetchone()[0]
+= 3
+## after the cooldown the same report goes through
+py plugin.cooldown_seconds = 2
+wait 2500
+@B cmd /report A まだ飛んでいる
+~ ^@B 通報 #4 を受け付けました
+py plugin.cooldown_seconds = 60
+## /reports shows the newest 10 first
+py import time\nfor i in range(5, 16):\n  plugin.db.execute("insert into reports (reporter, target, reason, created) values (?, ?, ?, ?)", ("C", "B", f"r{i}", time.time()))\nplugin.db.commit()\nreturn 1
+= 1
+@A cmd /reports
+~ ^@A 未処理の通報 15 件 \(新しい順に最大10件\):
+~ ^@A #15 .* C → B: r15
+~ ^@A #6 .* C → B: r6
+!~ ^@A #5
+!~ ^@A #4
+py return plugin.list_size
+= 10
+## the list is in newest-first order
+py class Box:
+    name = "X"
+    def __init__(self): self.lines = []
+    def send_message(self, m): self.lines.append(m)
+    def send_error_message(self, m): self.lines.append(m)
+  b = Box()
+  plugin.do_reports(b, [])
+  return [int(m[1:].split()[0]) for m in b.lines if m.startswith("#")]
+= [15,14,13,12,11,10,9,8,7,6]
+## /reports clear <n> marks a report handled and it leaves the list
+@A cmd /reports clear 15
+~ ^@A 通報 #15 を処理済みにしました
+@A cmd /reports clear 15
+~ ^@A .*通報 #15 はすでに処理済みです
+@A cmd /reports clear 999
+~ ^@A .*通報 #999 はありません
+@A cmd /reports
+~ ^@A 未処理の通報 14 件
+~ ^@A #5 .* C → B: r5
+!~ ^@A #15
+## a player who is not an operator cannot use /reports
+deop B
+wait 500
+@B cmd /reports
+!~ ^@B 未処理の通報
+!~ ^@B #\d+
+## reports survive a restart
+restart
+@A cmd /reports
+~ ^@A 未処理の通報 14 件
+~ ^@A #14 .* C → B: r14
+!~ ^@A #15
+py import sqlite3\nreturn sqlite3.connect(plugin.data_folder / "reports.db").execute("select handled from reports where id = 15").fetchone()[0]
+= 1
+## the cooldown also holds across a restart (it is read from the database)
+py plugin.cooldown_seconds = 3600
+@C cmd /report A 再起動後
+~ ^@C .*A はさっき通報しました

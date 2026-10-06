@@ -1,0 +1,9 @@
+{
+  "name": "nethernet-connect",
+  "version": "3.0.0",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "dependencies": {
+    "bedrock-protocol": "^3.60.1"
+  }
+}

@@ -1,47 +1,18 @@
-# AGENTS.md — 決まりごと（ここが正）
+# bds-lab: build a Minecraft Bedrock addon alone, proven on a real BDS with real clients
+Enough for an addon: read other docs only when a command says so. Run from this folder.
+Skills: `bds new` and `import` print the one that fits the request (read it); otherwise `node lab.mjs skill route "<request>"`. A `rule:` line under a failure is a skill rule: follow it.
+A person's addon (.mcaddon/.mcpack/.zip/folder): `node lab.mjs import <file> "<their words>"` prints its brief (ways in with file:line, what breaks on this BDS's APIs, which `mode`) and a draft tests.txt running each way in once; add sections for what they asked, then step 3. Its names and UUIDs stay.
+1. `node lab.mjs bds new <name> "<Title>" "<request>" desc="<for players>"` → bds/addons/<name>/ (src/main.ts, src/kit.ts, bp/ rp/ en_US+ja_JP, tests.txt, TASK.md).
+2. Write src/main.ts and tests.txt (one `##` section per thing asked). Content: `node lab.mjs add item|block|entity <ns:id> "Name" ja=名前 tex=<shape>[:RRGGBB] [<component>=<json>..]` (e.g. `max_stack_size=16`, `food='{"nutrition":4}'`, `states='{"lab:lit":[false,true]}'`, `health='{"value":6,"max":6}' drops=lab:gel*1-2`) writes every file and a texture (`help add`).
+3. `node lab.mjs go` = build, typecheck, schemas → tests.txt on a fresh real server → QA (players, restart, edge cases, perf, logs) → stable APIs if they pass → `DONE dist/<Name>.mcaddon`. Fix what it prints (W lines fail too); never weaken a test. `sim` = tests.txt in a sandbox in ~1 s between edits (a hint).
+   A failure with no src/ line: go runs `why` itself (what printed instead, its values, a hook that never ran); read it before editing. `why ["<title>"]`, `shrink "<title>"`.
+4. After DONE (no tokens; a section per finding, go again): `gaps` (code no test runs) · `mutate` (small bugs no test notices: the lines that need a check) · `chaos --append` (random play until a script error) · `record "<cmd>"` (what it prints now, as expectations).
 
-実機の Bedrock Dedicated Server で確かめながらアドオンを作ります。**「通った」は実機で通ったという意味です。**
+kit (src/kit.ts, tested on this BDS; its whole API, use it): `cmd('ns:name','desc',{n:'int','mode?':['a','b'],who:'player'},(p,a)=>'reply')` /command by a player (int float string bool player entity loc item block; runs in system.run, may be async; 5th arg true = ops only; `cmdAny` also console, p undefined) · `await ask(p,new ActionFormData()...)` (undefined = closed; waits while busy) · `await menu(p,'Title',[['Label',p=>..],..],body?)` → index · `await confirm(p,'text')` · `await input(p,'Title',{Name:'text',N:'number',On:'toggle',Lv:[1,10],Mode:['a','b']})` → typed values · `item(id,name?,lore?,n)` · `inv(e)` · `count(p,id)` `take(p,id,n)`→false if short `give(p,id|ItemStack,n)` · `once(player|world,key)` · `load(h,key,def)` `save(h,key,v)` · `score(id,name?,'Sidebar')` · `every(ticks,p=>..)` · `cooldown(e,key,ticks)` · `onItem('ns:x',{onUse(e){}})` `onBlock('ns:x',{onPlayerInteract(e){}})` + `ns:x={}` in its components · `getState(b,'ns:x')` `setState(b,'ns:x',v)` · `ready(fn)` · `feature('name',()=>{..})`.
+Script API: world.* at the top level throws (use events/ready); before-events are read-only (change the world in system.run); system.runTimeout, no setTimeout, no Node APIs. Look up, never guess: `api <Class|Class.member|world.afterEvents.x|?word>` · `doc <minecraft:component|/command>` · `sample <word>` · `ts try "<code>"` (sandbox) / `ts "<code>"` (live world after `up`) · `bb packets|enum|commands <q>` · `c2s "<command>"`.
 
-## コマンド
+tests.txt: a command line, then expectations for its output: `= exact` `~ regex` `! absent` `!~ absent regex`; sections run in order in one world (what one leaves, the next sees); a `##` section's expectations see all its output (under a `js` line: its value). An unexpected `E` line fails. Lines are as a client shows them: § colours gone, trailing spaces trimmed, a {translate} message as `%key [a, b]`. Commands: any console command (`give A lab:ruby 3`, `tp A 5 -60 5`, `scriptevent ns:id msg`) · `js <expr>` (world system mc; p('A'), inv(p)→["0:id*n"], mob(type,x,y,z)) · `until <regex> [ms]` · `wait <ms>` · `restart` · `clock +1d` (the addon's Date moves on).
+Players (real clients, op, spawn 0 -60 0, flat x,z -32..31): `@A join|leave` `@A cmd /ns:cmd args` `@A chat hi` `@A form <n|button text>|form ["text",true]|form close` (after `until form`) `@A select <item>` `@A use` `@A useon x y z` `@A attack|interact <mob>` `@A place <item> x y z` `@A dig x y z` `@A walk forward 20` `@A goto x z` `@A eat` `@A inv`. What A sees: `@A <message>`, `@A chat <B> text`, `@A title: ..`, `@A actionbar: ..`, `@A form action: title("..") button("..")`. More: `help player <word>`, `help verbs <word>`.
+Debug: `node lab.mjs run <cmd>...` (fresh world, everything printed; also `trace src/main.ts:12 [expr]`, `events on`, `states on`) · `help debug|tests|world|model|ui` (`help <topic> <word>`: only the lines with it).
 
-| | |
-|---|---|
-| `npm start` | 作る（何を作るか日本語で答える） |
-| `npm test` | 実機で確かめる（`-- --watch` で保存のたびに） |
-| `npm run status` | 前回の結果を 40 行で見る（`-- --full` で全部） |
-| `npm run api -- <名前>` | API を引く（`-- --find <語>` で探す。実機に在るかも出る） |
-| `npm run fix` | 実機を上げずに直せるものを直す |
-| `npm run ship` | `.mcaddon` にして出す |
-
-`npm run doctor` は足りないもの、`npm run help -- --all` は全部のコマンド。
-
-## 進め方
-
-1. `addons/<名前>/TASK.md` の受け入れ条件が「できた」の定義。
-2. `specs/<名前>.spec.mjs` を先に書く（条件 1 つに 1 本）。全部落ちるのが正しい姿。
-3. `addons/<名前>/` だけを直す。
-4. `npm test` → `npm run status` → **最初の ✘ だけ**直す。まとめて直さない。
-5. 分からない値は推測しない。`t.note()` で実機に読ませ、次の回で答えを見る。
-
-## 守ること
-
-1. 直すのは `addons/<名前>/` の中だけ。`specs/` は通すために緩めない（条件が違うと思ったら `TASK.md` を直して理由を書く）。
-2. API は `npm run api` で確かめる。記憶で書かない。
-3. 状態が変わったら `console.warn('<タグ> ...')` を 1 行。仕様書はこの行を見る。
-4. 操作は `/scriptevent <名前空間>:<操作>` で受ける。
-5. 数字は `scripts/config.js` に集める。実装に直接書かない。
-6. コンポーネントの読み書きは `system.run` かイベントの中。トップレベルは弾かれる。
-7. `tools/` と `src/` は検証の仕組み。触らない。
-8. **飛ばされた仕様書は通っていない。**
-
-## 引くもの
-
-- `npm run api -- <名前>` … 引数・戻り値・この実機に在るか
-- `skills/README.md` … やりたいことから引く（`70-pitfalls.md` は実測した落とし穴）
-- `types/spec.d.ts` … 仕様書で使える道具
-
-## 検証の 2 つの流し方
-
-**sim**（既定）はサーバーの中の SimulatedPlayer、**real**（`tags: ['real']`）は本物のクライアント。
-書き方はどちらも同じ `t`。**入力を読んで動くものは必ず real で 1 本**通す。
-`real` には `bedrock-protocol` が要る。無ければ飛ばされ、**通っていないもの**として残る。
+Other: no request / on your own: `auto next` … `auto done <id> ok|fail "<lesson>"` (`help auto`; never touch auto/policy.json, auto/STOP) · no close sample: `skill bds-from-scratch` (practice: `scratch next`) · beyond BDS scripts (HTTP, per-player UI, packets, SQL, files, logins): Endstone `node lab.mjs end ...` / LeviLamina `node lab.mjs ll ...` (their AGENTS.md; `help ideas`) · `checkpoint`/`undo` · `upkeep` (Minecraft updated) · `deploy <BDS folder>` · people's distributed worlds/addons (Crafters Colony): `colony search|show|get|import` (`help colony`) · `status` · `help quality|env|chat|engine|lan|import|skills|scratch` · JSON UI in the real app: `node lab.mjs app`.

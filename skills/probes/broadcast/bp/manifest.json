@@ -1,0 +1,46 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "probe broadcast",
+    "description": "proves: test-broadcast (BDS part)",
+    "uuid": "fc95063e-915f-5198-bb8a-a02817cc7391",
+    "version": [
+      1,
+      0,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      0
+    ]
+  },
+  "modules": [
+    {
+      "type": "data",
+      "uuid": "99dcc181-51c2-5173-ae8c-86e07fe80c78",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "9afa5664-da76-5aef-ad15-777cbbc5ca77",
+      "version": [
+        1,
+        0,
+        0
+      ],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.0.0"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "about": "sha1 (first 12 hex) of every kit the lab has shipped, oldest first; CRLF read as LF, kit.js without its first // generated line. A unit whose src/kit.ts (or bp/scripts/kit.js) has one of these was never edited, so the build makes it the newest one (the last) by itself. tests/kit-offline.mjs --fix adds the current kit.",
+  "ts": ["f64d5db535a8", "b3e0e467b172", "b3c8fa32d628", "5d751c6d9607", "cb03361638e2"],
+  "js": ["c102ddda27f8", "d4b08e77efef", "eafae216ce09", "bde6456ae08d"]
+}

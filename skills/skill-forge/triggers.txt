@@ -1,0 +1,3 @@
+# words and phrases a person uses when this skill is needed, any language, one per line (skill route reads them; not installed)
+skill, SKILL.md, new skill, rubric, grade a skill, refine, route, prompt, system prompt, self-improve, description
+スキル, 採点, 改善, 評価, 磨く, 成長, プロンプト, システムプロンプト, 説明文, ルーブリック

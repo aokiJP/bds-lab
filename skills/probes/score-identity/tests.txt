@@ -1,0 +1,4 @@
+## getScore throws for a player with no score yet; addScore creates it
+@A join
+scriptevent probe:score
+= score false | Failed to resolve identity for 'A'. | 2 | undefined

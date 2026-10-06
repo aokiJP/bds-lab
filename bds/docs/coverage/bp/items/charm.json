@@ -1,0 +1,12 @@
+{
+ "format_version": "1.26.0",
+ "minecraft:item": {
+  "description": { "identifier": "probe:charm", "menu_category": { "category": "items" } },
+  "components": {
+   "minecraft:icon": "stick",
+   "minecraft:use_modifiers": { "use_duration": 1, "movement_modifier": 0.5 },
+   "minecraft:use_animation": "eat",
+   "probe:use": {}
+  }
+ }
+}

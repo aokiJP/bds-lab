@@ -1,0 +1,272 @@
+{
+  "about": "What makes a skill good as a system prompt, as checks the lab can run (node lab.mjs skill grade). Each criterion scores 0-2; `portable` ones apply to any skill collection (they also grade the reference repositories, so ours is compared with theirs), `lab` ones need this repository (commands, rules, routing). `fix` is what the refine brief tells the AI; `source` is where the criterion comes from. The rubric is itself know-how: a criterion that does not predict bench results (skill growth: rubric validity) is rewritten or retired, like a rule. History: v1 (14 criteria) saturated at a mean of 96% after the first refine round; v2 added no-repeat. v3 (2026-10-03): rules-why gives 2 when a skill has no hard rule (v1-2 gave 1, and an AI asked to raise it invented \"(when missed: …)\" consequences); evidence is marked text:false (only a probe or a test raises it, never an edit).",
+  "version": 3,
+  "criteria": [
+    {
+      "id": "name",
+      "scope": "portable",
+      "what": "name is kebab-case, at most 64 characters, the same as its folder",
+      "fix": "rename the folder or the `name:` line so they match (lowercase words joined by -)",
+      "source": "OpenAI skill-creator quick_validate; boredape874/mcbejsonuimasterAI tools/skill-lint.mjs (NAME_MISMATCH, NAME_INVALID)",
+      "gate": true
+    },
+    {
+      "id": "trigger",
+      "scope": "portable",
+      "what": "the description says what it does in its first sentence and when to use it (Use when / for / after / first), in at most 500 characters",
+      "fix": "description: first sentence = what it does (with the words a person would say); then `Use when ...` with 2-4 concrete triggers (file names, symptoms, request words); cut it under 500 characters: hosts shorten long descriptions and match on the front",
+      "source": "Codex skills docs (front-load the use case and trigger words; descriptions are shortened first); Anthropic skill authoring best practices (what it does + when to use it)"
+    },
+    {
+      "id": "boundary",
+      "scope": "portable",
+      "what": "says when NOT to use it and which skill takes that work instead",
+      "fix": "add one line: `Not for X (use `other-skill`)`; a skill that knows its edge stops the AI from loading two that overlap",
+      "source": "Codex skills docs (when it should and should not trigger); mcbejsonuimasterAI mcbe-json-ui-master (one primary owner, hand-offs by name)"
+    },
+    {
+      "id": "procedure",
+      "scope": "portable",
+      "what": "numbered steps (at least 3), each an action",
+      "fix": "turn the advice into numbered steps that start with a verb or a command, in the order the work happens",
+      "source": "SkillsBench arXiv 2602.12670 (procedural, stepwise guidance helps; declarative documentation much less)"
+    },
+    {
+      "id": "example",
+      "scope": "portable",
+      "what": "at least one concrete, working example: a command with its arguments, a code block, or e.g.",
+      "fix": "add a real command line with real arguments (one that works in this repository), or one short code block",
+      "source": "SkillsBench arXiv 2602.12670 (concise guidance with at least one working example beats exhaustive documentation)"
+    },
+    {
+      "id": "rules-why",
+      "scope": "portable",
+      "what": "its hard rules (never / always / must / only) say what goes wrong when they are missed; a skill with no hard rule has nothing to explain (2)",
+      "fix": "give each hard rule its consequence (`... (when missed: <symptom>)`); a rule with its symptom is followed and recognised; in this lab put rules in skills/knowledge.json with `why`",
+      "source": "iMasterProX/mcbemodelingmasterAI (every rule is a past failure); bds-lab knowledge.json"
+    },
+    {
+      "id": "done",
+      "scope": "portable",
+      "what": "says what done looks like and what to report",
+      "fix": "end with `Done when <what proves it>. Report: <what ran, what passed, what is not verified>`",
+      "source": "mcbejsonuimasterAI route contract (Input / Output / Success); mcbemodelingmasterAI mcbe-model-verification"
+    },
+    {
+      "id": "honesty",
+      "scope": "portable",
+      "what": "says what it cannot prove and asks to say so instead of claiming it",
+      "fix": "name the limit (static check, render, sandbox) and the sentence to use: `say what was not verified`",
+      "source": "mcbemodelingmasterAI (if you have not rendered it or run it, say so); mcbejsonuimasterAI docs/22 (confirmed / inferred / not verified labels)"
+    },
+    {
+      "id": "budget",
+      "scope": "portable",
+      "what": "500 to 3200 bytes: read whole, every turn, so small; not so small it says nothing",
+      "fix": "over: move detail behind a command (`help <topic>`, `skill <other>`) or retire rules that never fire; under: add the procedure and an example",
+      "source": "SkillsBench arXiv 2602.12670 (compact and detailed skills help; comprehensive ones hurt: -2.9pp); Codex skills docs (skill list capped at 2% of context / 8,000 characters)",
+      "gate": true
+    },
+    {
+      "id": "portable",
+      "scope": "portable",
+      "what": "no AI-product-specific tool names, absolute paths or backslash paths in SKILL.md (those go in skills/<name>/ai/<ai>.md)",
+      "fix": "write the step as a plain command or file action any AI can do; move what only one AI needs to skills/<name>/ai/<claude|codex|gemini|cursor|copilot>.md (skill install adds it for that AI only)",
+      "source": "the request for skills every AI can use; mcbejsonuimasterAI skill-lint (NON_PORTABLE_REFERENCE)",
+      "gate": true
+    },
+    {
+      "id": "focus",
+      "scope": "portable",
+      "what": "one job: it does not repeat a sibling skill (word overlap under 30%)",
+      "fix": "move the shared part to one skill and point at it by name; SkillsBench: 2-3 focused skills per task beat 4+",
+      "source": "SkillsBench arXiv 2602.12670 (2-3 skills +18.6pp, 4+ only +5.9pp)"
+    },
+    {
+      "id": "no-repeat",
+      "scope": "portable",
+      "what": "does not say again what the always-loaded entry file (AGENTS.md) already says",
+      "fix": "cut the lines the grade quotes (the AI has read AGENTS.md already) or point at it in a few words; what the skill adds is the part AGENTS.md does not say",
+      "source": "rubric v2, added when v1 saturated (mean 96%): bds-lab docs/TOKENS (every line read every turn costs tokens); Lost in the Middle arXiv 2307.03172 (repeated, long context dilutes what matters)"
+    },
+    {
+      "id": "grounded",
+      "scope": "lab",
+      "what": "every command and repository path it names exists here",
+      "fix": "fix or remove the command / path the grade names (`help <word>` finds the real one)",
+      "source": "mcbejsonuimasterAI skill-lint (REFERENCE_MISSING) and skill-doctor (never invoke a tool that is absent)",
+      "gate": true
+    },
+    {
+      "id": "evidence",
+      "scope": "lab",
+      "what": "its rules can be re-run here (test / probe / unit), not only seen once or quoted",
+      "fix": "write a probe (skills/probes/<id>: addon + tests.txt) or point a rule at a test, then skill promote <id> --evidence probe:...",
+      "source": "bds-lab (rules re-checked on the real server after each Minecraft update)",
+      "text": false
+    },
+    {
+      "id": "routed",
+      "scope": "lab",
+      "what": "the router finds it: bds-addon-master names it, and `skill route` puts it first for the requests it owns (skills/routes.json)",
+      "fix": "name it in bds-addon-master; put the words people use (any language) in skills/<name>/triggers.txt and the description; `skill route \"<request>\"` shows what wins and why",
+      "source": "mcbejsonuimasterAI tests/skill-routing-and-sync.mjs (routing tested); Codex skills docs (implicit invocation matches the description)"
+    }
+  ],
+  "candidates": [
+    {
+      "id": "pat-full-text",
+      "feature": "label:full text",
+      "re": "^[ \\t]*(?:[-*][ \\t]+)?\\*{0,2}full[ \\t]+text\\*{0,2}:",
+      "scope": "portable",
+      "prevalence": {
+        "MCBE-UI": 0,
+        "anthropics-skills": 0,
+        "mcbejsonuimasterAI": 0,
+        "mcbemodelingmasterAI": 92
+      },
+      "ours": 0,
+      "mined": "2026-10-03",
+      "calibrated": {
+        "at": "2026-10-03",
+        "lift": null,
+        "same": null,
+        "verdict": "no-signal",
+        "n": 78,
+        "with": 11
+      }
+    },
+    {
+      "id": "pat-workflow",
+      "feature": "heading:workflow",
+      "re": "^#{2,3}[ \\t]+workflow",
+      "scope": "portable",
+      "prevalence": {
+        "MCBE-UI": 89,
+        "anthropics-skills": 0,
+        "mcbejsonuimasterAI": 71,
+        "mcbemodelingmasterAI": 0
+      },
+      "ours": 0,
+      "mined": "2026-10-03",
+      "calibrated": {
+        "at": "2026-10-03",
+        "lift": -2,
+        "same": null,
+        "verdict": "no-signal",
+        "n": 78,
+        "with": 36
+      }
+    },
+    {
+      "id": "pat-input",
+      "feature": "label:input",
+      "re": "^[ \\t]*(?:[-*][ \\t]+)?\\*{0,2}input\\*{0,2}:",
+      "scope": "portable",
+      "prevalence": {
+        "MCBE-UI": 0,
+        "anthropics-skills": 5,
+        "mcbejsonuimasterAI": 79,
+        "mcbemodelingmasterAI": 0
+      },
+      "ours": 0,
+      "mined": "2026-10-03",
+      "calibrated": {
+        "at": "2026-10-03",
+        "lift": 3,
+        "same": null,
+        "verdict": "no-signal",
+        "n": 78,
+        "with": 23
+      }
+    },
+    {
+      "id": "pat-output",
+      "feature": "label:output",
+      "re": "^[ \\t]*(?:[-*][ \\t]+)?\\*{0,2}output\\*{0,2}:",
+      "scope": "portable",
+      "prevalence": {
+        "MCBE-UI": 0,
+        "anthropics-skills": 5,
+        "mcbejsonuimasterAI": 79,
+        "mcbemodelingmasterAI": 0
+      },
+      "ours": 0,
+      "mined": "2026-10-03",
+      "calibrated": {
+        "at": "2026-10-03",
+        "lift": 3,
+        "same": null,
+        "verdict": "no-signal",
+        "n": 78,
+        "with": 24
+      }
+    },
+    {
+      "id": "pat-success",
+      "feature": "label:success",
+      "re": "^[ \\t]*(?:[-*][ \\t]+)?\\*{0,2}success\\*{0,2}:",
+      "scope": "portable",
+      "prevalence": {
+        "MCBE-UI": 0,
+        "anthropics-skills": 0,
+        "mcbejsonuimasterAI": 79,
+        "mcbemodelingmasterAI": 0
+      },
+      "ours": 0,
+      "mined": "2026-10-03",
+      "calibrated": {
+        "at": "2026-10-03",
+        "lift": 3,
+        "same": null,
+        "verdict": "no-signal",
+        "n": 78,
+        "with": 22
+      }
+    },
+    {
+      "id": "pat-contract",
+      "feature": "heading:contract",
+      "re": "^#{2,3}[ \\t]+contract",
+      "scope": "portable",
+      "prevalence": {
+        "MCBE-UI": 0,
+        "anthropics-skills": 0,
+        "mcbejsonuimasterAI": 75,
+        "mcbemodelingmasterAI": 0
+      },
+      "ours": 0,
+      "mined": "2026-10-03",
+      "calibrated": {
+        "at": "2026-10-03",
+        "lift": 2,
+        "same": null,
+        "verdict": "no-signal",
+        "n": 78,
+        "with": 21
+      }
+    },
+    {
+      "id": "pat-hard-rules",
+      "feature": "heading:hard rules",
+      "re": "^#{2,3}[ \\t]+hard\\W+rules",
+      "scope": "portable",
+      "prevalence": {
+        "MCBE-UI": 50,
+        "anthropics-skills": 0,
+        "mcbejsonuimasterAI": 29,
+        "mcbemodelingmasterAI": 0
+      },
+      "ours": 0,
+      "mined": "2026-10-03",
+      "calibrated": {
+        "at": "2026-10-03",
+        "lift": 1,
+        "same": null,
+        "verdict": "no-signal",
+        "n": 78,
+        "with": 17
+      }
+    }
+  ]
+}

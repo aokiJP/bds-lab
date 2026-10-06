@@ -1,0 +1,22 @@
+## breaking blocks earns coins
+@A join
+@B join
+setblock 2 -60 2 dirt
+setblock 3 -60 2 dirt
+@A dig 2 -60 2
+@A dig 3 -60 2
+wait 500
+@A cmd /balance
+~ @A cmd: A: 2 coins
+## paying moves coins, with checks
+@A cmd /pay B 1
+~ @A cmd: paid 1 to B: 1 left
+~ @B A sent you 1 coins
+@A cmd /pay B 5
+~ not enough coins \(1\)
+@B cmd /balance
+~ @B cmd: B: 1 coins
+## the accounts survive a restart
+restart
+@A cmd /balance
+~ @A cmd: A: 1 coins

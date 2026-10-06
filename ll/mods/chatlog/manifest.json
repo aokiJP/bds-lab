@@ -1,0 +1,12 @@
+{
+    "name": "chatlog",
+    "entry": "chatlog.js",
+    "type": "lse-quickjs",
+    "version": "0.1.0",
+    "description": "Every chat line appended to a dated log file (plugins/chatlog/logs/YYYY-MM-DD.log); /chatlog [n] shows the las",
+    "dependencies": [
+        {
+            "name": "legacy-script-engine-quickjs"
+        }
+    ]
+}

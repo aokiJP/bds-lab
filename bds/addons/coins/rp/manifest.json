@@ -1,0 +1,17 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Coins RP",
+    "description": "Get a coin once a day",
+    "uuid": "d3dc74c0-30ea-4070-a874-8d529cd8860d",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 26, 52]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "d82ca231-5202-4e46-b1d2-a000d79a803a",
+      "version": [1, 0, 0]
+    }
+  ]
+}

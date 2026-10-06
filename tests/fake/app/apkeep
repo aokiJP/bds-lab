@@ -1,0 +1,9 @@
+#!/usr/bin/env node
+// a fake apkeep for tests/app-offline.mjs: `-a com.android.vending` saves FAKE_VENDING_APK (when set) into the output folder;
+// anything else saves nothing (as Play does when it does not hand an app out)
+import fs from 'node:fs';
+import path from 'node:path';
+const a = process.argv.slice(2), pkg = a[a.indexOf('-a') + 1], dir = a.at(-1);
+if (process.env.FAKE_APKEEP_LOG) fs.appendFileSync(process.env.FAKE_APKEEP_LOG, a.join(' ') + '\n');
+if (pkg === 'com.android.vending' && process.env.FAKE_VENDING_APK) { fs.mkdirSync(dir, { recursive: true }); fs.copyFileSync(process.env.FAKE_VENDING_APK, path.join(dir, 'com.android.vending.apk')); }
+console.log(`Downloading ${pkg}...`);

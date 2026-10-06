@@ -1,0 +1,43 @@
+## the first join of the day gives one emerald
+@A join
+~ @A Login bonus: 1 emerald \(day 1 in a row\)
+wait 300
+js inv(p('A'))
+= ["0:minecraft:emerald*1"]
+
+## a second join on the same day gives nothing
+@A leave
+@A join
+wait 500
+!~ Login bonus
+js inv(p('A'))
+= ["0:minecraft:emerald*1"]
+
+## the next day counts the streak, and it survives a restart
+clock +1d
+restart
+~ @A Login bonus: 1 emerald \(day 2 in a row\)
+
+## the 7th day in a row gives five
+clock +1d
+@A leave
+@A join
+clock +1d
+@A leave
+@A join
+clock +1d
+@A leave
+@A join
+clock +1d
+@A leave
+@A join
+clock +1d
+@A leave
+@A join
+~ @A Login bonus: 5 emerald \(day 7 in a row\)
+
+## a missed day starts over
+clock +2d
+@A leave
+@A join
+~ @A Login bonus: 1 emerald \(day 1 in a row\)

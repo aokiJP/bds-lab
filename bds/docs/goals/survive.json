@@ -1,0 +1,215 @@
+{
+ "1:zombies_rain": {
+  "name": "zombies_rain",
+  "ja": "雨の朝、素手でゾンビ 2 体のそば",
+  "pass": true,
+  "tries": [
+   1
+  ],
+  "sec": 100,
+  "deaths": [],
+  "why": null,
+  "fails": [],
+  "notes": [],
+  "wall": 32,
+  "speed": 20,
+  "at": "2026-09-28T04:35"
+ },
+ "1:skeletons_rain": {
+  "name": "skeletons_rain",
+  "ja": "雨の朝、素手で弓のスケルトン 2 体",
+  "pass": true,
+  "tries": [
+   1
+  ],
+  "sec": 75,
+  "deaths": [],
+  "why": null,
+  "fails": [],
+  "notes": [],
+  "wall": 30,
+  "speed": 20,
+  "at": "2026-09-28T04:26"
+ },
+ "1:night_empty": {
+  "name": "night_empty",
+  "ja": "日没、何も持たずに最初の夜",
+  "pass": true,
+  "tries": [
+   1
+  ],
+  "sec": 86,
+  "deaths": [],
+  "why": null,
+  "fails": [],
+  "notes": [],
+  "wall": 36,
+  "speed": 20,
+  "at": "2026-09-27T14:28"
+ },
+ "1:night_tools": {
+  "name": "night_tools",
+  "ja": "夜、石の道具と土とパンで、ゾンビ・スケルトン・クモ",
+  "pass": true,
+  "tries": [
+   1
+  ],
+  "sec": 143,
+  "deaths": [],
+  "why": null,
+  "fails": [],
+  "notes": [],
+  "wall": 36,
+  "speed": 20,
+  "at": "2026-09-28T04:37"
+ },
+ "1:cave_archers": {
+  "name": "cave_archers",
+  "ja": "地下の暗い洞窟でスケルトン 2 体",
+  "pass": true,
+  "tries": [
+   1
+  ],
+  "sec": 280,
+  "deaths": [],
+  "why": null,
+  "fails": [],
+  "notes": [],
+  "wall": 41,
+  "speed": 20,
+  "at": "2026-09-28T04:25"
+ },
+ "1:creeper": {
+  "name": "creeper",
+  "ja": "石のツルハシで掘っているとクリーパー",
+  "pass": true,
+  "tries": [
+   1
+  ],
+  "sec": 100,
+  "deaths": [],
+  "why": null,
+  "fails": [],
+  "notes": [],
+  "wall": 32,
+  "speed": 20,
+  "at": "2026-09-28T04:22"
+ },
+ "1:deep_water": {
+  "name": "deep_water",
+  "ja": "深さ 8 の水の底",
+  "pass": true,
+  "tries": [
+   1,
+   1
+  ],
+  "sec": 196,
+  "deaths": [],
+  "why": null,
+  "fails": [],
+  "notes": [],
+  "wall": 38,
+  "speed": 20,
+  "at": "2026-09-27T12:42"
+ },
+ "1:lava_floor": {
+  "name": "lava_floor",
+  "ja": "足元の 3 下に溶岩の池",
+  "pass": true,
+  "tries": [
+   1,
+   1
+  ],
+  "sec": 68,
+  "deaths": [],
+  "why": null,
+  "fails": [],
+  "notes": [],
+  "wall": 31,
+  "speed": 20,
+  "at": "2026-09-27T12:42"
+ },
+ "1:high_pillar": {
+  "name": "high_pillar",
+  "ja": "高さ 24 の土の柱の上",
+  "pass": true,
+  "tries": [
+   0,
+   1
+  ],
+  "sec": 59,
+  "deaths": [],
+  "why": null,
+  "fails": [],
+  "notes": [],
+  "wall": 31,
+  "speed": 20,
+  "at": "2026-09-27T12:43"
+ },
+ "1:hungry": {
+  "name": "hungry",
+  "ja": "満腹度 0 近く、食べ物なし、牛が近く",
+  "pass": true,
+  "tries": [
+   1,
+   1
+  ],
+  "sec": 170,
+  "deaths": [],
+  "why": null,
+  "fails": [],
+  "notes": [],
+  "wall": 39,
+  "speed": 20,
+  "at": "2026-09-27T12:44"
+ },
+ "1:pit": {
+  "name": "pit",
+  "ja": "深さ 5 の縦穴の底（素手）",
+  "pass": true,
+  "tries": [
+   1,
+   1
+  ],
+  "sec": 77,
+  "deaths": [],
+  "why": null,
+  "fails": [],
+  "notes": [],
+  "wall": 32,
+  "speed": 20,
+  "at": "2026-09-27T12:44"
+ },
+ "1:baby_zombie": {
+  "name": "baby_zombie",
+  "ja": "木の剣で子どものゾンビ",
+  "pass": true,
+  "tries": [
+   1
+  ],
+  "sec": 29,
+  "deaths": [],
+  "why": null,
+  "fails": [],
+  "notes": [],
+  "wall": 28,
+  "speed": 20,
+  "at": "2026-09-28T04:26"
+ },
+ "1:spiders_night": {
+  "name": "spiders_night",
+  "ja": "夜、石の剣でクモ 2 体",
+  "pass": true,
+  "tries": [
+   1
+  ],
+  "sec": 31,
+  "deaths": [],
+  "why": null,
+  "fails": [],
+  "notes": [],
+  "wall": 28,
+  "speed": 20,
+  "at": "2026-09-28T04:23"
+ }
+}

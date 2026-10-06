@@ -1,0 +1,37 @@
+{
+  "format_version": 3,
+  "header": {
+    "name": "probe",
+    "description": "coverage probe: custom component hooks, startup events, before-event cancel rules",
+    "uuid": "7e3b9a10-1111-4c2d-9e8f-000000000001",
+    "version": "1.0.0",
+    "min_engine_version": "1.21.0"
+  },
+  "modules": [
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "7e3b9a10-1111-4c2d-9e8f-000000000002",
+      "version": "1.0.0",
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.11.0-beta"
+    },
+    {
+      "module_name": "@minecraft/server-ui",
+      "version": "2.3.0-beta"
+    }
+  ],
+  "settings": [
+    {
+      "type": "toggle",
+      "name": "probe:flag",
+      "text": "Probe flag",
+      "default": false
+    }
+  ]
+}

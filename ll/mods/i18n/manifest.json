@@ -1,0 +1,12 @@
+{
+    "name": "i18n",
+    "entry": "i18n.js",
+    "type": "lse-quickjs",
+    "version": "0.1.0",
+    "description": "Every player reads the server in their own game language",
+    "dependencies": [
+        {
+            "name": "legacy-script-engine-quickjs"
+        }
+    ]
+}

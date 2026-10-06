@@ -1,0 +1,26 @@
+# the planted bugs, one section each (never shown to the AIs): all fail on main.ts as given, all pass once fixed
+## rejoin: the first-join rubies are not given again
+@A join
+wait 800
+@A leave
+@A join
+wait 800
+js inv(p('A'))
+~ lab:ruby\*3
+!~ lab:ruby\*[4-9]
+## closing the shop form breaks nothing
+@A cmd /lab:shop
+until form
+@A form close
+wait 500
+## one ruby buys nothing
+clear A
+give A lab:ruby 1
+wait 300
+@A cmd /lab:shop
+until form
+@A form 0
+wait 800
+js inv(p('A'))
+!~ minecraft:diamond
+~ lab:ruby\*1

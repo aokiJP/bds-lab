@@ -1,0 +1,12 @@
+{
+    "name": "bossbar",
+    "entry": "bossbar.js",
+    "type": "lse-quickjs",
+    "version": "0.1.0",
+    "description": "A boss bar only this player sees, draining to zero, then a title.",
+    "dependencies": [
+        {
+            "name": "legacy-script-engine-quickjs"
+        }
+    ]
+}

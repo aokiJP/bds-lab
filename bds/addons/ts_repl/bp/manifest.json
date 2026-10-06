@@ -1,0 +1,47 @@
+{
+  "format_version": 2,
+  "metadata": {
+    "authors": ["TS REPL"],
+    "license": "MIT",
+    "generated_with": {
+      "tsrepl_build": ["5.177.0"]
+    }
+  },
+  "header": {
+    "name": "pack.name",
+    "description": "pack.description",
+    "uuid": "0cf2da57-bb7d-4304-b680-f963a1c255e3",
+    "version": [6, 11, 1],
+    "min_engine_version": [1, 21, 120]
+  },
+  "modules": [
+    {
+      "description": "TS REPL scripts",
+      "uuid": "f64f6612-53dc-47ad-a46c-413f18741a5a",
+      "version": [6, 11, 1],
+      "type": "script",
+      "language": "javascript",
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "beta"
+    },
+    {
+      "module_name": "@minecraft/server-ui",
+      "version": "beta"
+    },
+    {
+      "module_name": "@minecraft/common",
+      "version": "1.2.0"
+    },
+    {
+      "description": "TS REPL resources",
+      "uuid": "d3634589-551e-403a-bec9-af8cfa9c55e1",
+      "version": [6, 11, 1]
+    }
+  ],
+  "capabilities": ["script_eval"]
+}

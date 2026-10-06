@@ -1,0 +1,28 @@
+## a new player gets one wand
+@A join
+wait 1500
+js inv(p('A'))
+~ lab:wand\*1
+
+## using it gives speed and counts on the sidebar
+@A join
+wait 1500
+@A select lab:wand
+@A use
+~ @A Whoosh!
+wait 300
+js p('A').getEffect('speed')?.amplifier
+= 1
+js world.scoreboard.getObjective('wand_uses').getScore(p('A'))
+= 1
+
+
+## a second use within 5 seconds is refused
+@A join
+wait 5500
+@A select lab:wand
+@A use
+~ @A Whoosh!
+wait 500
+@A use
+~ @A The wand is recharging

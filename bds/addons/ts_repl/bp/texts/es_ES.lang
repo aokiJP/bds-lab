@@ -1,0 +1,2 @@
+pack.name=TS REPL
+pack.description=Escribe TypeScript / JavaScript dentro del juego y ejecútalo al momento. Empieza con /function tsrepl_start, o /function tsrepl_help si te atascas. Tres superficies de edición (barra lateral, barra de acción y formulario). Los errores aparecen en rojo mientras escribes. Activa "API beta" en los ajustes del mundo.

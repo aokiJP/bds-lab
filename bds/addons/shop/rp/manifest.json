@@ -1,0 +1,17 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Shop RP",
+    "description": "A coin shop",
+    "uuid": "3c31877e-dc9a-4292-a61c-c9be74d94d7e",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 26, 52]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "98fb7d79-6560-4fb1-aa2c-e5dcbf0bff86",
+      "version": [1, 0, 0]
+    }
+  ]
+}

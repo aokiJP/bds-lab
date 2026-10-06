@@ -1,0 +1,46 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "probe walk-ticks",
+    "description": "proves: test-walk-ticks",
+    "uuid": "dbfeab4a-1de4-58ef-b557-1471032dc236",
+    "version": [
+      1,
+      0,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      0
+    ]
+  },
+  "modules": [
+    {
+      "type": "data",
+      "uuid": "24dbb3cf-1c38-53ac-abf6-0f3954e83bed",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "f1e75922-91a8-5992-a636-60fc4e997cad",
+      "version": [
+        1,
+        0,
+        0
+      ],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.0.0"
+    }
+  ]
+}

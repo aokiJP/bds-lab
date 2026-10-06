@@ -1,0 +1,95 @@
+item.tsrepl:console=Консоль TS
+tile.tsrepl:script_block.name=Блок скрипта
+
+## Подсказки во время набора (их берёт JSON UI)
+
+## Строка состояния (её берёт JSON UI)
+tsrepl.status.left=⧉
+tsrepl.status.right=UTF-8   LF   TypeScript
+tsrepl.editor.placeholder=§8Пустой файл. Можно начинать отсюда.
+
+## コマンドの案内文（tellraw から translate で参照）
+tsrepl.start.done=§aГотово. §rВозьмите §fКонсоль TS§r в руку и используйте её.
+tsrepl.start.hint=§7Ввод §b>> §7в чат тоже открывает. Не знаете, что дальше? §b/function tsrepl_help
+tsrepl.grant.done=§aTS REPL: доступ выдан.
+tsrepl.grant.next=§7Далее: §b/function tsrepl_start§7 (получить консоль)
+tsrepl.help.head=§f— Краткая справка TS REPL —
+tsrepl.help.start=§b/function tsrepl_start§7  начать (доступ + консоль)
+tsrepl.help.chat=§b>>§7 без текста  меню / §b>> код§7  выполнить строку
+tsrepl.help.screens=§b/function tsrepl_menu§7 меню  §btsrepl_board§7 боковая  §btsrepl_plain§7 форма
+tsrepl.help.write=§b/function tsrepl_write§7  сохранить написанное
+tsrepl.help.access=§b/function tsrepl_grant§7 / §btsrepl_revoke§7  доступ другим
+tsrepl.help.move=§7Внутри двигайтесь на §fWASD§7. Закрыть — ✕ справа вверху.
+tsrepl.revoke.done=§eTS REPL: доступ отозван.
+tsrepl.help.doctor=§b/function tsrepl_doctor§7  самопроверка (начните с неё)
+
+## パック一覧に出る名前と説明
+pack.name=TS REPL Resources
+pack.description=Внешний вид TS REPL (экраны, значки, многострочное поле). Устанавливайте вместе с пакетом поведения.
+tsrepl.coach.activity=1 Activity bar: search, run, extensions
+tsrepl.coach.explorer=2 Explorer: pick a file
+tsrepl.coach.tabs=3 Tabs: files you have open
+tsrepl.coach.editor=4 Press a line to edit it
+tsrepl.coach.panel=5 Panel: problems, output, terminal
+tsrepl.coach.status=6 Error count and cursor position
+tsrepl.coach.dismiss=Tap anywhere once to dismiss
+
+## 作業の流れ（Walkthrough）— JSON UI から引かれる
+tsrepl.wt.tab=Обзор: настройка TS REPL
+tsrepl.wt.next=Далее
+tsrepl.wt.back=Назад
+tsrepl.wt.close=Закрыть
+tsrepl.wt.fine=TS REPL выполняет код внутри мира. Те, кому вы дали доступ, тоже смогут его запускать.
+tsrepl.wt.foot=Когда закончите, начнётся обучение. Открыть это снова можно со страницы приветствия.
+tsrepl.wt.p1.title=Начало работы с TS REPL
+tsrepl.wt.p1.sub=Настоящий TypeScript внутри Minecraft
+tsrepl.wt.p1.i1=Пишите и запускайте
+tsrepl.wt.p1.i1b=Напишите строку, нажмите «Запуск» — результат вернётся в панель снизу.
+tsrepl.wt.p1.i2=Настоящая проверка типов
+tsrepl.wt.p1.i2b=Компилятор TypeScript входит в комплект, поэтому ошибки видны до запуска.
+tsrepl.wt.p1.i3=Дополнение и import
+tsrepl.wt.p1.i3b=Подсказки во время набора, а import работает так же, как в редакторе.
+tsrepl.wt.p1.go=Открыть редактор
+tsrepl.wt.p2.title=Пишите код
+tsrepl.wt.p2.sub=Редактор работает так, как вы ожидаете
+tsrepl.wt.p2.i1=Нажмите строку, чтобы изменить
+tsrepl.wt.p2.i1b=Каждая строка — кнопка. Нажатие открывает поле ввода для неё.
+tsrepl.wt.p2.i2=Сочетания клавиш
+tsrepl.wt.p2.i2b=Отмена, поиск, комментарий, перенос строки — привычные клавиши, если их включить.
+tsrepl.wt.p2.i3=Несколько файлов
+tsrepl.wt.p2.i3b=Открывайте их вкладками и переключайтесь через проводник.
+tsrepl.wt.p2.go=Изменить строку
+tsrepl.wt.p3.title=Запуск
+tsrepl.wt.p3.sub=Ничего не нужно пересобирать и перезагружать
+tsrepl.wt.p3.i1=Запустить весь файл
+tsrepl.wt.p3.i1b=Нажмите «Запуск» на боковой панели — файл выполнится целиком.
+tsrepl.wt.p3.i2=Запустить одну строку
+tsrepl.wt.p3.i2b=Введите в чате >> и код, чтобы выполнить только эту строку.
+tsrepl.wt.p3.i3=Посмотреть вывод
+tsrepl.wt.p3.i3b=Нижняя панель собирает вывод, проблемы и терминал.
+tsrepl.wt.p3.go=Запустить что-нибудь
+tsrepl.wt.p4.title=Исправляйте ошибки
+tsrepl.wt.p4.sub=Ошибка указывает на строку
+tsrepl.wt.p4.i1=Список проблем
+tsrepl.wt.p4.i1b=Все ошибки и предупреждения с указанием строки. Нажмите, чтобы перейти.
+tsrepl.wt.p4.i2=Пометка на месте
+tsrepl.wt.p4.i2b=Сама строка тоже помечается, как в редакторе.
+tsrepl.wt.p4.i3=Быстрые исправления
+tsrepl.wt.p4.i3b=Если компилятор знает ответ, он его предлагает.
+tsrepl.wt.p4.go=Посмотреть проблемы
+tsrepl.wt.p5.title=Дальше
+tsrepl.wt.p5.sub=Куда двигаться потом
+tsrepl.wt.p5.i1=Сохраняйте работу
+tsrepl.wt.p5.i1b=Дайте файлу имя — он останется в мире, а не только в этой сессии.
+tsrepl.wt.p5.i2=Делитесь
+tsrepl.wt.p5.i2b=Файлы можно передать другим игрокам с доступом.
+tsrepl.wt.p5.i3=Настройки
+tsrepl.wt.p5.i3b=Тема, язык, обработка клавиш и ширина поля.
+tsrepl.wt.p5.go=Закончить и начать обучение
+tsrepl.bar.prev=◂ На шаг назад
+tsrepl.bar.next=Смотреть дальше ▸
+tsrepl.bar.try=Попробовать ▸
+tsrepl.bar.skip=Выйти из обзора
+tsrepl.bar.again=◂ Посмотреть снова
+tsrepl.bar.step=Следующий шаг ▸
+tsrepl.bar.close=Закрыть

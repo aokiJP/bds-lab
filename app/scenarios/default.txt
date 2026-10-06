@@ -1,0 +1,9 @@
+# 既定のシナリオ（アドオンに app.txt が無いとき）: 起動 → 最初の画面 → ラボの BDS へ直接参加 → ワールドの画面
+# 手順の一覧: node lab.mjs app help
+launch                       # 準備済みの端末（app prepare）なら、もうタイトル画面で起動済み
+until title 600000           # タイトル画面まで（初めての起動はソフトウェア描画でとても重い）
+shot title
+join                         # minecraft://connect/?serverUrl=10.0.2.2&serverPort=19132
+until joined 300000          # BDS のログに Player Spawned が出るまで（パックのダウンロードも含む）
+until stable 120000
+shot world

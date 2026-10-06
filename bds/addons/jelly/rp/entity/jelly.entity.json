@@ -1,0 +1,22 @@
+{
+  "format_version": "1.10.0",
+  "minecraft:client_entity": {
+    "description": {
+      "identifier": "lab:jelly",
+      "materials": {
+        "default": "entity_alphatest"
+      },
+      "textures": {
+        "default": "textures/entity/jelly"
+      },
+      "geometry": {
+        "default": "geometry.lab_jelly"
+      },
+      "render_controllers": ["controller.render.default"],
+      "spawn_egg": {
+        "base_color": "#7f7f7f",
+        "overlay_color": "#bfbfbf"
+      }
+    }
+  }
+}

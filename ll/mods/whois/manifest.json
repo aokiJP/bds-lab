@@ -1,0 +1,12 @@
+{
+    "name": "whois",
+    "entry": "whois.js",
+    "type": "lse-quickjs",
+    "version": "0.1.0",
+    "description": "Address, ping, packet loss, device OS and client id",
+    "dependencies": [
+        {
+            "name": "legacy-script-engine-quickjs"
+        }
+    ]
+}

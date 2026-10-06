@@ -1,0 +1,24 @@
+## loads
+@A join
+~ joined
+
+## coin once a day
+@A join
+@A cmd /lab:coins
+~ @A You got a coin
+wait 300
+js inv(p('A'))
+~ minecraft:gold_nugget\*1
+@A cmd /lab:coins
+~ @A Already claimed today
+
+## still claimed after a restart, a coin again the next day
+restart
+@A cmd /lab:coins
+~ @A Already claimed today
+clock +1d
+@A cmd /lab:coins
+~ @A You got a coin
+wait 300
+js inv(p('A'))
+~ minecraft:gold_nugget\*2

@@ -1,0 +1,27 @@
+[
+ {
+  "at": "2026-10-03T09:31:20.039Z",
+  "skills": "f4a499e9d1",
+  "via": "claude",
+  "tasks": [
+   "shop"
+  ],
+  "on": {
+   "runs": 1,
+   "pass": 1,
+   "tokens": 45894,
+   "steps": 4
+  },
+  "off": {
+   "runs": 1,
+   "pass": 1,
+   "tokens": 42602,
+   "steps": 4
+  },
+  "keep": true,
+  "why": "same passes, 8% more tokens with skills (within 10%)",
+  "bds": "1.26.52.3",
+  "grade": 98,
+  "fixed": "why recomputed with the v1.18 verdict (the stored line came from the old wording bug)"
+ }
+]

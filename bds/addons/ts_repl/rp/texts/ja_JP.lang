@@ -1,0 +1,95 @@
+item.tsrepl:console=TS コンソール
+tile.tsrepl:script_block.name=スクリプトブロック
+
+## 打っている最中に出る合図（JSON UI から引かれる）
+
+## 状態帯（JSON UI から引かれる）
+tsrepl.status.left=⧉
+tsrepl.status.right=UTF-8   LF   TypeScript
+tsrepl.editor.placeholder=§8ここに書きます。例: §7say("hello")
+
+## コマンドの案内文（tellraw から translate で参照）
+tsrepl.start.done=§a準備できました。§r手に持った §fTS コンソール§r で開きます。
+tsrepl.start.hint=§7チャットに §b>> §7と打っても開けます。困ったら §b/function tsrepl_help
+tsrepl.grant.done=§aTS REPL: 利用権限を付与しました。
+tsrepl.grant.next=§7次は §b/function tsrepl_start§7（コンソールを受け取る）
+tsrepl.help.head=§f— TS REPL の使いかた —
+tsrepl.help.start=§b/function tsrepl_start§7  はじめる（権限とコンソールを渡す）
+tsrepl.help.chat=§b>>§7 だけ打つ  献立を開く／§b>> コード§7  その 1 行を動かす
+tsrepl.help.screens=§b/function tsrepl_menu§7 献立  §btsrepl_board§7 サイドバー  §btsrepl_plain§7 フォーム
+tsrepl.help.write=§b/function tsrepl_write§7  いま書いたコードを保存する
+tsrepl.help.access=§b/function tsrepl_grant§7 ／ §btsrepl_revoke§7  ほかの人の権限
+tsrepl.help.move=§7画面の中は §fWASD§7 で動かせます。閉じるのは右上の ✕。
+tsrepl.revoke.done=§eTS REPL: 利用権限を取り消しました。
+tsrepl.help.doctor=§b/function tsrepl_doctor§7  調子をみる（困ったときはこれ）
+
+## パック一覧に出る名前と説明
+pack.name=TS REPL Resources
+pack.description=TS REPL の見た目（画面・アイコン・複数行の入力欄）。ビヘイビアーパックと一緒に入れてください。
+tsrepl.coach.activity=① 左の帯：検索・実行・拡張機能
+tsrepl.coach.explorer=② エクスプローラー：ファイルを選ぶ
+tsrepl.coach.tabs=③ タブ：開いているファイル
+tsrepl.coach.editor=④ 行を押すとその行を編集
+tsrepl.coach.panel=⑤ 下の帯：問題・出力・ターミナル
+tsrepl.coach.status=⑥ エラーの数と現在行
+tsrepl.coach.dismiss=画面を 1 回押すと消えます
+
+## 作業の流れ（Walkthrough）— JSON UI から引かれる
+tsrepl.wt.tab=作業の流れ: TS REPL を整える
+tsrepl.wt.next=次へ
+tsrepl.wt.back=戻る
+tsrepl.wt.close=閉じる
+tsrepl.wt.fine=TS REPL はワールドの中でコードを動かします。権限を渡した人も同じように動かせます。
+tsrepl.wt.foot=見終わると手本がはじまります。ようこそからいつでも開き直せます。
+tsrepl.wt.p1.title=TS REPL をはじめる
+tsrepl.wt.p1.sub=Minecraft の中で、本物の TypeScript
+tsrepl.wt.p1.i1=書いて、動かす
+tsrepl.wt.p1.i1b=1 行書いて実行を押すと、下の帯に結果が返ってきます。
+tsrepl.wt.p1.i2=本物の型チェック
+tsrepl.wt.p1.i2b=TypeScript のコンパイラを同梱しているので、動かす前に間違いが見つかります。
+tsrepl.wt.p1.i3=補完と import
+tsrepl.wt.p1.i3b=打っている最中に候補が出ます。import もエディタと同じように効きます。
+tsrepl.wt.p1.go=エディタを開く
+tsrepl.wt.p2.title=コードを書く
+tsrepl.wt.p2.sub=思ったとおりに動くエディタ
+tsrepl.wt.p2.i1=行を押すと編集
+tsrepl.wt.p2.i1b=行はぜんぶ釦です。押すとその行の入力欄が開きます。
+tsrepl.wt.p2.i2=ショートカット
+tsrepl.wt.p2.i2b=取り消し・検索・註釈・行の移動。キーを入にすればいつもの手癖で動きます。
+tsrepl.wt.p2.i3=複数のファイル
+tsrepl.wt.p2.i3b=タブで何枚も開けます。左の一覧から切り替えられます。
+tsrepl.wt.p2.go=行を編集してみる
+tsrepl.wt.p3.title=動かす
+tsrepl.wt.p3.sub=ビルドも読み込み直しも要りません
+tsrepl.wt.p3.i1=ファイルごと動かす
+tsrepl.wt.p3.i1b=左の帯の実行を押すと、ファイル 1 枚がそのまま動きます。
+tsrepl.wt.p3.i2=1 行だけ動かす
+tsrepl.wt.p3.i2b=チャットに >> に続けてコードを打つと、その 1 行だけ動きます。
+tsrepl.wt.p3.i3=出力を見る
+tsrepl.wt.p3.i3b=下の帯に出力・問題・ターミナルがまとまっています。
+tsrepl.wt.p3.go=動かしてみる
+tsrepl.wt.p4.title=まちがいを直す
+tsrepl.wt.p4.sub=エラーは行を指します
+tsrepl.wt.p4.i1=問題の一覧
+tsrepl.wt.p4.i1b=エラーと警告が、出どころの行つきで並びます。押すとその行へ飛びます。
+tsrepl.wt.p4.i2=その場に印
+tsrepl.wt.p4.i2b=行そのものにも印が付きます。エディタと同じです。
+tsrepl.wt.p4.i3=すばやい修正
+tsrepl.wt.p4.i3b=コンパイラが答えを知っているものは、直し方まで出ます。
+tsrepl.wt.p4.go=問題を見る
+tsrepl.wt.p5.title=続ける
+tsrepl.wt.p5.sub=このあとの行き先
+tsrepl.wt.p5.i1=残す
+tsrepl.wt.p5.i1b=名前を付けて保存すると、この回かぎりではなくワールドに残ります。
+tsrepl.wt.p5.i2=渡す
+tsrepl.wt.p5.i2b=権限のある人にファイルを渡せます。
+tsrepl.wt.p5.i3=設定
+tsrepl.wt.p5.i3b=テーマ・言語・キーの扱い・盤面の幅。
+tsrepl.wt.p5.go=終わって手本をはじめる
+tsrepl.bar.prev=◂ ひとつ戻る
+tsrepl.bar.next=次を見る ▸
+tsrepl.bar.try=やってみる ▸
+tsrepl.bar.skip=手本をやめる
+tsrepl.bar.again=◂ もう一度見る
+tsrepl.bar.step=次の手順へ ▸
+tsrepl.bar.close=閉じる

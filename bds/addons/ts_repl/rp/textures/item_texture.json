@@ -1,0 +1,7 @@
+{
+  "resource_pack_name": "tsrepl",
+  "texture_name": "atlas.items",
+  "texture_data": {
+    "ts_console": { "textures": "textures/items/ts_console" }
+  }
+}

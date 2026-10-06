@@ -1,0 +1,12 @@
+{
+    "name": "motd",
+    "entry": "motd.js",
+    "type": "lse-quickjs",
+    "version": "0.1.0",
+    "description": "The server list line written live: players online (mc.setMotd)",
+    "dependencies": [
+        {
+            "name": "legacy-script-engine-quickjs"
+        }
+    ]
+}

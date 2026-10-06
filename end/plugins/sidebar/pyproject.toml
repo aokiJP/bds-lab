@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "endstone-sidebar"
+version = "0.1.0"
+description = "A sidebar per player: everyone sees their own position and ping (a private Scoreboard per player)"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.entry-points."endstone"]
+sidebar = "endstone_sidebar:Sidebar"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/endstone_sidebar"]

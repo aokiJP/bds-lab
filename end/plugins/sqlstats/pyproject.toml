@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "endstone-sqlstats"
+version = "0.1.0"
+description = "Player statistics in a real SQLite database with rankings"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.entry-points."endstone"]
+sqlstats = "endstone_sqlstats:Sqlstats"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/endstone_sqlstats"]

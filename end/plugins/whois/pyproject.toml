@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "endstone-whois"
+version = "0.1.0"
+description = "Address, ping, device, OS, language and client version of a player"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.entry-points."endstone"]
+whois = "endstone_whois:Whois"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/endstone_whois"]

@@ -1,0 +1,4 @@
+# words and phrases a person uses when this skill is needed, any language, one per line (skill route reads them; not installed)
+form, menu, dialog, button, input form, confirm dialog, popup, prompt the player
+ActionFormData, ModalFormData, MessageFormData, formValues, selection, canceled, UserBusy
+フォーム, 閉じると落ちる, メニュー, ボタン, 入力, 選択, 確認, ダイアログ, 入力欄, スライダー, トグル, ドロップダウン, キャンセル

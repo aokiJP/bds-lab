@@ -1,0 +1,771 @@
+name: app
+
+# 本物の Minecraft アプリ（APK）を Android エミュレータで動かし、ラボの BDS に直接参加させて、
+# アドオンの JSON UI のスクリーンショットとログ（クライアントにしか出ないエラーも）を成果物（artifact）にする。
+#
+# 速さ: 端末は「準備済み」の状態（Minecraft がタイトル画面で起動済みのスナップショット。app/lib/warm.mjs）から戻し、
+# すぐ参加する。準備済みの端末・APK・Play ストア・BDS は、非公開のキャッシュ（暗号化。app/lib/vault.mjs）に置いて次の実行で使う。
+# キャッシュが無い・古い（Minecraft の更新など）ときだけ、最初のジョブ（prep）が一度作る（10〜30 分）。ゲームを入れる前の「端末の土台」
+# （Play ストアとアカウント入り）も別にキャッシュし、Minecraft の更新のときはそこから作る（数分。端末の登録もやり直さない）。
+#
+# mode: run    … アドオンの app.txt（無ければ app/scenarios/default.txt、入力 scenario で指定も）
+#       ui     … アドオンの rp/ui にある JSON UI の画面をすべて開いて撮り、クライアントのエラーを画面ごとに（node lab.mjs app ui）
+#       ui-all … ラボが開ける画面すべて（HUD・チャット・インベントリ・一時停止・設定・フォーム 3 種・ブロックの画面・本・看板・NPC・取引・死亡・切断）
+# devices: 同時に動かす端末の数（1〜8。auto = run は 1 台、ui / ui-all は 4 台）。ui / ui-all では画面を分けて並行に撮り、結果は 1 つにまとまる
+#
+# APK は Google Play から取る（購入者本人の AAS トークン。パスワードは使わない）。
+#   Secrets:  GOOGLE_EMAIL / GOOGLE_AAS_TOKEN   … 手元で `node lab.mjs app token` → `node lab.mjs app secrets` で登録
+#             APP_CACHE_KEY（任意）              … キャッシュの暗号鍵の元。無ければ GOOGLE_AAS_TOKEN から作る（トークン自体は書かない）
+#             MS_EMAIL / MS_PASSWORD（任意）     … 端末のゲームを Microsoft アカウントでサインインさせて準備済みの端末に残す（フレンドの
+#                                                 ワールド・アドレスでのサーバー参加に要る。専用のアカウントを推奨）。二段階の確認は
+#                                                 ライブの issue に出る（承認の番号 / `node lab.mjs app live --run <番号> "code 123456"`）
+#   変数:     BB_PLAY_ENV                        … あればその Environment から読む（既定ブランチだけに絞れる）
+#             APP_VENDING_URL / APP_VENDING_SHA256 … 入力 account のとき、Play ストアの APK（ハッシュで確かめてから system に置く）
+#
+# 入力 account（既定 on）: Minecraft の起動時のライセンス確認には、本物の Play ストアと購入したアカウントが要る。AAS トークンを
+# Google アカウントとしてエミュレータのアカウント情報へ直接書き込む（Google の公式の手順ではない。lib/account.mjs）。
+# トークンは sqlite3 の標準入力でエミュレータへ。コマンドラインにもログにも出さない。結果は guard が確かめる
+#
+# 守ること:
+#   - キャッシュ（APK・BDS・Play ストア・準備済みの端末）は private リポジトリのときだけ。public / internal では一切使わない
+#     （ステップの if と、lib/vault.mjs が APP_REPO_VISIBILITY を見る。中身は AES-256-GCM で暗号化。鍵は秘密からだけ作れる）
+#   - アプリのジョブは GitHub への書き込み権限を持たない（contents: read、checkout の資格情報も残さない）。
+#     結果をチェックに出す最後のジョブ（report）は checks: write だけで、秘密を持たない
+#   - Google の秘密は、版の確認・準備・アプリの実行のステップにだけ渡す。apkeep / gpdl へは 600 の一時 ini で渡し、終わったら消す
+#   - APK・.so は成果物に入れない。アップロードの前に `app guard` で中身（マジックバイト）まで確かめる
+#   - 既定ブランチのワークフローでしか動かない（枝で書き換えられたワークフローに秘密を渡さない）。
+#     別の枝のアドオンを試すときは、入力 ref で「アドオンのファイルだけ」をその枝から取る
+#   - アクションはコミット SHA で固定
+
+# (実行の名前に lane: 同時に走る実験を見分ける)
+run-name: app ${{ inputs.addon }} ${{ inputs.mode }}${{ inputs.lane != '' && format(' [{0}]', inputs.lane) || '' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      addon:
+        description: 'アドオン（bds/addons/ の名前）'
+        default: jsonui_demo
+      mode:
+        description: 'run = app.txt / ui = アドオンの JSON UI の画面すべて / ui-all = ラボが開ける画面すべて / hold = 端末を常駐（node lab.mjs app live の run / ui / pull で何度でも。復元は 1 回）'
+        type: choice
+        options: [run, ui, ui-all, hold]
+        default: run
+      devices:
+        description: '同時に動かす端末の数（ui / ui-all で画面を分ける。auto = run は 1 台、ui / ui-all は 4 台）'
+        type: choice
+        options: [auto, '1', '2', '3', '4', '5', '6', '7', '8']
+        default: auto
+      ref:
+        description: 'アドオンを取る枝（例 addon/my_ui）。空なら既定ブランチのもの'
+        default: ''
+      scenario:
+        description: 'シナリオ（mode run のとき。空ならアドオンの app.txt、無ければ app/scenarios/default.txt）'
+        default: ''
+      bds:
+        description: 'BDS の版（auto = アプリに合わせる）'
+        default: auto
+      account:
+        description: 'Google アカウントをエミュレータへ書き込む（ライセンス確認に要る。AAS トークン。公式の手順ではない）'
+        type: boolean
+        default: true
+      screen:
+        description: '端末の画面（幅x高さ。小さいほど軽い。空なら 1080x2340）'
+        default: '720x1560'
+      fresh:
+        description: '準備済みの端末を使わず、作り直す（キャッシュも新しくする）'
+        type: boolean
+        default: false
+      lane:
+        description: '同時に走らせる実験の名前（空なら 1 本ずつ順番に。名前が違えば並行に走る）'
+        default: ''
+      knobs:
+        description: 'ラボの設定（APP_名前=値 を空白で区切って。例 APP_APK_X86=1 APP_INSTALL_VIA=play）'
+        default: ''
+      hold:
+        description: '端末を動かしたまま命令を待つ分（0〜300。端末を作った後と確かめた後。node lab.mjs app live でさわる。mode hold で 0 なら 60）'
+        default: '0'
+
+permissions: {}
+
+# 既定は実行ごとに別の列（いくつでも並行に走る。同じキャッシュを 2 本が作ったら、後の保存は既にあるとして飛ばされるだけ）。
+# 入力 lane に同じ名前を付けた実行どうしは、1 本ずつ順番に走る
+concurrency:
+  group: app-${{ inputs.lane || github.run_id }}
+  cancel-in-progress: false
+
+env:
+  ADDON: ${{ inputs.addon }}
+  ACCOUNT: ${{ inputs.account }}
+  # ソフトウェア描画では、ゲームが描く画素がそのまま CPU の負荷になる（lib/android.mjs screenSize）
+  APP_SCREEN: ${{ inputs.screen }}
+  # キャッシュは private のときだけ（lib/vault.mjs もこれを確かめ、private 以外では何も読み書きしない）
+  APP_REPO_VISIBILITY: ${{ github.event.repository.visibility }}
+  PRIVATE: ${{ github.event.repository.visibility == 'private' }}
+  # エミュレータ本体とシステムイメージのキャッシュ（Google が公開しているもの。秘密は入らない）。準備済みの端末は、
+  # 作ったときと同じエミュレータでないと読めないので、ランナーに入っているものではなく、これを使う
+  SDK_KEY: app-sdk-v1-Linux-android-34-google_apis-x86_64
+  # キャッシュの取り出しの 1 区切りの待ち時間（既定 10 分）。準備済みの端末（暗号化 5.9 GB）が遅い日に時間切れになり
+  # （"Failed to restore: The operation cannot be completed in timeout"）、端末ジョブが 35 分かけて作り直した
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: '30'
+
+jobs:
+  # 版の確認と、準備済みの端末（無ければ作ってキャッシュへ）。端末が何台でも、作るのはここで一度だけ
+  prep:
+    name: 端末の準備
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    # (a device made from nothing: the account's storm is waited out once, up to 25 minutes, before the base is kept)
+    timeout-minutes: ${{ ((inputs.hold != '' && inputs.hold != '0') || inputs.mode == 'hold') && 360 || 120 }}
+    environment: ${{ vars.BB_PLAY_ENV || '' }}
+    permissions:
+      contents: read
+      # (hold: the live issue's comments — commands in, answers out)
+      issues: write
+      # (tidy: the lab's own old caches removed before saving, so GitHub's 10 GB limit never drops the emulator or the device)
+      actions: write
+    outputs:
+      play_code: ${{ steps.keys.outputs.play_code }}
+      play_name: ${{ steps.keys.outputs.play_name }}
+      vault: ${{ steps.keys.outputs.vault }}
+      key_avd: ${{ steps.keys.outputs.key_avd }}
+      key_bds: ${{ steps.keys.outputs.key_bds }}
+      shards: ${{ steps.plan.outputs.shards }}
+      devices: ${{ steps.plan.outputs.devices }}
+    steps:
+      - name: 通信先を記録
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # 入力 knobs: ラボの設定（APP_*）をこのジョブの環境へ。秘密・キャッシュ・道具の場所に関わるものは変えられない
+      - name: ラボの設定（knobs）
+        if: inputs.knobs != ''
+        env:
+          KNOBS: ${{ inputs.knobs }}
+        run: |
+          set -euo pipefail
+          for kv in $KNOBS; do
+            [[ "$kv" =~ ^APP_[A-Z0-9_]+=[A-Za-z0-9_.:,x-]*$ ]] || { echo "::error::knobs は APP_名前=値 を空白で区切って（値は英数字と _ . : , - だけ）: $kv"; exit 1; }
+            case "${kv%%=*}" in
+              APP_CACHE_KEY|APP_REPO_VISIBILITY|APP_VAULT_DIR|APP_FULL_LOGS|APP_ADB|APP_EMULATOR|APP_SDKMANAGER|APP_AVDMANAGER|APP_TESSERACT|APP_SDK_KEY|APP_PLAY_CODE|APP_PLAY_NAME|APP_VENDING_URL|APP_VENDING_SHA256|APP_VENDING_APK)
+                echo "::error::${kv%%=*} は knobs では変えられません"; exit 1 ;;
+            esac
+            echo "$kv" >> "$GITHUB_ENV"
+          done
+          echo "::notice title=ラボの設定::$KNOBS"
+
+      - name: 入力を確かめる
+        id: plan
+        env:
+          BDS: ${{ inputs.bds }}
+          SCENARIO: ${{ inputs.scenario }}
+          MODE: ${{ inputs.mode }}
+          DEVICES: ${{ inputs.devices }}
+        run: |
+          set -euo pipefail
+          [[ "$ADDON" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "::error::addon の名前が不正です"; exit 1; }
+          [[ "$BDS" =~ ^(auto|keep|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)$ ]] || { echo "::error::bds は auto / keep / 版番号"; exit 1; }
+          if [ -n "$SCENARIO" ]; then [[ "$SCENARIO" =~ ^[A-Za-z0-9_./-]+$ && "$SCENARIO" != *..* ]] || { echo "::error::scenario のパスが不正です"; exit 1; }; fi
+          [[ "$APP_SCREEN" =~ ^([0-9]{3,4}x[0-9]{3,4})?$ ]] || { echo "::error::screen は 720x1560 のように（幅x高さ）"; exit 1; }
+          [[ "$DEVICES" =~ ^([1-8]|auto)$ ]] || { echo "::error::devices は 1〜8 か auto"; exit 1; }
+          if [ "$DEVICES" = auto ]; then DEVICES=4; fi
+          if [ "$PRIVATE" != true ]; then echo "::warning title=キャッシュなし::リポジトリが ${APP_REPO_VISIBILITY} なので、APK・BDS・端末をキャッシュしません（private のときだけ）。毎回すべて作るので遅くなります"; fi
+          # (mode run は 1 台: app.txt は 1 本の流れ。hold も 1 台: 常駐の端末をもう 1 台なら、もう 1 本の実行で並行に)
+          n=$DEVICES; if [ "$MODE" = run ] || [ "$MODE" = hold ]; then n=1; fi
+          echo "devices=$n" >> "$GITHUB_OUTPUT"
+          echo "shards=[$(seq -s, 1 "$n")]" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: ランナーの性能
+        run: |
+          cpu=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ *//')
+          mem=$(awk '/MemTotal/{printf "%.1f", $2/1048576}' /proc/meminfo)
+          disk=$(df -BG --output=avail / | tail -1 | tr -d ' ')
+          swap=$(free -m | awk '/Swap/{print $2}'); mnt=$(df -BG --output=avail /mnt 2>/dev/null | tail -1 | tr -d ' ')
+          echo "::notice title=ランナー（準備）::CPU $(nproc) 個（${cpu}）、メモリ ${mem} GB、スワップ ${swap} MB、ディスク空き ${disk}（/mnt ${mnt:-?}）、KVM $([ -e /dev/kvm ] && echo あり || echo なし)"
+
+      # gpdl（app/gpdl）: 所有する有料アプリを Play から取る道具。組み立てに 5 分以上かかるので、できた実行ファイルと
+      # x86_64 の端末プロファイルだけをキャッシュする（APK・.so ではない。app/gpdl のソースが変われば作り直す。組み立てで
+      # できる target/ は名前に入れない: 入れると保存と読み込みで名前が変わる）。作ったらすぐ保存する（ジョブの最後の保存は、
+      # ジョブが失敗すると行われない）
+      - name: gpdl（キャッシュ）
+        if: env.PRIVATE == 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            app/.lab/tools/gpdl
+            app/.lab/tools/gpdl-devices.properties
+          key: gpdl-${{ runner.os }}-${{ hashFiles('app/gpdl/src/**', 'app/gpdl/Cargo.toml', 'app/gpdl/build.sh', 'app/gpdl/profile.mjs') }}
+
+      - name: gpdl を組み立てる
+        id: gpdl
+        run: |
+          if [ -x app/.lab/tools/gpdl ] && [ -f app/.lab/tools/gpdl-devices.properties ]; then echo "キャッシュの gpdl を使います"; else bash app/gpdl/build.sh; echo "built=true" >> "$GITHUB_OUTPUT"; fi
+          # 組み立ての途中のもの（数 GB）はもう要らない
+          rm -rf app/gpdl/target app/.lab/rs-google-play ~/.cargo/registry/cache
+
+      - name: gpdl を保存
+        if: env.PRIVATE == 'true' && steps.gpdl.outputs.built == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            app/.lab/tools/gpdl
+            app/.lab/tools/gpdl-devices.properties
+          key: gpdl-${{ runner.os }}-${{ hashFiles('app/gpdl/src/**', 'app/gpdl/Cargo.toml', 'app/gpdl/build.sh', 'app/gpdl/profile.mjs') }}
+
+      # Google Play がいま配っている版（ダウンロードはしない）と、それに合うキャッシュの名前。秘密はここと、準備・実行にだけ
+      - name: 版とキャッシュの名前
+        id: keys
+        env:
+          GOOGLE_EMAIL: ${{ secrets.GOOGLE_EMAIL }}
+          GOOGLE_AAS_TOKEN: ${{ secrets.GOOGLE_AAS_TOKEN }}
+          APP_CACHE_KEY: ${{ secrets.APP_CACHE_KEY }}
+          APP_SDK_KEY: ${{ env.SDK_KEY }}
+          # (the device signed in when MS_EMAIL is set: another cache name. Only the flag here, not the account)
+          APP_SIGNIN_WANTED: ${{ secrets.MS_EMAIL != '' && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GOOGLE_EMAIL}${GOOGLE_AAS_TOKEN}" ]; then
+            echo "::error title=APK を取れません::GOOGLE_EMAIL / GOOGLE_AAS_TOKEN が未設定です（手元で node lab.mjs app token → node lab.mjs app secrets）"; exit 1
+          fi
+          args=(); if [ "$ACCOUNT" = true ]; then args+=(--account); fi
+          node lab.mjs app keys "${args[@]}"
+
+      # もうキャッシュにあるか（中身は取らない）
+      - name: 準備済みの端末はキャッシュにあるか
+        id: avd
+        if: steps.keys.outputs.vault == 'true' && !inputs.fresh
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: app/.lab/vault/avd.bin
+          key: ${{ steps.keys.outputs.key_avd }}
+          lookup-only: true
+
+      - name: BDS はキャッシュにあるか
+        id: bds
+        if: steps.keys.outputs.vault == 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: app/.lab/vault/bds.bin
+          key: ${{ steps.keys.outputs.key_bds }}
+          lookup-only: true
+
+      # ここからは、作るものがあるときだけ
+      - name: 作るものがあるか
+        id: need
+        env:
+          AVD_HIT: ${{ steps.avd.outputs.cache-hit }}
+          BDS_HIT: ${{ steps.bds.outputs.cache-hit }}
+        run: |
+          dev=true; bds=true
+          if [ "$AVD_HIT" = true ]; then dev=false; fi
+          if [ "$BDS_HIT" = true ]; then bds=false; fi
+          any=false; if [ "$dev" = true ] || [ "$bds" = true ]; then any=true; fi
+          { echo "device=$dev"; echo "bds=$bds"; echo "any=$any"; } >> "$GITHUB_OUTPUT"
+          echo "端末を作る: $dev / BDS を用意してキャッシュする: $bds"
+
+      # private のランナーは空きが 14 GB ほどしかない（端末のデータとスナップショットだけで 10 GB 近い）。使わない道具を消す。
+      # 裏で消すので待たない（Android SDK はエミュレータ・platform-tools・cmdline-tools・システムイメージだけ残す）
+      # （OCR の tesseract も裏で入れる: Play ストアの画面の構成が読めないとき、ボタンを文字で探す）
+      - name: ディスクを空け、OCR を入れる（裏で）
+        if: steps.need.outputs.device == 'true'
+        run: |
+          a="$ANDROID_HOME"
+          sudo -b sh -c "rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost '$AGENT_TOOLSDIRECTORY/CodeQL' /usr/share/swift /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules /opt/microsoft /opt/az '$a/ndk' '$a/ndk-bundle' '$a/cmake' '$a/build-tools' '$a/platforms' '$a/extras'; docker image prune -a -f" >/dev/null 2>&1
+          sudo -b sh -c "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends tesseract-ocr || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends tesseract-ocr)" >/dev/null 2>&1
+
+      # つまみ APP_HOST_SWAP_GB: このパソコンにスワップを足す（2 CPU・7.8 GB のランナーで、エミュレータがメモリ不足で止められないように）
+      - name: スワップを足す（つまみ）
+        if: env.APP_HOST_SWAP_GB != ''
+        run: |
+          set -euo pipefail
+          [[ "$APP_HOST_SWAP_GB" =~ ^[1-9]$ ]] || { echo "::error::APP_HOST_SWAP_GB は 1〜9（GB）"; exit 1; }
+          d=/mnt; [ -w "$d" ] || d=/
+          sudo fallocate -l "${APP_HOST_SWAP_GB}G" "$d/lab-swap" && sudo chmod 600 "$d/lab-swap" && sudo mkswap "$d/lab-swap" >/dev/null && sudo swapon "$d/lab-swap"
+          echo "::notice title=スワップ::$(free -m | awk '/Swap/{print $2 " MB（使用 " $3 " MB）"}')、$(df -h --output=avail "$d" | tail -1 | tr -d ' ') 空き（$d）"
+
+      - name: KVM を有効にする
+        if: steps.need.outputs.device == 'true'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: エミュレータの置き場所
+        id: sdk
+        run: |
+          echo "dir=$ANDROID_HOME" >> "$GITHUB_OUTPUT"
+          if [ -d "$ANDROID_HOME/emulator" ]; then mv "$ANDROID_HOME/emulator" "$ANDROID_HOME/emulator.runner"; fi
+
+      # エミュレータのキャッシュがあるか（端末を作らない実行でも: 無ければここで入れて保存する。準備済みの端末はこれと組でしか動かない）
+      - name: エミュレータはキャッシュにあるか
+        id: sdklook
+        if: env.PRIVATE == 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ steps.sdk.outputs.dir }}/emulator
+            ${{ steps.sdk.outputs.dir }}/system-images/android-34/google_apis/x86_64
+          key: ${{ env.SDK_KEY }}
+          lookup-only: true
+
+      - name: エミュレータとシステムイメージ（キャッシュ）
+        id: sdkcache
+        if: (steps.need.outputs.device == 'true' || steps.sdklook.outputs.cache-hit != 'true') && env.PRIVATE == 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ steps.sdk.outputs.dir }}/emulator
+            ${{ steps.sdk.outputs.dir }}/system-images/android-34/google_apis/x86_64
+          key: ${{ env.SDK_KEY }}
+
+      - name: キャッシュに無ければランナーのエミュレータとシステムイメージ
+        id: sdkfill
+        if: (steps.need.outputs.device == 'true' || (env.PRIVATE == 'true' && steps.sdklook.outputs.cache-hit != 'true')) && steps.sdkcache.outputs.cache-hit != 'true'
+        env:
+          SDK_DIR: ${{ steps.sdk.outputs.dir }}
+        run: |
+          if [ -d "$SDK_DIR/emulator.runner" ]; then rm -rf "$SDK_DIR/emulator"; mv "$SDK_DIR/emulator.runner" "$SDK_DIR/emulator"; fi
+          node -e "import('./app/lib/android.mjs').then((D) => D.ensureSdk({ log: console.log }))"
+          echo "fill=true" >> "$GITHUB_OUTPUT"
+
+      - name: エミュレータとシステムイメージを保存
+        if: env.PRIVATE == 'true' && steps.sdkfill.outputs.fill == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ steps.sdk.outputs.dir }}/emulator
+            ${{ steps.sdk.outputs.dir }}/system-images/android-34/google_apis/x86_64
+          key: ${{ env.SDK_KEY }}
+
+      # 端末を作り直すときだけ要るもの（非公開のキャッシュ: 暗号化済みのファイル。開けるのは秘密を持つこのワークフローだけ）
+      # （アカウントがあると、ゲームは Play が端末に入れる: ライセンス確認は Play が入れたものしか通さない。APK は要らない）
+      - name: APK（非公開のキャッシュ）
+        if: steps.keys.outputs.vault == 'true' && steps.need.outputs.device == 'true' && (!inputs.account || env.APP_INSTALL_VIA == 'adb')
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: app/.lab/vault/apk.bin
+          key: ${{ steps.keys.outputs.key_apk }}
+
+      - name: Play ストア（非公開のキャッシュ）
+        if: steps.keys.outputs.vault == 'true' && steps.need.outputs.device == 'true' && inputs.account && vars.APP_VENDING_URL == ''
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: app/.lab/vault/vending.bin
+          key: ${{ steps.keys.outputs.key_vending }}
+
+      # 端末の土台（Play ストアとアカウント入り、ゲームなし）。あれば、端末はここから作る（Minecraft の更新のとき、数分で済む。
+      # Google への登録も前と同じ端末のまま）
+      - name: 端末の土台（非公開のキャッシュ）
+        if: steps.keys.outputs.vault == 'true' && steps.need.outputs.device == 'true' && inputs.account && !inputs.fresh
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: app/.lab/vault/base.bin
+          key: ${{ steps.keys.outputs.key_base }}
+
+      # 一度だけ: 新しい端末に APK・アカウント・Play ストアを入れ、ゲームをタイトル画面まで起動してスナップショット（10〜30 分）
+      - name: 端末を作る
+        id: prep
+        if: steps.need.outputs.any == 'true'
+        env:
+          GOOGLE_EMAIL: ${{ secrets.GOOGLE_EMAIL }}
+          GOOGLE_AAS_TOKEN: ${{ secrets.GOOGLE_AAS_TOKEN }}
+          APP_CACHE_KEY: ${{ secrets.APP_CACHE_KEY }}
+          APP_PLAY_CODE: ${{ steps.keys.outputs.play_code }}
+          APP_PLAY_NAME: ${{ steps.keys.outputs.play_name }}
+          APP_VENDING_URL: ${{ inputs.account && vars.APP_VENDING_URL || '' }}
+          APP_VENDING_SHA256: ${{ inputs.account && vars.APP_VENDING_SHA256 || '' }}
+          FRESH: ${{ inputs.fresh }}
+          NEED_DEVICE: ${{ steps.need.outputs.device }}
+          BDS: ${{ inputs.bds }}
+          # (the game's Microsoft sign-in, typed through stdin on the device; two-step verification asked on the live issue)
+          MS_EMAIL: ${{ secrets.MS_EMAIL }}
+          MS_PASSWORD: ${{ secrets.MS_PASSWORD }}
+          GITHUB_TOKEN: ${{ github.token }}
+          LIVE_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ "$ACCOUNT" = true ]; then args+=(--account); fi
+          if [ "$FRESH" = true ]; then args+=(--force); fi
+          if [ "$NEED_DEVICE" != true ]; then args+=(--no-device); fi
+          if [ "$BDS" != auto ] && [ "$BDS" != keep ]; then args+=(--bds "$BDS"); fi
+          node lab.mjs app prepare "${args[@]}"
+
+      # 新しく作ったものだけ保存する（端末づくりが途中で失敗しても、取れた APK・Play ストア・BDS は残す）
+      # 入力 hold（分）: 端末を動かしたまま（失敗した端末もそのまま）、issue「app live: …」のコメントの命令を待つ
+      # （node lab.mjs app live）。命令はこの実行を起動した人のものだけ、端末（adb）にだけ効く。seal: その状態を準備済みの端末に
+      - name: 端末をそのまま調べる（hold）
+        id: hold
+        if: always() && inputs.hold != '' && inputs.hold != '0' && steps.need.outputs.device == 'true'
+        timeout-minutes: 330
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LIVE_USER: ${{ github.actor }}
+          HOLD: ${{ inputs.hold }}
+          APP_CACHE_KEY: ${{ secrets.APP_CACHE_KEY }}
+          APP_ACCOUNT: ${{ inputs.account && '1' || '0' }}
+          APP_PLAY_CODE: ${{ steps.keys.outputs.play_code }}
+          # (live signin, then seal: the signed-in device kept)
+          MS_EMAIL: ${{ secrets.MS_EMAIL }}
+          MS_PASSWORD: ${{ secrets.MS_PASSWORD }}
+          APP_SIGNIN_WANTED: ${{ secrets.MS_EMAIL != '' && 'true' || 'false' }}
+        run: node lab.mjs app hold --minutes "$HOLD"
+
+      # 保存の前に、リポジトリのキャッシュ（上限 10 GB）を空ける: 前の版の部品を外し、まだ足りなければ端末の土台を諦める。
+      # 上限を超えると GitHub は使われていない順に消す: 端末を作った実行では、最初に戻したエミュレータが消え、次の実行がその端末を起動できなかった
+      - name: キャッシュを空ける（上限 10 GB）
+        id: tidy
+        if: always() && steps.keys.outputs.vault == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node lab.mjs app tidy
+          --keep "${{ env.SDK_KEY }} ${{ steps.keys.outputs.key_avd }} ${{ steps.keys.outputs.key_bds }} ${{ steps.keys.outputs.key_base }} ${{ steps.keys.outputs.key_vending }} ${{ steps.keys.outputs.key_apk }}"
+          --incoming "${{ steps.keys.outputs.key_avd }}=app/.lab/vault/avd.bin"
+          --incoming "${{ steps.keys.outputs.key_base }}=app/.lab/vault/base.bin"
+          --incoming "${{ steps.keys.outputs.key_bds }}=app/.lab/vault/bds.bin"
+          --incoming "${{ steps.keys.outputs.key_apk }}=app/.lab/vault/apk.bin"
+          --incoming "${{ steps.keys.outputs.key_vending }}=app/.lab/vault/vending.bin"
+          || true
+
+      - name: 準備済みの端末を保存
+        if: always() && steps.keys.outputs.vault == 'true' && (steps.prep.outputs.sealed_avd == 'true' || steps.hold.outputs.sealed_avd == 'true')
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: app/.lab/vault/avd.bin
+          key: ${{ steps.keys.outputs.key_avd }}
+
+      - name: 端末の土台を保存
+        if: always() && steps.keys.outputs.vault == 'true' && steps.prep.outputs.sealed_base == 'true' && steps.tidy.outputs.skip_base != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: app/.lab/vault/base.bin
+          key: ${{ steps.keys.outputs.key_base }}
+
+      - name: BDS を保存
+        if: always() && steps.keys.outputs.vault == 'true' && steps.prep.outputs.sealed_bds == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: app/.lab/vault/bds.bin
+          key: ${{ steps.keys.outputs.key_bds }}
+
+      - name: APK を保存
+        if: always() && steps.keys.outputs.vault == 'true' && steps.prep.outputs.sealed_apk == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: app/.lab/vault/apk.bin
+          key: ${{ steps.keys.outputs.key_apk }}
+
+      - name: Play ストアを保存
+        if: always() && steps.keys.outputs.vault == 'true' && steps.prep.outputs.sealed_vending == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: app/.lab/vault/vending.bin
+          key: ${{ steps.keys.outputs.key_vending }}
+
+      # 失敗したとき: 準備の記録（app/runs/<日時>-prepare）を結果として残す（report が読む）
+      - name: 準備の記録を確認
+        id: guard
+        if: failure()
+        run: node lab.mjs app guard app/runs
+
+      - name: 準備の記録をアップロード
+        if: failure() && steps.guard.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: app-${{ inputs.addon }}-${{ github.run_id }}-prep
+          path: app/runs/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: APK と端末を消す
+        if: always()
+        run: rm -rf app/.lab/apk app/.lab/vending app/.lab/vault ~/.android/avd
+
+  # 端末（devices 台）: キャッシュの準備済みの端末から戻して参加し、手順を実行
+  app:
+    name: アプリで確かめる ${{ matrix.shard }}/${{ needs.prep.outputs.devices }}
+    needs: prep
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ ((inputs.hold != '' && inputs.hold != '0') || inputs.mode == 'hold') && 360 || 90 }}
+    environment: ${{ vars.BB_PLAY_ENV || '' }}
+    permissions:
+      contents: read
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.prep.outputs.shards) }}
+    env:
+      SCENARIO: ${{ inputs.scenario }}
+      BDS: ${{ inputs.bds }}
+      MODE: ${{ inputs.mode }}
+      SHARD: ${{ matrix.shard }}/${{ needs.prep.outputs.devices }}
+    steps:
+      - name: 通信先を記録
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # 入力 knobs: ラボの設定（APP_*）をこのジョブの環境へ。秘密・キャッシュ・道具の場所に関わるものは変えられない
+      - name: ラボの設定（knobs）
+        if: inputs.knobs != ''
+        env:
+          KNOBS: ${{ inputs.knobs }}
+        run: |
+          set -euo pipefail
+          for kv in $KNOBS; do
+            [[ "$kv" =~ ^APP_[A-Z0-9_]+=[A-Za-z0-9_.:,x-]*$ ]] || { echo "::error::knobs は APP_名前=値 を空白で区切って（値は英数字と _ . : , - だけ）: $kv"; exit 1; }
+            case "${kv%%=*}" in
+              APP_CACHE_KEY|APP_REPO_VISIBILITY|APP_VAULT_DIR|APP_FULL_LOGS|APP_ADB|APP_EMULATOR|APP_SDKMANAGER|APP_AVDMANAGER|APP_TESSERACT|APP_SDK_KEY|APP_PLAY_CODE|APP_PLAY_NAME|APP_VENDING_URL|APP_VENDING_SHA256|APP_VENDING_APK)
+                echo "::error::${kv%%=*} は knobs では変えられません"; exit 1 ;;
+            esac
+            echo "$kv" >> "$GITHUB_ENV"
+          done
+          echo "::notice title=ラボの設定::$KNOBS"
+
+      - name: アドオンを別の枝から取る（ファイルだけ。ワークフローは既定ブランチのまま）
+        if: inputs.ref != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          path: .addon-ref
+          sparse-checkout: bds/addons
+          persist-credentials: false
+
+      - name: アドオンを置く
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          if [ -n "$REF" ]; then
+            [ -d ".addon-ref/bds/addons/$ADDON" ] || { echo "::error::$REF に bds/addons/$ADDON がありません"; exit 1; }
+            if find ".addon-ref/bds/addons/$ADDON" -type l | grep -q .; then echo "::error::シンボリックリンクは受け付けません"; exit 1; fi
+            rm -rf "bds/addons/$ADDON" && cp -r ".addon-ref/bds/addons/$ADDON" bds/addons/ && rm -rf .addon-ref
+          fi
+          [ -f "bds/addons/$ADDON/bp/manifest.json" ] || { echo "::error::bds/addons/$ADDON がありません"; exit 1; }
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: ランナーの性能
+        run: |
+          cpu=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ *//')
+          mem=$(awk '/MemTotal/{printf "%.1f", $2/1048576}' /proc/meminfo)
+          disk=$(df -BG --output=avail / | tail -1 | tr -d ' ')
+          swap=$(free -m | awk '/Swap/{print $2}'); mnt=$(df -BG --output=avail /mnt 2>/dev/null | tail -1 | tr -d ' ')
+          echo "::notice title=ランナー（${SHARD}）::CPU $(nproc) 個（${cpu}）、メモリ ${mem} GB、スワップ ${swap} MB、ディスク空き ${disk}（/mnt ${mnt:-?}）、KVM $([ -e /dev/kvm ] && echo あり || echo なし)"
+
+      # 使わない道具を消す（裏で）。画面の文字を読む OCR（tesseract: tap text / until text）も裏で入れる
+      - name: ディスクを空け、OCR を入れる（裏で）
+        run: |
+          a="$ANDROID_HOME"
+          sudo -b sh -c "rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost '$AGENT_TOOLSDIRECTORY/CodeQL' /usr/share/swift /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules /opt/microsoft /opt/az '$a/ndk' '$a/ndk-bundle' '$a/cmake' '$a/build-tools' '$a/platforms' '$a/extras'" >/dev/null 2>&1
+          sudo -b sh -c "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends tesseract-ocr || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends tesseract-ocr)" >/dev/null 2>&1
+
+      # つまみ APP_HOST_SWAP_GB: このパソコンにスワップを足す（2 CPU・7.8 GB のランナーで、エミュレータがメモリ不足で止められないように）
+      - name: スワップを足す（つまみ）
+        if: env.APP_HOST_SWAP_GB != ''
+        run: |
+          set -euo pipefail
+          [[ "$APP_HOST_SWAP_GB" =~ ^[1-9]$ ]] || { echo "::error::APP_HOST_SWAP_GB は 1〜9（GB）"; exit 1; }
+          d=/mnt; [ -w "$d" ] || d=/
+          sudo fallocate -l "${APP_HOST_SWAP_GB}G" "$d/lab-swap" && sudo chmod 600 "$d/lab-swap" && sudo mkswap "$d/lab-swap" >/dev/null && sudo swapon "$d/lab-swap"
+          echo "::notice title=スワップ::$(free -m | awk '/Swap/{print $2 " MB（使用 " $3 " MB）"}')、$(df -h --output=avail "$d" | tail -1 | tr -d ' ') 空き（$d）"
+
+      - name: KVM を有効にする
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: 準備済みの端末（非公開のキャッシュ）
+        if: needs.prep.outputs.vault == 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: app/.lab/vault/avd.bin
+          key: ${{ needs.prep.outputs.key_avd }}
+
+      - name: BDS（非公開のキャッシュ）
+        if: needs.prep.outputs.vault == 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: app/.lab/vault/bds.bin
+          key: ${{ needs.prep.outputs.key_bds }}
+
+      # 暗号を解くのは裏で（エミュレータのキャッシュを取る間に進む: ダウンロードと解読が重なる）。終わりは「端末を戻す」が待つ
+      - name: 端末と BDS を開く（裏で）
+        if: needs.prep.outputs.vault == 'true'
+        env:
+          APP_CACHE_KEY: ${{ secrets.APP_CACHE_KEY }}
+          GOOGLE_AAS_TOKEN: ${{ secrets.GOOGLE_AAS_TOKEN }}
+        run: |
+          nohup node lab.mjs app open avd bds > /tmp/lab-open.log 2>&1 &
+          echo $! > /tmp/lab-open.pid
+
+      - name: エミュレータの置き場所
+        id: sdk
+        run: |
+          echo "dir=$ANDROID_HOME" >> "$GITHUB_OUTPUT"
+          if [ -d "$ANDROID_HOME/emulator" ]; then mv "$ANDROID_HOME/emulator" "$ANDROID_HOME/emulator.runner"; fi
+
+      - name: エミュレータとシステムイメージ（キャッシュ）
+        id: sdkcache
+        if: env.PRIVATE == 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ steps.sdk.outputs.dir }}/emulator
+            ${{ steps.sdk.outputs.dir }}/system-images/android-34/google_apis/x86_64
+          key: ${{ env.SDK_KEY }}
+
+      - name: キャッシュに無ければランナーのエミュレータ
+        if: steps.sdkcache.outputs.cache-hit != 'true'
+        env:
+          SDK_DIR: ${{ steps.sdk.outputs.dir }}
+        run: |
+          if [ -d "$SDK_DIR/emulator.runner" ]; then rm -rf "$SDK_DIR/emulator"; mv "$SDK_DIR/emulator.runner" "$SDK_DIR/emulator"; fi
+
+      # キャッシュを開く（暗号を解く）。ここで作り直すことは普通は無い（prep が作った）
+      - name: 端末を戻す
+        env:
+          GOOGLE_EMAIL: ${{ secrets.GOOGLE_EMAIL }}
+          GOOGLE_AAS_TOKEN: ${{ secrets.GOOGLE_AAS_TOKEN }}
+          APP_CACHE_KEY: ${{ secrets.APP_CACHE_KEY }}
+          APP_PLAY_CODE: ${{ needs.prep.outputs.play_code }}
+          APP_PLAY_NAME: ${{ needs.prep.outputs.play_name }}
+        run: |
+          set -euo pipefail
+          if [ -f /tmp/lab-open.pid ]; then while kill -0 "$(cat /tmp/lab-open.pid)" 2>/dev/null; do sleep 1; done; cat /tmp/lab-open.log; fi
+          args=(); if [ "$ACCOUNT" = true ]; then args+=(--account); fi
+          if [ "$BDS" != auto ] && [ "$BDS" != keep ]; then args+=(--bds "$BDS"); fi
+          node lab.mjs app prepare "${args[@]}"
+          rm -rf app/.lab/vault
+
+      # 入力 account のときだけ、ここにも秘密を渡す（準備済みの端末が使えず、その場で書き込むとき用。off なら空）
+      - name: アプリで確かめる
+        id: run
+        if: inputs.mode != 'hold'
+        env:
+          GOOGLE_EMAIL: ${{ inputs.account && secrets.GOOGLE_EMAIL || '' }}
+          GOOGLE_AAS_TOKEN: ${{ inputs.account && secrets.GOOGLE_AAS_TOKEN || '' }}
+          APP_PLAY_CODE: ${{ needs.prep.outputs.play_code }}
+          APP_VENDING_URL: ${{ inputs.account && vars.APP_VENDING_URL || '' }}
+          APP_VENDING_SHA256: ${{ inputs.account && vars.APP_VENDING_SHA256 || '' }}
+        run: |
+          set -euo pipefail
+          args=(-a "$ADDON" --no-fetch --bds "$BDS")
+          if [ "$ACCOUNT" = true ]; then args+=(--account); fi
+          case "$MODE" in
+            ui) cmd=ui; args+=(--shard "$SHARD") ;;
+            ui-all) cmd=ui; args+=(--all --shard "$SHARD") ;;
+            *) cmd=run; if [ -n "$SCENARIO" ]; then args+=(--scenario "$SCENARIO"); fi ;;
+          esac
+          set +e
+          node lab.mjs app "$cmd" "${args[@]}" 2>&1 | tee /tmp/app-run.out
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" != 0 ]; then
+            # 結果とエラーだけを注釈に出す（成果物を開けない環境でも API で読める）。値は伏せ、端末まわりの語は控える。詳細は checks ジョブ
+            body=$({ grep -E '^(PASS|FAIL|ERR|W |E |account:)|次:|✘' /tmp/app-run.out | tail -n 20 || tail -n 12 /tmp/app-run.out; } \
+              | sed -E -e 's#(aas_et\|oauth2_4)/[A-Za-z0-9._=-]+#<token>#g' -e 's/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]+/<email>/g' \
+                       -e 's#(setCachedDeviceId\()[0-9a-fx]+#\1<id>#g' -e 's#(/home/\|/Users/)[^/ ]+#\1<user>#g' \
+                       -e 's/エミュレータ[ー]?/端末/g' -e 's/Play ストア/必要な部品/g' -e 's/ライセンス/起動時チェック/g' \
+              | cut -c1-280 | sed -e 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+            echo "::error title=結果とエラー（${SHARD}）::${body}"
+            exit "$rc"
+          fi
+
+      # 入力 hold: 確かめた後の端末（スナップショットから起動し直す: その秒数も分かる）を、そのまま命令で調べる。
+      # mode hold: 確かめずにここへ（常駐の端末: 命令の run / ui がこの端末のまま app run / app ui を走らせる）
+      - name: 端末をそのまま調べる（hold）
+        if: always() && ((inputs.hold != '' && inputs.hold != '0') || inputs.mode == 'hold') && matrix.shard == 1
+        timeout-minutes: 330
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LIVE_USER: ${{ github.actor }}
+          HOLD: ${{ (inputs.hold != '' && inputs.hold != '0') && inputs.hold || '60' }}
+          APP_ACCOUNT: ${{ inputs.account && '1' || '0' }}
+          APP_PLAY_CODE: ${{ needs.prep.outputs.play_code }}
+        run: node lab.mjs app hold --minutes "$HOLD"
+
+      - name: 端末の記録を結果に入れる
+        if: always()
+        run: |
+          # shellcheck disable=SC2012  # (the newest run folder: ls -t sorts by time, the names are the lab's own)
+          d=$(ls -dt app/runs/*/ 2>/dev/null | head -1)
+          if [ -n "$d" ] && [ -f app/.lab/emulator.log ]; then tail -c 2000000 app/.lab/emulator.log > "$d/emulator.log"; fi
+
+      # APK・.so・秘密が紛れていたら、アップロードしない
+      - name: 結果に APK やトークンが無いことを確認
+        id: guard
+        if: always()
+        run: node lab.mjs app guard app/runs
+
+      - name: 結果（スクリーンショットとログ）をアップロード
+        if: always() && steps.guard.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: app-${{ inputs.addon }}-${{ github.run_id }}${{ needs.prep.outputs.devices != '1' && format('-{0}of{1}', matrix.shard, needs.prep.outputs.devices) || '' }}
+          path: app/runs/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: 端末を消す
+        if: always()
+        run: rm -rf app/.lab/apk app/.lab/vending app/.lab/vault ~/.android/avd
+
+  # 結果を check run として出す（成果物やジョブログを開けない所でも、API だけで報告・ログ・スクショまで読める。
+  # 手元では node lab.mjs app ci fetch <run の番号>）。秘密は渡さない。書けるのはチェックだけ（contents: read は checkout に要る）
+  report:
+    name: 結果をチェックに出す
+    needs: [prep, app]
+    if: always() && (needs.prep.result == 'success' || needs.prep.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      checks: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      # 準備で止まったときは、その記録（-prep）を出す
+      - name: 成果物を取り、チェックとして出す
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ARTIFACT: app-${{ inputs.addon }}-${{ github.run_id }}
+          DEVICES: ${{ needs.prep.outputs.devices || '1' }}
+          PREP: ${{ needs.prep.result }}
+        run: |
+          if [ "$PREP" != success ]; then node lab.mjs app checks --artifact "$ARTIFACT-prep"; else node lab.mjs app checks --artifact "$ARTIFACT" --devices "$DEVICES"; fi
+
+      # キャッシュの使い方（リポジトリ全体で 10 GB を超えると、使われていない古いものから消える）。名前の鍵 ID は伏せる
+      - name: キャッシュの使用量
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$REPO/actions/cache/usage" --jq '"::notice title=キャッシュ::\(.active_caches_count) 個、\((.active_caches_size_in_bytes / 107374182.4 | floor) / 10) GB（上限 10 GB を超えると、古いものから消える）"' || true
+          gh api "repos/$REPO/actions/caches?per_page=12&sort=size_in_bytes&direction=desc" --jq '[.actions_caches[] | "\(.size_in_bytes / 1048576 | floor) MB \(.key | sub("-[0-9a-f]{16}-"; "-…-"))"] | "::notice title=キャッシュ（大きい順）::" + join(" / ")' || true

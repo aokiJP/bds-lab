@@ -1,0 +1,22 @@
+## GET /status lists the players the server sees
+@A join
+wait 800
+py import urllib.request, json\nr = urllib.request.urlopen(f"http://127.0.0.1:{plugin.port}/status", timeout=3)\nreturn [p["name"] for p in json.load(r)["players"]]
+= ["A"]
+## GET /players/<name> and 404 for someone offline
+py import urllib.request, json\nreturn json.load(urllib.request.urlopen(f"http://127.0.0.1:{plugin.port}/players/A", timeout=3))["device"] != ""
+= True
+py import urllib.request, urllib.error\ntry:\n  urllib.request.urlopen(f"http://127.0.0.1:{plugin.port}/players/Nobody", timeout=3)\nexcept urllib.error.HTTPError as e:\n  return e.code
+= 404
+## POST /say needs the token, then reaches players
+py import urllib.request, urllib.error\nq = urllib.request.Request(f"http://127.0.0.1:{plugin.port}/say", data=b'{"text":"hi"}', method="POST")\ntry:\n  urllib.request.urlopen(q, timeout=3)\nexcept urllib.error.HTTPError as e:\n  return e.code
+= 401
+py import urllib.request\nq = urllib.request.Request(f"http://127.0.0.1:{plugin.port}/say", data='{"text":"こんにちは web"}'.encode(), method="POST", headers={"Authorization": "Bearer " + plugin.token})\nreturn urllib.request.urlopen(q, timeout=3).status
+= 202
+until こんにちは web
+~ @A .*\[Web\] こんにちは web
+## survives /reload (the port is closed and opened again)
+reload
+wait 1500
+py import urllib.request\nreturn urllib.request.urlopen(f"http://127.0.0.1:{plugin.port}/status", timeout=3).status
+= 200

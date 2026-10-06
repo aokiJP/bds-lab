@@ -1,0 +1,12 @@
+{
+    "name": "sidebar",
+    "entry": "sidebar.js",
+    "type": "lse-quickjs",
+    "version": "0.1.0",
+    "description": "A sidebar per player: each one sees their own position and ping (Player.setSidebar sends it to that client onl",
+    "dependencies": [
+        {
+            "name": "legacy-script-engine-quickjs"
+        }
+    ]
+}

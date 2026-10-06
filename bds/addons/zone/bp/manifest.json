@@ -1,0 +1,33 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Zone",
+    "description": "Greets you in the zone",
+    "uuid": "482ff503-e328-4e13-bc56-d7eb8eb43b7a",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 26, 52]
+  },
+  "modules": [
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "7684c9ce-c5e4-4fba-9f3a-005bb8aa44fb",
+      "version": [1, 0, 0],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.10.0"
+    },
+    {
+      "module_name": "@minecraft/server-ui",
+      "version": "2.2.0"
+    },
+    {
+      "uuid": "c213c7da-417a-46fc-9ca1-d158d8c3331d",
+      "version": [1, 0, 0]
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+    "name": "cmdguard",
+    "entry": "cmdguard.js",
+    "type": "lse-quickjs",
+    "version": "0.1.0",
+    "description": "Mute chat and whispers, command aliases, a log of every command",
+    "dependencies": [
+        {
+            "name": "legacy-script-engine-quickjs"
+        }
+    ]
+}

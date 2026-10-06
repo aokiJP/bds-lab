@@ -1,0 +1,6 @@
+pack.name=Jelly
+pack.description=A jelly mob, its gel, and a jump potion
+item.lab:gel.name=ジェル
+entity.lab:jelly.name=ゼリー
+item.spawn_egg.entity.lab:jelly.name=ゼリーのスポーンエッグ
+item.lab:jump_potion.name=ジャンプの薬

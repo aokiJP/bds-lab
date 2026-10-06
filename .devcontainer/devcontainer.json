@@ -1,0 +1,10 @@
+{
+  // Codespaces, VS Code / Cursor / JetBrains dev containers, and cloud agents that start from a devcontainer:
+  // Node 22 + Python 3.12, then every lab's server and tools while the network is open.
+  "name": "bds-lab",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "features": { "ghcr.io/devcontainers/features/python:1": { "version": "3.12" } },
+  "postCreateCommand": "node lab.mjs doctor; node lab.mjs setup all || true",
+  "forwardPorts": [],
+  "remoteUser": "node"
+}

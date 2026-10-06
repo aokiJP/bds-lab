@@ -1,0 +1,72 @@
+#!/usr/bin/env node
+// a fake tesseract for tests/app-offline.mjs: `--version`, or `<png> - … tsv`: the words of a pause screen (Resume Game,
+// Settings) and a death screen (Respawn), at fixed places
+import fs from 'node:fs';
+const a = process.argv.slice(2);
+if (a[0] === '--version') { console.log('tesseract 5.3.4 (fake)'); process.exit(0); }
+// the game's first start (the fake device's state: tests/fake/app/adb FAKE_WELCOME): its welcome screen, Maybe later on one line
+let phase = null, S = {}; try { S = JSON.parse(fs.readFileSync(process.env.FAKE_APP_STATE, 'utf8')); phase = S.phase; } catch { /* no state */ }
+// FAKE_NEWTITLE: the new player's title until the classic menu was opened (tests/fake/app/adb)
+if (phase === 'title' && process.env.FAKE_NEWTITLE && !S.classic) {
+  console.log('level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext');
+  [['Get', 26, 14, 4, 3, 1], ['started', 31, 14, 8, 3, 1], ['More', 27, 20, 5, 3, 2], ['options', 33, 20, 7, 3, 2]].forEach(([t, l, tp, w, h, line], i) => console.log(`5\t1\t1\t1\t${line}\t${i + 1}\t${l}\t${tp}\t${w}\t${h}\t90\t${t}`));
+  process.exit(0);
+}
+if (phase === 'welcome') {
+  console.log('level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext');
+  [['WELCOME', 2, 2, 12, 3, 1], ['TO', 15, 2, 4, 3, 1], ['MINECRAFT!', 20, 2, 14, 3, 1], ['Sign', 40, 20, 6, 4, 2], ['in', 47, 20, 3, 4, 2], ['now', 51, 20, 6, 4, 2], ['Haybe', 40, 28, 10, 4, 3], ['later', 51, 28, 8, 4, 3]]
+    .forEach(([t, l, tp, w, h, line], i) => console.log(`5\t1\t1\t1\t${line}\t${i + 1}\t${l}\t${tp}\t${w}\t${h}\t90\t${t}`));
+  process.exit(0);
+}
+// FAKE_SIGNIN: the Xbox library's WebView pages (tests/fake/app/adb)
+const MS = { 'ms-start': [["Let's", 10, 8, 6, 3, 1], ['get', 17, 8, 4, 3, 1], ['you', 22, 8, 4, 3, 1], ['signed', 27, 8, 7, 3, 1], ['in', 35, 8, 3, 3, 1], ['SIGN', 26, 30, 6, 3, 2], ['IN', 33, 30, 3, 3, 2]],
+  'ms-email': [['Sign', 4, 4, 5, 3, 1], ['in', 10, 4, 3, 3, 1], ['to', 14, 4, 3, 3, 1], ['continue', 18, 4, 9, 3, 1], ['to', 28, 4, 3, 3, 1], ['Minecraft', 32, 4, 10, 3, 1], ['Email,', 4, 12, 7, 3, 2], ['phone,', 12, 12, 7, 3, 2], ['or', 20, 12, 3, 3, 2], ['Skype', 24, 12, 6, 3, 2], ['Next', 50, 30, 6, 3, 3]],
+  'ms-password': [['Enter', 4, 4, 6, 3, 1], ['password', 11, 4, 9, 3, 1], ['Forgot', 4, 20, 7, 3, 2], ['password?', 12, 20, 10, 3, 2], ['Sign', 48, 30, 5, 3, 3], ['in', 54, 30, 3, 3, 3]],
+  'ms-code': [['Enter', 4, 4, 6, 3, 1], ['code', 11, 4, 5, 3, 1], ['We', 4, 10, 3, 3, 2], ['sent', 8, 10, 5, 3, 2], ['a', 14, 10, 2, 3, 2], ['code', 17, 10, 5, 3, 2]],
+  'ms-approve': [['Approve', 4, 4, 8, 3, 1], ['sign', 13, 4, 5, 3, 1], ['in', 19, 4, 3, 3, 1], ['request', 23, 4, 8, 3, 1], ['42', 30, 18, 4, 3, 2]],
+  'ms-stay': [['Stay', 4, 4, 5, 3, 1], ['signed', 10, 4, 7, 3, 1], ['in?', 18, 4, 4, 3, 1], ['No', 34, 30, 4, 3, 2], ['Yes', 48, 30, 5, 3, 2]],
+  'ms-error': [['Your', 4, 4, 5, 3, 1], ['account', 10, 4, 8, 3, 1], ['or', 19, 4, 3, 3, 1], ['password', 23, 4, 9, 3, 1], ['is', 33, 4, 2, 3, 1], ['incorrect.', 36, 4, 10, 3, 1]] };
+if (MS[phase]) {
+  console.log('level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext');
+  MS[phase].forEach(([t, l, tp, w, h, line], i) => console.log(`5\t1\t1\t1\t${line}\t${i + 1}\t${l}\t${tp}\t${w}\t${h}\t90\t${t}`));
+  process.exit(0);
+}
+// the game's own questions on the way into a server (tests/fake/app/adb FAKE_JOIN_PROMPTS / FAKE_JOIN_REFUSE)
+const JOIN = { 'join-external': [['Unknown', 2, 2, 8, 3, 1], ['External', 11, 2, 8, 3, 1], ['Server', 20, 2, 7, 3, 1], ['servers', 2, 8, 8, 3, 2], ['you', 11, 8, 4, 3, 2], ['trust!', 16, 8, 6, 3, 2], ['Continue', 25, 20, 10, 3, 3], ['Cancel', 25, 28, 8, 3, 4]],
+  'join-rated': [['Online', 2, 2, 7, 3, 1], ['play', 10, 2, 5, 3, 1], ['is', 16, 2, 2, 3, 1], ['not', 19, 2, 4, 3, 1], ['rated', 24, 2, 6, 3, 1], ['Proceed', 25, 24, 10, 3, 3], ['Back', 25, 31, 6, 3, 4]],
+  'join-packs': [['Download', 2, 2, 9, 3, 1], ['Resource', 12, 2, 9, 3, 1], ['Packs?', 22, 2, 7, 3, 1], ['requires', 2, 8, 9, 3, 2], ['players', 12, 8, 8, 3, 2], ['to', 21, 8, 2, 3, 2], ['download', 24, 8, 9, 3, 2], ['Download', 20, 20, 9, 3, 3], ['Everything', 30, 20, 10, 3, 3], ['&', 41, 20, 1, 3, 3], ['Join', 43, 20, 4, 3, 3], ['Leave', 28, 28, 6, 3, 4]],
+  loading: [['Generating', 20, 10, 10, 3, 1], ['World', 31, 10, 6, 3, 1], ['Loading', 22, 16, 8, 3, 2], ['Resources', 31, 16, 10, 3, 2]],
+  'join-refused': [['You', 2, 10, 4, 3, 1], ['need', 7, 10, 5, 3, 1], ['to', 13, 10, 2, 3, 1], ['authenticate', 16, 10, 12, 3, 1], ['to', 29, 10, 2, 3, 1], ['Microsoft', 32, 10, 10, 3, 1], ['services.', 43, 10, 9, 3, 1]] };
+// 1.26's PLAY screen (tests/fake/app/adb: the gamepad's A from the title): the LAN world listed, its card focused ("A Play")
+const PLAY_WORDS = [['Worlds', 10, 4, 8, 3, 1], ['(1)', 19, 4, 3, 3, 1], ['Realms', 30, 4, 8, 3, 1], ['Servers', 45, 4, 9, 3, 1], ['Survival', 4, 20, 9, 3, 2], ['lab', 4, 24, 4, 3, 3], ['Dedicated', 4, 28, 10, 3, 4], ["Server's", 15, 28, 9, 3, 4], ['world', 25, 28, 6, 3, 4], ['B', 2, 33, 2, 2, 5], ['Back', 5, 33, 5, 2, 5]];
+// (FAKE_OWN_WORLD: the player's own world's card beside it, "Creative / own world")
+const OWN = process.env.FAKE_OWN_WORLD ? [['Creative', 40, 20, 9, 3, 6], ['own', 40, 28, 4, 3, 7], ['world', 45, 28, 5, 3, 7]] : [];
+const HINT = [['A', 50, 33, 2, 2, 5], ['Play', 53, 33, 5, 2, 5]];
+const LAN = { lanlist: [...PLAY_WORDS, ...OWN], lanfocus: [...PLAY_WORDS, ...OWN, ...HINT], lanown: [...PLAY_WORDS, ...OWN, ...HINT], lanempty: [...PLAY_WORDS.filter(([t]) => !/^(Survival|lab|Dedicated|Server's|world)$/.test(t)), ...OWN] };
+if (LAN[phase]) {
+  console.log('level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext');
+  LAN[phase].forEach(([t, l, tp, w, h, line], i) => console.log(`5\t1\t1\t1\t${line}\t${i + 1}\t${l}\t${tp}\t${w}\t${h}\t90\t${t}`));
+  process.exit(0);
+}
+if (JOIN[phase]) {
+  console.log('level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext');
+  // FAKE_OCR_NO_BUTTONS: the white words on the green buttons not read (as on the CI emulator)
+  JOIN[phase].filter(([t]) => !(process.env.FAKE_OCR_NO_BUTTONS && /^(Continue|Proceed)$/.test(t))).forEach(([t, l, tp, w, h, line], i) => console.log(`5\t1\t1\t1\t${line}\t${i + 1}\t${l}\t${tp}\t${w}\t${h}\t90\t${t}`));
+  process.exit(0);
+}
+// FAKE_OCR_TITLE: the title screen reads as one (its Play and Settings)
+// FAKE_OCR_MOJANG: the classic menu as OCR reads it on the CI device — not its buttons' words, its "©Mojang AB" and the skin
+if (phase === 'title' && process.env.FAKE_OCR_MOJANG) {
+  console.log('level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext');
+  [['P', 2, 2, 2, 3, 1], ['rare', 5, 2, 5, 3, 1], ['SAA', 11, 2, 4, 3, 1], ['Alex,', 50, 10, 6, 3, 2], ['@iMoJjang', 1, 33, 10, 2, 3], ['AB', 12, 33, 3, 2, 3]].forEach(([t, l, tp, w, h, line], i) => console.log(`5\t1\t1\t1\t${line}\t${i + 1}\t${l}\t${tp}\t${w}\t${h}\t90\t${t}`));
+  process.exit(0);
+}
+// (FAKE_SIGNIN: its Sign In bottom left, until signed in)
+if (phase === 'title' && (process.env.FAKE_OCR_TITLE || process.env.FAKE_SIGNIN || (process.env.FAKE_NEWTITLE && S.classic))) {
+  console.log('level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext');
+  [['Play', 28, 12, 8, 3, 1], ['Settings', 26, 18, 12, 3, 2], ...(process.env.FAKE_SIGNIN && !S.signedIn ? [['Sign', 2, 26, 5, 3, 3], ['In', 8, 26, 3, 3, 3]] : [])].forEach(([t, l, tp, w, h, line], i) => console.log(`5\t1\t1\t1\t${line}\t${i + 1}\t${l}\t${tp}\t${w}\t${h}\t90\t${t}`));
+  process.exit(0);
+}
+const rows = [['Resume', 300, 200, 90, 24], ['Game', 400, 200, 60, 24], ['Settings', 340, 300, 110, 24], ['Respawn', 340, 400, 120, 24], ...(process.env.FAKE_OCR_RAWKEY ? [['item.lab:ruby.name', 100, 500, 200, 24]] : [])];
+console.log('level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext');
+rows.forEach(([t, l, tp, w, h], i) => console.log(`5\t1\t${i < 2 ? 1 : i}\t1\t1\t${i < 2 ? i + 1 : 1}\t${l}\t${tp}\t${w}\t${h}\t90\t${t}`));

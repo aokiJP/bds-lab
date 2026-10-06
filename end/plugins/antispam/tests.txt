@@ -1,0 +1,17 @@
+## the 4th and 5th message within 3 s never reach the game
+@A join
+@B join
+@A chat m1
+@A chat m2
+@A chat m3
+@A chat m4
+@A chat m5
+wait 500
+~ @B chat <A> m3
+!~ @B chat <A> m4
+!~ @B chat <A> m5
+## after the window, chat works again
+wait 3500
+@A chat m6
+wait 500
+~ @B chat <A> m6

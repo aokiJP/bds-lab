@@ -1,0 +1,14 @@
+node_modules/
+work/
+site/
+site-*/
+*.zip
+*.apk
+*.apks
+*.xapk
+*.aab
+*.so
+bedrock_server
+*.tmp
+profiles/
+reports/

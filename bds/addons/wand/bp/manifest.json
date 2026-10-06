@@ -1,0 +1,33 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Wand",
+    "description": "A wand that gives speed",
+    "uuid": "56d7f129-a55c-484d-a210-db95db442180",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 26, 52]
+  },
+  "modules": [
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "a790dea5-ca48-4522-b6df-e01158c18d89",
+      "version": [1, 0, 0],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.10.0"
+    },
+    {
+      "module_name": "@minecraft/server-ui",
+      "version": "2.2.0"
+    },
+    {
+      "uuid": "5d4ecb01-3df9-438a-89e8-a077625f87e1",
+      "version": [1, 0, 0]
+    }
+  ]
+}

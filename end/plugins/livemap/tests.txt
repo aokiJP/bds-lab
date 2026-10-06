@@ -1,0 +1,17 @@
+## a browser gets a page that shows the map and the players
+py import urllib.request\nr = urllib.request.urlopen(f"http://127.0.0.1:{plugin.port}/", timeout=3)\nreturn f"{r.headers['Content-Type']} {'/map.png' in r.read().decode()}"
+= text/html; charset=utf-8 True
+## the map shows the land from above, a block placed shows up within seconds
+fill 4 -60 4 6 -60 6 red_wool
+wait 4000
+py import urllib.request, zlib, struct\nd = urllib.request.urlopen(f"http://127.0.0.1:{plugin.port}/map.png", timeout=3).read()\nw = struct.unpack('>I', d[16:20])[0]\nraw = zlib.decompress(d[41:d.index(b'IEND') - 8])\npx = lambda bx, bz: tuple(raw[((bz + 32) * 4 + 1) * (1 + 3 * w) + 1 + 3 * ((bx + 32) * 4 + 1):][:3])\nreturn f"{w} wool={px(5, 5)} grass={px(-20, -20)}"
+= 256 wool=(160, 39, 34) grass=(98, 160, 60)
+## players appear as dots where they stand, and in players.json
+@A join
+tp A 10 -60 -10
+wait 500
+py import urllib.request, zlib, json\nd = urllib.request.urlopen(f"http://127.0.0.1:{plugin.port}/map.png", timeout=3).read()\nraw = zlib.decompress(d[41:d.index(b'IEND') - 8])\npx = lambda bx, bz: tuple(raw[((bz + 32) * 4 + 2) * 769 + 1 + 3 * ((bx + 32) * 4 + 2):][:3])\nps = json.load(urllib.request.urlopen(f"http://127.0.0.1:{plugin.port}/players.json", timeout=3))\nreturn f"dot={px(10, -10)} {ps}"
+= dot=(255, 255, 0) [{'name': 'A', 'x': 10, 'y': -60, 'z': -10}]
+## players can ask for the address
+@A cmd /livemap
+~ ^@A live map: http://<this server>:\d+/

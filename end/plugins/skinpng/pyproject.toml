@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "endstone-skinpng"
+version = "0.1.0"
+description = "Every player's skin saved as a PNG when they join (plugins/skinpng/skins/<name>.png); /skin tells its size"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.entry-points."endstone"]
+skinpng = "endstone_skinpng:Skinpng"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/endstone_skinpng"]

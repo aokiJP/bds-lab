@@ -1,0 +1,33 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "JSON UI Demo",
+    "description": "タイトルに印の付いたフォームを独自デザインで表示",
+    "uuid": "243e4848-0b43-416d-b2ab-c3e79ed35258",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 26, 52]
+  },
+  "modules": [
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "3cc8359e-b317-4a7c-8918-75d6b54d2c04",
+      "version": [1, 0, 0],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.10.0"
+    },
+    {
+      "module_name": "@minecraft/server-ui",
+      "version": "2.2.0"
+    },
+    {
+      "uuid": "5e2ab18f-cedb-41f7-a609-5c6be838c77c",
+      "version": [1, 0, 0]
+    }
+  ]
+}

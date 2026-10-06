@@ -1,0 +1,16 @@
+## a draining boss bar only for the player who asked
+@A join
+@B join
+@A watch boss_event
+@B watch boss_event
+@A cmd /countdown 3 Go
+wait 800
+~ @A saw boss_event .*Go 3
+!~ @B saw boss_event
+## at zero: the bar goes and a title shows
+wait 2600
+~ @A title: Time!
+~ @A saw boss_event .*"type":"hide_bar|"type":1\b
+## bad input prints the usage
+@A cmd /countdown abc
+!~ ^E

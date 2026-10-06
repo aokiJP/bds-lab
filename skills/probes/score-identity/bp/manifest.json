@@ -1,0 +1,46 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "probe score-identity",
+    "description": "proves: api-score-identity",
+    "uuid": "717c2a8c-53e2-510f-b2ca-baacf9eb3a0c",
+    "version": [
+      1,
+      0,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      0
+    ]
+  },
+  "modules": [
+    {
+      "type": "data",
+      "uuid": "ecf61455-7439-52d5-b8ab-a60c8a5d0e1a",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "b04ad63d-1507-55c2-af05-ea421613a387",
+      "version": [
+        1,
+        0,
+        0
+      ],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.0.0"
+    }
+  ]
+}

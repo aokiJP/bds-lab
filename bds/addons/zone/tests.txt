@@ -1,0 +1,23 @@
+## walking into the zone greets you
+@A join
+wait 1000
+@A walk forward 20
+@A walk left 20
+wait 500
+~ @A Welcome to the zone
+
+## goto the zone from outside greets again
+@A goto 0 10
+wait 300
+@A goto 5 5
+wait 500
+~ @A Welcome to the zone
+
+## bread only on the first join
+@A leave
+wait 500
+@A join
+wait 1000
+js inv(p('A'))
+~ minecraft:bread\*1
+!~ minecraft:bread\*2

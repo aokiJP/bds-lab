@@ -1,0 +1,16 @@
+## each player gets a private sidebar with their own coordinates
+@A join
+@B join
+@A watch set_score
+tp A 10 -60 3
+tp B -7 -60 -4
+wait 1200
+py plugin.boards["A"][1].get_score("§bX").value, plugin.boards["B"][1].get_score("§bX").value
+= [10,-7]
+py p("A").scoreboard is not p("B").scoreboard and p("A").scoreboard is not server.scoreboard
+= True
+# A's client gets A's numbers, never B's
+~ @A saw set_score .*"score":10,"custom_name":"X"
+!~ @A saw set_score .*"score":-7,"custom_name":"X"
+py str(plugin.boards["A"][1].display_slot)
+~ SIDE_BAR

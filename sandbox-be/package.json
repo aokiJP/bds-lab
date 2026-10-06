@@ -1,0 +1,54 @@
+{
+  "name": "sandbox-be",
+  "version": "1.15.0-colony.1",
+  "description": "Minecraft 統合版の Script API とプレイヤーの動きを、実機なしの仮想世界で動かして検証する。TAS（入力テープ）と探索で「クリアできるか」を確かめ、実機・実ブラウザで同じ結果か確かめる。本体は依存ゼロ。（bds-lab 同梱は実行部分のみ: src/ data/ types/）",
+  "type": "module",
+  "main": "src/index.js",
+  "types": "types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "types",
+    "data",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "cmdscript-be": ">=1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "cmdscript-be": {
+      "optional": true
+    }
+  },
+  "keywords": [
+    "minecraft",
+    "bedrock",
+    "script-api",
+    "sandbox",
+    "testing",
+    "emulator",
+    "tas",
+    "playtest",
+    "solver",
+    "softlock"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Au12jp/sandbox-be.git"
+  },
+  "homepage": "https://github.com/Au12jp/sandbox-be#readme",
+  "bugs": {
+    "url": "https://github.com/Au12jp/sandbox-be/issues"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}

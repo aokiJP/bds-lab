@@ -1,0 +1,16 @@
+## a filled map with the plugin's pixels arrives
+@A join
+@A watch clientbound_map_item_data
+@A cmd /pixelmap heart
+~ @A pixel map heart
+wait 500
+@A inv
+~ minecraft:filled_map
+@A select filled_map
+wait 1000
+~ @A saw clientbound_map_item_data
+## the player's own face, and a wrong name is explained
+@A cmd /pixelmap face
+~ @A pixel map face
+@A cmd /pixelmap unicorn
+~ art: heart, creeper, face or a player name

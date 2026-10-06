@@ -1,0 +1,92 @@
+{
+  "_comment": "このファイルを config.json にコピーして使ってください。config.json は git に含めないこと（.gitignore 済み）。",
+
+  "auth": {
+    "_comment": "実際のワールド/BDSはオンライン認証が必要です。account add <名前> で一度サインインしておくと、以後はその名前で接続できます。ボット専用のアカウントを推奨。offline=true の時の username は英数字・_・空白の1〜16文字",
+    "offline": false,
+    "username": "NetherBot",
+    "account": null,
+    "_comment_account": "既定で使うボットのアカウント名。null なら登録済みの最初のアカウント",
+    "profilesFolder": "./.auth-cache"
+  },
+
+  "lanPolicy": {
+    "_comment": "★安全設計の中核★ 自分のネットワーク（このマシン・同じLAN・自分の Tailscale の端末）以外とは、ディスカバリ・シグナリング・ICE・RakNet のどの段階でも通信しません。",
+
+    "scope": "same-subnet",
+    "_comment_scope": "same-subnet = このマシンのNICと直結したサブネット内（＋Tailscale） / same-host = このマシン自身のアドレスだけ",
+
+    "requirePrivateAddress": true,
+    "_comment_private": "true なら 10.x / 172.16-31.x / 192.168.x / 169.254.x / 127.x 以外のLANは拒否（VPSのグローバルIP同士などを弾く）。Tailscale は下の設定で判定",
+
+    "pinToDiscoveryAddress": true,
+    "_comment_pin": "true なら、実際に通信する相手IPを、見つけた時のIPに固定",
+
+    "allowedSubnets": [],
+    "_comment_allowedSubnets": "さらに絞りたい場合だけ CIDR で列挙。例: [\"192.168.1.0/24\"]",
+
+    "interfaces": [],
+    "_comment_interfaces": "使うNICを名前で限定。例: [\"eth0\"]。Docker/VPN用NICを除外したい時に",
+
+    "tailscale": {
+      "mode": "own",
+      "_comment_mode": "own = 自分のアカウントの端末だけ / tailnet = 同じ tailnet の端末（家族のアカウント・タグ付きサーバーも） / off = 使わない。他の tailnet から共有された端末は常に対象外",
+      "devices": [],
+      "_comment_devices": "mode に関係なく許可する端末のホスト名（タグ付きの自宅サーバーなど）。例: [\"home-server\"]",
+      "cli": null,
+      "_comment_cli": "tailscale コマンドの場所（自動で見つからない時だけ）"
+    }
+  },
+
+  "discovery": {
+    "_comment": "ワールドは UDP 7551 で、サーバーは RakNet と BDS の HTTP(/v1/join) で探します。",
+    "raknetPorts": [19132],
+    "httpPorts": [19132],
+    "hosts": [],
+    "_comment_hosts": "ブロードキャストで見つからない相手を直接指定（自分のネットワーク内だけ）。例: [\"192.168.1.20:19140\"]"
+  },
+
+  "targets": {
+    "_comment": "接続してよい相手の絞り込み。全部空なら、見つかった相手から選べます。",
+    "networkIds": [],
+    "levelNames": [],
+    "hostNames": [],
+    "_comment_networkIds": "NetherNet ID は必ず \"123...\" のように引用符付きの文字列で（数値だと桁が落ちます）",
+
+    "trustedHostKeys": [],
+    "_comment_trustedHostKeys": "ホスト鍵の固定（任意）。接続時ログの [identity] ホスト鍵 sha256=... の値を入れると、その鍵を持つ相手とだけ繋ぎます"
+  },
+
+  "session": {
+    "observe": "auto",
+    "_comment_observe": "観戦モード（ボットが何も変えない）: auto = ワールドは観戦・サーバーは通常 / on / off",
+    "allowChat": true,
+    "_comment_allowChat": "観戦モードでもチャットの送信だけは許すか（コマンドは常に送らない）"
+  },
+
+  "restore": {
+    "_comment": "元に戻す対象（このマシンにある BDS・ワールドのフォルダ）。接続前に取っておいて、終わったら戻せます。",
+    "store": "./snapshots",
+    "targets": [],
+    "_comment_targets": "例: [{\"name\": \"自宅BDS\", \"kind\": \"bds\", \"path\": \"C:/bedrock-server\"}, {\"name\": \"島\", \"kind\": \"world\", \"path\": \".../minecraftWorlds/AbCd=\"}]"
+  },
+
+  "web": {
+    "port": 8765,
+    "bind": "lan",
+    "_comment_bind": "lan = 許可したLANと自分の Tailscale のアドレスで待ち受け / localhost = このマシンからだけ",
+    "token": null,
+    "_comment_token": "アクセス用トークンを固定したい時だけ（16文字以上）。null なら起動のたびに作ります"
+  },
+
+  "requireManualConfirmation": true,
+  "_comment_confirm": "CLI で接続する直前に y/n 確認するか。Web 画面では画面上で確認します。",
+
+  "botBehavior": {
+    "logChat": true,
+    "version": null,
+    "_comment_version": "null なら相手の情報から自動判定。うまくいかない時だけ \"1.26.51\" のように固定",
+    "discoveryTimeoutMs": 4000,
+    "_comment_discoveryTimeoutMs": "500〜60000(ms)。純正クライアントは2秒間隔で問い合わせるので、4000以上を推奨"
+  }
+}

@@ -1,0 +1,2 @@
+pack.name=TS REPL
+pack.description=게임 안에서 TypeScript / JavaScript를 쓰고 그 자리에서 실행합니다. 시작: /function tsrepl_start, 막히면: /function tsrepl_help. 편집 화면은 세 가지(사이드바·액션바·폼). 오류는 입력하는 동안 빨갛게 표시됩니다. 월드 설정에서 "베타 API"를 켜 주세요.

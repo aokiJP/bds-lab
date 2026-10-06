@@ -1,0 +1,11 @@
+## the skin is written as a real PNG on join
+@A join skin=slim
+until skin of A saved
+~ skin of A saved \(\d+x\d+\)
+py f = plugin.dir / "A.png"\nb = f.read_bytes()\nreturn b[1:4] == b"PNG" and len(b) > 100
+= True
+## the PNG holds exactly the skin's pixels
+py import zlib, struct\nb = (plugin.dir / "A.png").read_bytes()\nw, h = struct.unpack(">II", b[16:24])\nraw = zlib.decompress(b[b.index(b"IDAT") + 4:b.index(b"IEND") - 8])\npix = b"".join(raw[y * (w * 4 + 1) + 1:(y + 1) * (w * 4 + 1)] for y in range(h))\nreturn pix == p("A").skin.image.tobytes() and pix.count(b"\xff") > 1000
+= True
+@A cmd /skin
+~ @A A: \d+x\d+ -> skins/A.png

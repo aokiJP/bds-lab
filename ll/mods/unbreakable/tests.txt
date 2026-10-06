@@ -1,0 +1,16 @@
+## the held pickaxe gets the Unbreakable tag and keeps it
+@A join
+give A iron_pickaxe
+@A select iron_pickaxe
+@A cmd /unbreakable
+~ @A cmd: minecraft:iron_pickaxe is unbreakable
+@A cmd /nbt
+~ @A cmd: .*"?Unbreakable"?:1b
+## it really does not wear: digging leaves its damage at 0
+setblock 2 -60 2 stone
+setblock 3 -60 2 stone
+@A dig 2 -60 2
+@A dig 3 -60 2
+wait 500
+lse return p('A').getHand().getNbt().toSNBT().includes('Damage:0') || !/Damage:[1-9]/.test(p('A').getHand().getNbt().toSNBT())
+= true

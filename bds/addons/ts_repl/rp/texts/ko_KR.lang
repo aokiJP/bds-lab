@@ -1,0 +1,95 @@
+item.tsrepl:console=TS 콘솔
+tile.tsrepl:script_block.name=스크립트 블록
+
+## 입력하는 동안 나오는 알림 (JSON UI 에서 가져옴)
+
+## 상태 표시줄 (JSON UI 에서 가져옴)
+tsrepl.status.left=⧉
+tsrepl.status.right=UTF-8   LF   TypeScript
+tsrepl.editor.placeholder=§8빈 파일입니다. 여기서부터 쓰면 됩니다.
+
+## コマンドの案内文（tellraw から translate で参照）
+tsrepl.start.done=§a준비됐습니다. §r손에 든 §fTS 콘솔§r 로 열 수 있어요.
+tsrepl.start.hint=§7채팅에 §b>> §7를 입력해도 열립니다. 막히면 §b/function tsrepl_help
+tsrepl.grant.done=§aTS REPL: 사용 권한을 부여했습니다.
+tsrepl.grant.next=§7다음: §b/function tsrepl_start§7 (콘솔 받기)
+tsrepl.help.head=§f— TS REPL 빠른 도움말 —
+tsrepl.help.start=§b/function tsrepl_start§7  시작 (권한 + 콘솔 지급)
+tsrepl.help.chat=§b>>§7 만 입력  메뉴 열기 / §b>> 코드§7  그 줄 실행
+tsrepl.help.screens=§b/function tsrepl_menu§7 메뉴  §btsrepl_board§7 사이드바  §btsrepl_plain§7 폼
+tsrepl.help.write=§b/function tsrepl_write§7  지금 쓴 코드를 저장
+tsrepl.help.access=§b/function tsrepl_grant§7 / §btsrepl_revoke§7  다른 사람 권한
+tsrepl.help.move=§7화면 안에서는 §fWASD§7 로 이동. 오른쪽 위 ✕ 로 닫기.
+tsrepl.revoke.done=§eTS REPL: 사용 권한을 취소했습니다.
+tsrepl.help.doctor=§b/function tsrepl_doctor§7  자가 점검 (막히면 먼저 실행)
+
+## パック一覧に出る名前と説明
+pack.name=TS REPL Resources
+pack.description=TS REPL의 겉모습(화면·아이콘·여러 줄 입력란). 비헤이비어 팩과 함께 설치하세요.
+tsrepl.coach.activity=1 Activity bar: search, run, extensions
+tsrepl.coach.explorer=2 Explorer: pick a file
+tsrepl.coach.tabs=3 Tabs: files you have open
+tsrepl.coach.editor=4 Press a line to edit it
+tsrepl.coach.panel=5 Panel: problems, output, terminal
+tsrepl.coach.status=6 Error count and cursor position
+tsrepl.coach.dismiss=Tap anywhere once to dismiss
+
+## 作業の流れ（Walkthrough）— JSON UI から引かれる
+tsrepl.wt.tab=작업 흐름: TS REPL 설정
+tsrepl.wt.next=다음
+tsrepl.wt.back=뒤로
+tsrepl.wt.close=닫기
+tsrepl.wt.fine=TS REPL은 월드 안에서 코드를 실행합니다. 권한을 준 사람도 똑같이 실행할 수 있습니다.
+tsrepl.wt.foot=다 보면 길잡이가 시작됩니다. 환영 화면에서 언제든 다시 열 수 있습니다.
+tsrepl.wt.p1.title=TS REPL 시작하기
+tsrepl.wt.p1.sub=Minecraft 안에서 진짜 TypeScript를
+tsrepl.wt.p1.i1=쓰고 실행하기
+tsrepl.wt.p1.i1b=한 줄 쓰고 실행을 누르면 아래 패널에 결과가 돌아옵니다.
+tsrepl.wt.p1.i2=진짜 타입 검사
+tsrepl.wt.p1.i2b=TypeScript 컴파일러가 함께 들어 있어, 실행 전에 잘못을 찾아냅니다.
+tsrepl.wt.p1.i3=자동 완성과 import
+tsrepl.wt.p1.i3b=입력하는 동안 후보가 뜨고, import도 편집기와 똑같이 동작합니다.
+tsrepl.wt.p1.go=편집기 열기
+tsrepl.wt.p2.title=코드 쓰기
+tsrepl.wt.p2.sub=익숙한 편집기 그대로
+tsrepl.wt.p2.i1=줄을 누르면 편집
+tsrepl.wt.p2.i1b=모든 줄이 버튼입니다. 누르면 그 줄의 입력창이 열립니다.
+tsrepl.wt.p2.i2=단축키
+tsrepl.wt.p2.i2b=되돌리기, 찾기, 주석, 줄 이동 — 키를 켜면 늘 쓰던 대로입니다.
+tsrepl.wt.p2.i3=여러 파일
+tsrepl.wt.p2.i3b=탭으로 여러 개를 열고 왼쪽 목록에서 전환합니다.
+tsrepl.wt.p2.go=한 줄 편집해 보기
+tsrepl.wt.p3.title=실행하기
+tsrepl.wt.p3.sub=다시 빌드하거나 불러올 필요가 없습니다
+tsrepl.wt.p3.i1=파일 전체 실행
+tsrepl.wt.p3.i1b=왼쪽 띠의 실행을 누르면 파일 하나가 그대로 돌아갑니다.
+tsrepl.wt.p3.i2=한 줄만 실행
+tsrepl.wt.p3.i2b=채팅에 >> 뒤로 코드를 적으면 그 줄만 실행됩니다.
+tsrepl.wt.p3.i3=출력 보기
+tsrepl.wt.p3.i3b=아래 패널에 출력·문제·터미널이 모여 있습니다.
+tsrepl.wt.p3.go=실행해 보기
+tsrepl.wt.p4.title=잘못 고치기
+tsrepl.wt.p4.sub=오류는 줄을 가리킵니다
+tsrepl.wt.p4.i1=문제 목록
+tsrepl.wt.p4.i1b=오류와 경고가 나온 줄과 함께 나열됩니다. 누르면 그 줄로 갑니다.
+tsrepl.wt.p4.i2=그 자리에 표시
+tsrepl.wt.p4.i2b=줄 자체에도 표시가 붙습니다. 편집기와 같습니다.
+tsrepl.wt.p4.i3=빠른 수정
+tsrepl.wt.p4.i3b=컴파일러가 답을 아는 것은 고치는 방법까지 내놓습니다.
+tsrepl.wt.p4.go=문제 보기
+tsrepl.wt.p5.title=계속하기
+tsrepl.wt.p5.sub=다음에 할 수 있는 것
+tsrepl.wt.p5.i1=남기기
+tsrepl.wt.p5.i1b=이름을 붙여 저장하면 이번 한 번이 아니라 월드에 남습니다.
+tsrepl.wt.p5.i2=건네기
+tsrepl.wt.p5.i2b=권한이 있는 사람에게 파일을 넘길 수 있습니다.
+tsrepl.wt.p5.i3=설정
+tsrepl.wt.p5.i3b=테마, 언어, 키 처리, 판의 너비.
+tsrepl.wt.p5.go=끝내고 길잡이 시작
+tsrepl.bar.prev=◂ 한 단계 앞으로
+tsrepl.bar.next=다음 보기 ▸
+tsrepl.bar.try=지금 해 보기 ▸
+tsrepl.bar.skip=둘러보기 종료
+tsrepl.bar.again=◂ 다시 보기
+tsrepl.bar.step=다음 단계 ▸
+tsrepl.bar.close=닫기

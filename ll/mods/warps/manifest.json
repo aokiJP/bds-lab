@@ -1,0 +1,12 @@
+{
+    "name": "warps",
+    "entry": "warps.js",
+    "type": "lse-quickjs",
+    "version": "0.1.0",
+    "description": "OP sets named warp points with /setwarp; anyone teleports with /warp <name> (once per 10 s), lists them with /warps; OP deletes with /delwarp.",
+    "dependencies": [
+        {
+            "name": "legacy-script-engine-quickjs"
+        }
+    ]
+}
