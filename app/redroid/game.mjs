@@ -20,6 +20,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as R from './redroid.mjs';
+import * as TL from './timeline.mjs';
 import { accountSql, hasAccount } from '../lib/account.mjs';
 import { Adb, startPad } from '../lib/android.mjs';
 import * as WD from '../lib/world.mjs';
@@ -230,25 +231,30 @@ export async function prep({ data, img = R.GAPPS_TAG, shots } = {}) {
   return res;
 }
 
-/** starts from the prepared folder, timed end to end: restore → boot → the game at its title */
-export async function bench({ data, img = R.GAPPS_TAG, rounds = 3, shots } = {}) {
-  const adb = adbOf(), work = data + '.run', rows = [];
+/** starts from the prepared folder, timed end to end: restore → boot → the game at its title. Each round's stages go to the
+ *  timeline (timeline.jsonl, as they come: a round cut off keeps the ones before it); one table at the end sets this run
+ *  against the last one and the median of the runs before */
+export async function bench({ data, img = R.GAPPS_TAG, rounds = 3, shots, timeline = TL.FILE } = {}) {
+  const adb = adbOf(), work = data + '.run', rows = [], run = new Date().toISOString();
+  const load = () => { try { return Number(fs.readFileSync('/proc/loadavg', 'utf8').split(' ')[0]); } catch { return null; } };
   for (let i = 1; i <= rounds; i++) {
-    const t0 = now();
+    const t0 = now(), l0 = load();
     const r = R.restore(data, 'overlay', work);
     const m = await R.up({ data: r.data, from: data, image: img, untilBoot: true });
     const g = await launch(adb, { shots: i === 1 ? shots : null });
     const { why, ...gg } = g;
-    const row = { round: i, restoreS: secs(r.ms), bootS: m.bootS, ...gg, totalS: g.titleS ? secs(now() - t0) : null };
+    const row = { round: i, restoreS: secs(r.ms), runS: m.runS, adbS: m.adbS, bootS: m.bootS, ...gg, totalS: g.titleS ? secs(now() - t0) : null };
     rows.push(row);
     R.notice(`起動からタイトルまで（${i} 回目）`, JSON.stringify(row));
     // the device kept up: the game alone again (what a second debug run on a resident device costs)
     const { why: _w, ...again } = await launch(adb);
     R.notice(`常駐の端末でゲームだけ起動し直す（${i} 回目）`, JSON.stringify(again));
     rows.push({ round: i, resident: true, ...again });
+    TL.append(TL.entriesOf(rows.slice(-2), { run, at: new Date().toISOString(), load: l0 }), timeline);
     R.down({ quiet: true });
   }
   R.sh('umount', [path.join(work, 'merged')], { sudo: true, quiet: true });
+  console.log(TL.table(TL.compare(TL.read(timeline), run)));
   return rows;
 }
 
