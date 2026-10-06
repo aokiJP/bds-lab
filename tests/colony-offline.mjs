@@ -466,13 +466,14 @@ try {
   // a whole harvest: every kind of post told apart; kept ones marked, dropped ones gone with their reason recorded
   const seen = path.join(T, 'seen.jsonl'), CD = path.join(T, 'colony-h');
   const r = await hlab(['harvest', '--n', '10', '--seed', 'all', '--max-requests', '60', '--sim-only'], { LAB_BORROW_SEEN: seen, LAB_COLONY_DIR: CD });
+  const harvestTail = r.t.split('\n').slice(-40).join('\n');
   const rec = B.readSeen(seen), by = (id) => rec.filter((x) => String(x.post) === String(id)).at(-1);
   const kept = rec.filter((x) => x.result === 'kept').map((x) => Number(x.post)).sort();
   ok(r.code === 0 && /残した 4 \/ 落とした 11/.test(r.t) && /候補を見尽くしました/.test(r.t) && kept.length === 4 && kept.includes(13010) && kept.includes(13011) && kept.includes(13014) && (kept.includes(13001) !== kept.includes(13004)),
-    'harvest: every post looked at, the four working addons kept (the one posted twice once; the .mcaddon of .mcpack files too)', `${JSON.stringify(rec.map((x) => [x.post, x.result, x.stage]))}\n${r.t}`);
+    'harvest: every post looked at, the four working addons kept (the one posted twice once; the .mcaddon of .mcpack files too)', `seen: ${JSON.stringify(rec.map((x) => [x.post, x.result, x.stage, x.reason]))}\nexit ${r.code}, the end of the harvest's output:\n${harvestTail}`);
   const st = (id) => by(id) && `${by(id).result}:${by(id).stage}`;
   ok(st(13002) === 'dropped:brief' && st(13003) === 'dropped:scan' && st(13005) === 'dropped:prefilter' && st(13006) === 'dropped:prefilter' && st(13007) === 'dropped:prefilter' && st(13008) === 'dropped:prefilter' && st(13009) === 'dropped:sim' && (st(13012) ?? 'dropped:file') === 'dropped:file' && st(13013) === 'dropped:kind',
-    'harvest: a beta of another BDS (brief), a risky one (scan), Java / no button / an old version / a world (before downloading), a crash at load (sim), a cut file, no script (kind)', JSON.stringify(rec.map((x) => [x.post, x.stage, x.reason])));
+    'harvest: a beta of another BDS (brief), a risky one (scan), Java / no button / an old version / a world (before downloading), a crash at load (sim), a cut file, no script (kind)', `seen: ${JSON.stringify(rec.map((x) => [x.post, x.result, x.stage, x.reason]))}\nexit ${r.code}, the end of the harvest's output:\n${harvestTail}`);
   ok(st(13015) === 'dropped:exists' && fs.readFileSync(path.join(UNITS, 'borrowed_13015', 'mine.txt'), 'utf8') === 'my fixes' && !hhits.some((x) => /^\/dl\/.*postid=13015\b/.test(x)), 'harvest: a unit already here under that name is left as it is (nothing downloaded for it)', JSON.stringify(by(13015)));
   ok([st(13001), st(13004)].sort().join() === 'dropped:seen,kept:sim' && /同じ中身を見ています（記事 130(01|04)、sha256）/.test([by(13001), by(13004)].find((x) => x.result === 'dropped').reason), 'harvest: the same file posted again is seen by its sha256 and never kept twice', JSON.stringify([by(13001), by(13004)]));
   const raw = fs.readFileSync(seen, 'utf8');
