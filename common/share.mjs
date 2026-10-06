@@ -224,6 +224,7 @@ export async function shareCmd(args, out = console.log) {
   files.sort((x, y) => (x[0] < y[0] ? -1 : 1));
   const buf = zip(files), name = `bds-lab-v${ver}.zip`, file = path.join(outDir, name), sum = crypto.createHash('sha256').update(buf).digest('hex');
   fs.mkdirSync(outDir, { recursive: true }); fs.writeFileSync(file, buf);
+  if (noVerify) fs.rmSync(file + '.verify.log', { force: true });   // (an earlier run's failures are not this zip's)
   if (!noVerify) {
     out('verify: the release unpacked alone, its own checks:');
     const bad = verify(file, out);
