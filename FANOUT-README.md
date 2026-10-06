@@ -73,15 +73,27 @@ node .fanout/fanout.mjs install | new "<目標>" | check | prompt <レーン> | 
 
 ## モデルの使い分け（Sonnet 5.5 / Opus 5.5）
 
+**レーンは Sonnet 約 6 割・Opus 約 4 割、司令塔は Opus** が既定です（`install` が `.claude/settings.json` に `model: opus` と `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` を書きます）。
 `node .fanout/fanout.mjs models` が、レーンごとに使うモデルと理由を出します。司令塔はそれを Agent の `model` に渡します。
 
 | 役 | モデル | 理由 |
 |---|---|---|
-| 書くレーン（既定） | Sonnet 5.5 | 担当と details が具体的なら十分。単価は Opus の半分 |
-| `hard` のレーン | Opus 5.5 | 2 つ以上のファイル・プロセスの待ち合わせ・後始末・並行・権限や秘密 |
+| 司令塔（計画・統合） | Opus 5.5 | 全体の判断。誤りは全レーンに響く |
 | レビュー（読むだけ） | Opus 5.5 | 見逃しがそのまま不具合になる |
+| `hard` のレーン | Opus 5.5 | 2 つ以上のファイル・プロセスの待ち合わせ・後始末・並行・権限や秘密 |
+| 重いレーン | Opus 5.5 | 上の Opus が 4 割に届かないとき、担当の行数 + details の多い順に上げる |
+| 残りの書くレーン | Sonnet 5.5 | 担当と details が具体的なら十分。単価は Opus の半分 |
 | 直し | 1 回目はレーンと同じ、2 回通らなければ Opus | 無駄な往復を増やさない |
-| 司令塔（計画・統合） | Opus 5.5 | 全体の判断 |
+
+割合は計画の `"mix": { "opus": 0.4 }` で変えられます。レビューと hard だけで 4 割を超えるときは、そのまま Opus です（Sonnet で直しが増える方が高い）。
+
+## 何体にするか（`node .fanout/fanout.mjs size`）
+1 体ごとに起動の分（プロンプト・AGENTS.md・コードを読む: 約 4 万トークン）がかかります。`size` は、仕事の量（行数相当）から、1 本あたり 300〜1500 行相当に収まる中でいちばん安い数（同じ値段なら多いほう）と、読む役（書く 4 本に 1 本、Opus）の数、費用の見積もりを出します。1 体と出たら fanout せず司令塔が自分でやります。
+```
+node .fanout/fanout.mjs size 1517 221 240    # 仕事のまとまりごとの行数 → 書く 2 + 読む 1 = 3 体
+node .fanout/fanout.mjs size                 # 計画の書くレーンから
+```
+統合した後は `node .fanout/fanout.mjs clean` でレーンの作業フォルダと枝を消してから、全体のテストを回します。
 
 単価（Claude API、1M トークンあたり）: Sonnet 5.5 入力 $2 / 出力 $10、Opus 5.5 入力 $4 / 出力 $20、キャッシュ読みはどちらも $0.20。
 
