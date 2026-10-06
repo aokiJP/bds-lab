@@ -675,7 +675,9 @@ async function runCmd(args) {
     if (o.opts['--apk']) apkUse(o.opts['--apk']);
     let list = apkPaths();
     // (app redroid debug: this run starts before its device is up — APP_DEVICE_READY_FILE says when the device is ready, or why
-    // it will not be; the BDS gets ready meanwhile. Without the APKs pulled last time, the device first: they come from it)
+    // it will not be; the BDS gets ready meanwhile. Without the APKs pulled last time, or with ones whose version is not known
+    // (APP_DEVICE_APKS_LATER: debug pulls them again into the same folder), the device first: they come from it — read only
+    // after its word, never while debug replaces them)
     const readyFile = process.env.APP_DEVICE_READY_FILE || null, ppid = process.ppid;
     const RD = readyFile ? await import('./redroid/ready.mjs') : null;
     let deviceWord = null;
@@ -688,7 +690,7 @@ async function runCmd(args) {
       if (deviceWord.serial && deviceWord.serial !== D.SERIAL) fail(`準備ができた端末（${deviceWord.serial}）が、この run の端末（${D.SERIAL}）と違います`, 'APP_SERIAL を確かめてください');
       log(`      端末の準備ができました（${(deviceWord.ms / 1000).toFixed(1)} 秒待ちました）`);
     };
-    if (readyFile && !list) { await deviceReady(); list = apkPaths(); }
+    if (readyFile && (!list || process.env.APP_DEVICE_APKS_LATER === '1')) { await deviceReady(); list = apkPaths(); }
     const ready = readySnapshot({ list, account, wipe: o.flags.has('--wipe') });
     const warmOk = Boolean(ready && !ready.diff.length);
     if (!list && !warmOk) {

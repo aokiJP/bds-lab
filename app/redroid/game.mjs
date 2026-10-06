@@ -254,12 +254,15 @@ export async function bench({ data, img = R.GAPPS_TAG, rounds = 3, shots } = {})
 }
 
 // ---- app/'s own run on this device (nothing of app/ changed: environment only) ----
-/** the game's APKs as installed (base + splits) into dir: app run reads its version and CPU from them (never uploaded) */
-export function pullApks(adb, dir) {
+/** the game's APKs as installed (base + splits) into dir: app run reads its version and CPU from them (never uploaded).
+ *  aside: another version than dir's goes there instead, dir left as it is (app run may be reading it: debug swaps after) */
+export function pullApks(adb, dir, { aside = null } = {}) {
   // (the same game as last time: what was pulled is still right — a resident device's second run skips the copy)
-  const ver = adb.shell(['dumpsys', 'package', PACKAGE], { timeout: 30_000 }).stdout.match(/versionCode=(\d+)/)?.[1] ?? '', mark = path.join(dir, '.version');
+  const ver = adb.shell(['dumpsys', 'package', PACKAGE], { timeout: 30_000 }).stdout.match(/versionCode=(\d+)/)?.[1] ?? '';
+  let mark = path.join(dir, '.version');
   const had = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith('.apk')) : [];
   if (ver && had.length && fs.existsSync(mark) && fs.readFileSync(mark, 'utf8').trim() === ver) return had;
+  if (aside) { dir = aside; mark = path.join(dir, '.version'); }
   fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true });
   const paths = adb.shell(['pm', 'path', PACKAGE], { timeout: 30_000 }).stdout.split('\n').map((l) => /^package:(\S+\.apk)/.exec(l.trim())?.[1]).filter(Boolean);
   for (const p of paths) if (adb.run(['pull', p, path.join(dir, path.basename(p))], { timeout: 600_000 }).status !== 0) throw new Error(`APK を取り出せません: ${p}`);
@@ -272,12 +275,16 @@ export function pullApks(adb, dir) {
 export const bridgeIp = () => R.sh('docker', ['network', 'inspect', 'bridge', '-f', '{{(index .IPAM.Config 0).Gateway}}'], { quiet: true }).stdout.trim() || '172.17.0.1';
 // (app run starts at once, before the device: its BDS gets ready while the device is restored, boots and starts the game.
 // It waits for the device's word in APP_DEVICE_READY_FILE (ready.mjs). The APKs pulled last time (apk/.version) tell it the
-// game's version before the device can; checked on the device once it is up — another version: app run again on the new ones)
+// game's version before the device can; checked on the device once it is up — another version: pulled aside (apk.new) while
+// the first run may still read apk/, swapped in after it ends, app run again on them. APKs without a kept version tell nothing:
+// as with none, app run waits for the device (APP_DEVICE_APKS_LATER) and reads them only after they are pulled again)
 export async function debug({ data, img = R.GAPPS_TAG, addon = 'jsonui_demo', mode = 'run', shots, args = [], keep = false } = {}) {
   const adb = adbOf(), work = data + '.run', t0 = now();
   const apkDir = path.join(path.dirname(data), 'apk'), early = RD.lastApks(apkDir), readyFile = path.join(path.dirname(data), 'device-ready.json');
+  const aside = early ? apkDir + '.new' : null, stale = !early && fs.existsSync(apkDir) && fs.readdirSync(apkDir).some((f) => f.endsWith('.apk'));
+  if (aside) fs.rmSync(aside, { recursive: true, force: true });
   const env = { ...process.env, APP_SERIAL: adb.serial, APP_LIVE_DEVICE: '1', APP_APK_DIR: apkDir, APP_HOST: bridgeIp(), APP_SHOT: 'adb', APP_SNAPSHOT: '0' };
-  for (const k of Object.keys(env)) if (/^GOOGLE_|^MS_/.test(k) || k === 'APP_DEVICE') delete env[k];
+  for (const k of Object.keys(env)) if (/^GOOGLE_|^MS_/.test(k) || k === 'APP_DEVICE' || k === 'APP_DEVICE_APKS_LATER') delete env[k];
   // the LAN discovery on the bridge while the run goes (UDP 7551 both ways: does the game's broadcast reach the BDS, does the
   // BDS answer): what `report` tells. Its own process, stopped when the run ends
   const lan = path.join(path.dirname(data), 'lan.txt');
@@ -285,8 +292,8 @@ export async function debug({ data, img = R.GAPPS_TAG, addon = 'jsonui_demo', mo
   fs.rmSync(readyFile, { force: true });
   let t1 = now();
   // (app run's own lines as they come: its stages, a failing step, its PASS / FAIL line)
-  const run = RD.startChild(process.execPath, [path.join(HERE, '..', '..', 'lab.mjs'), 'app', mode, '-a', addon, ...args], { timeoutMs: 40 * 60_000, env: { ...env, APP_DEVICE_READY_FILE: readyFile } });
-  say(`app ${mode} を先に始めました（BDS を用意しながら端末を待ちます。APK: ${early ? `前回取り出した版 ${early.version}` : 'まだ無いので端末から取り出してから'}）`);
+  const run = RD.startChild(process.execPath, [path.join(HERE, '..', '..', 'lab.mjs'), 'app', mode, '-a', addon, ...args], { timeoutMs: 40 * 60_000, env: { ...env, APP_DEVICE_READY_FILE: readyFile, ...(early ? {} : { APP_DEVICE_APKS_LATER: '1' }) } });
+  say(`app ${mode} を先に始めました（BDS を用意しながら端末を待ちます。APK: ${early ? `前回取り出した版 ${early.version}` : stale ? '前回のものは版が分からないので端末から取り出し直してから' : 'まだ無いので端末から取り出してから'}）`);
   // a device `--keep` left up is used as it is (nothing restored or booted; the game started only when it is not running):
   // the second run on a resident device costs the game's start at most
   let ready, apks = [], failed = null, downOnFail = false;
@@ -308,10 +315,11 @@ export async function debug({ data, img = R.GAPPS_TAG, addon = 'jsonui_demo', mo
       R.notice('デバッグできるまで（戻す → 起動 → タイトル）', JSON.stringify(ready));
       if (!g.titleS && !g.windowS) { downOnFail = true; throw new Error(`ゲームがタイトルまで起動しません（${g.license?.startsWith('no') ? `ライセンス: ${g.license}` : g.words || g.am || '画面なし'}）: node lab.mjs app redroid prep で端末を作り直してください`); }
     }
-    apks = pullApks(adb, apkDir);
+    apks = pullApks(adb, apkDir, { aside });
   } catch (e) { failed = e; }
-  // the device's word to app run: ready, or why not (app run stops its BDS then and ends with that reason)
-  const now1 = RD.lastApks(apkDir), changed = !failed && early && now1?.version !== early.version;
+  // the device's word to app run: ready, or why not (app run stops its BDS then and ends with that reason). Another version
+  // than early's is in apk.new (apk/ untouched while the first run may read it)
+  const pulledAside = Boolean(aside && fs.existsSync(aside)), now1 = RD.lastApks(pulledAside ? aside : apkDir), changed = !failed && pulledAside;
   const why = failed ? redact(failed.message, SECRETS()) : changed ? `APK の版が変わりました（${early.version} → ${now1?.version || '?'}）: 取り出し直したもので app ${mode} をやり直します` : '';
   RD.writeReady(readyFile, { serial: adb.serial, ok: !why, why });
   const aheadS = secs(now() - t1);
@@ -319,12 +327,17 @@ export async function debug({ data, img = R.GAPPS_TAG, addon = 'jsonui_demo', mo
   if (failed) {
     say(`端末の準備に失敗しました: app ${mode} の終わり（BDS を止める）を待ちます`);
     await run.done;
+    if (aside) fs.rmSync(aside, { recursive: true, force: true });
     if (downOnFail && !keep) R.down({ quiet: true });
     throw failed;
   }
   // (another version: the first run ends on the word above; again on the APKs just pulled, the device up — waited as before)
   let res = await run.done;
-  if (changed) { t1 = now(); res = spawnSync(process.execPath, [path.join(HERE, '..', '..', 'lab.mjs'), 'app', mode, '-a', addon, ...args], { timeout: 40 * 60_000, stdio: ['ignore', 'inherit', 'inherit'], env }); }
+  // (the first run has ended: nothing reads apk/ now — the APKs just pulled take its place)
+  if (changed) {
+    fs.rmSync(apkDir, { recursive: true, force: true }); fs.renameSync(aside, apkDir);
+    t1 = now(); res = spawnSync(process.execPath, [path.join(HERE, '..', '..', 'lab.mjs'), 'app', mode, '-a', addon, ...args], { timeout: 40 * 60_000, stdio: ['ignore', 'inherit', 'inherit'], env });
+  }
   const verdict = res.status === 0 ? 'PASS' : `FAIL（終了コード ${res.status ?? res.signal}）`;
   R.notice(`app ${mode} を redroid で`, `${verdict}（${secs(now() - t1)} 秒、${changed ? 'APK の版が変わったのでやり直し' : `端末の準備より ${aheadS} 秒先に開始（その間に BDS）`}、APK ${apks.length} 個、BDS は ${env.APP_HOST}、LAN の発見は app の中継 --reflect で）`);
   if (keep) say(`端末は動いたままです（${adb.serial}）。止める: node lab.mjs app redroid down`);

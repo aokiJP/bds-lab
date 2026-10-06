@@ -208,10 +208,13 @@ exit 0
 for (const c of ['mount', 'umount', 'tcpdump']) shFile(c, `echo "${c} $*" >> "$FAKE_RD/calls"\nexit 0\n`);
 shFile('sudo', '[ "$1" = "-n" ] && shift\nexec "$@"\n');
 
-function debugRun(name, { args = [], extra = {}, apkVersion = String(VC) } = {}) {
+/** stale: APKs without .version (an older pull, or one when the device gave no version) — and not readable as APKs, so a run
+ *  that read them before they are pulled again fails */
+function debugRun(name, { args = [], extra = {}, apkVersion = String(VC), stale = false } = {}) {
   const rd = path.join(tmp, `rd-${name}`), data = path.join(rd, 'data');
   fs.mkdirSync(data, { recursive: true });
-  if (apkVersion) lastPull(path.join(rd, 'apk'), apkVersion);
+  if (stale) { const d = path.join(rd, 'apk'); fs.mkdirSync(d, { recursive: true }); for (const f of ['base.apk', 'split_config.arm64_v8a.apk', 'split_old.apk']) fs.writeFileSync(path.join(d, f), 'not an apk (an old pull)'); }
+  else if (apkVersion) lastPull(path.join(rd, 'apk'), apkVersion);
   const { env, S } = appEnv(`debug-${name}`, { FAKE_RD: rd, FAKE_DEVICE_APKS: DEVICE_APKS, PATH: `${BIN}:${process.env.PATH}`, ...extra });
   delete env.ADB;
   const r = spawnSync(process.execPath, [path.join(TOP, 'app', 'redroid', 'game.mjs'), 'debug', '--data', data, ...args, '--', '--no-fetch'], { cwd: TOP, env, encoding: 'utf8', timeout: 240_000 });
@@ -255,7 +258,9 @@ await t('debug: the device has another version than the APKs pulled last time �
   const r = debugRun('newver', { apkVersion: '1' });
   ok(r.status === 0 && /APK の版が変わりました（1 → 912605203）/.test(r.text) && /app run を redroid で: PASS/.test(r.text), `exit ${r.status}\n${r.text}`);
   ok(r.calls.filter((c) => /^adb .*pull /.test(c)).length === 2, 'base + split pulled');
+  ok(r.calls.filter((c) => /^adb .*pull /.test(c)).every((c) => /\/apk\.new\//.test(c)), `pulled aside, apk/ left to the first run: ${r.calls.filter((c) => /pull/.test(c)).join(' | ')}`);
   eq(fs.readFileSync(path.join(r.rd, 'apk', '.version'), 'utf8').trim(), String(VC));
+  ok(!fs.existsSync(path.join(r.rd, 'apk.new')), 'apk.new swapped in');
   ok((r.text.match(/^(PASS|FAIL)(?= app\/runs)/mg) ?? []).join(',') === 'FAIL,PASS', 'the first run ends on the word, the second passes');
 });
 
@@ -263,6 +268,16 @@ await t('debug: no APKs pulled yet → app run waits for the device first, pulle
   const r = debugRun('first', { apkVersion: null });
   ok(r.status === 0 && /まだ無いので端末から取り出してから/.test(r.text) && /app run を redroid で: PASS/.test(r.text), `exit ${r.status}\n${r.text}`);
   eq(r.before, 'no', 'nothing to start the BDS with before the device');
+});
+
+await t('debug: APKs pulled before without .version → as with none: app run waits for the device, reads them only once pulled again → PASS', () => {
+  const r = debugRun('stale', { stale: true });
+  ok(r.status === 0 && /前回のものは版が分からないので端末から取り出し直してから/.test(r.text) && /app run を redroid で: PASS/.test(r.text), `exit ${r.status}\n${r.text}`);
+  eq(r.before, 'no', 'no BDS from the stale APKs before the device');
+  ok(r.calls.filter((c) => /^adb .*pull /.test(c)).length === 2, 'base + split pulled again');
+  eq(fs.readdirSync(path.join(r.rd, 'apk')).sort(), ['.version', 'base.apk', 'split_config.arm64_v8a.apk'], 'the old pull replaced');
+  eq(fs.readFileSync(path.join(r.rd, 'apk', '.version'), 'utf8').trim(), String(VC));
+  ok((r.text.match(/^(PASS|FAIL)(?= app\/runs)/mg) ?? []).join(',') === 'PASS', 'one run, no "again"');
 });
 
 for (const d of runs.filter(Boolean)) fs.rmSync(d, { recursive: true, force: true });
