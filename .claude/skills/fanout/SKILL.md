@@ -30,14 +30,16 @@ description: 目標 1 行から、AI のサブエージェント（最大 10）�
 ## 3. 子を起動（第 1 波: after が空の書くレーン全部を、1 つのメッセージで並行に）
 各レーン:
 ```
-node .fanout/fanout.mjs prompt <レーン>   → その出力全体を prompt に
-Agent({ description: "lane <レーン>", prompt: <出力そのまま>, isolation: "worktree", run_in_background: true })
+node .fanout/fanout.mjs worktree <レーン>   → 土台から作業フォルダ .claude/worktrees/fanout-<レーン>（枝 fanout/<レーン>）
+node .fanout/fanout.mjs prompt <レーン>     → その出力の全文を、司令塔がそのまま Agent の prompt に貼る
+Agent({ description: "lane <レーン>", prompt: <出力の全文>, run_in_background: true })
 ```
-- `isolation: "worktree"` を必ず付ける（子ごとに別の作業フォルダと枝: 上書きが起きない）。
+- 作業フォルダは必ず `worktree` コマンドで作る。Agent の `isolation: "worktree"` は使わない（既定の枝から作られ、土台と違うことがある: 子の手順 1 で止まる）。
+- プロンプトは本文を渡す。「このコマンドを実行してその出力に従え」という渡し方はしない（子の側の権限判定で止められる）。
 - 待つ間に司令塔はファイルを編集しない（統合でぶつかる）。
 
 ## 4. 子が戻るたびに
-1. 報告の「commit:」の枝を `node .fanout/fanout.mjs record <レーン> <枝>`
+1. 枝は `worktree` が計画に記録済み（別の枝で報告されたときだけ `record <レーン> <枝>`）
 2. `node .fanout/fanout.mjs status` でそのレーンが ✔ か。✘（範囲外・commit なし）なら、SendMessage でその子に status の行をそのまま返して直させる（2 往復まで。それでも ✘ ならそのレーンは捨てて、報告に書く）。
 3. 報告の「依頼」は集めておく（統合のときに司令塔が反映するか、次の波のレーンにする）。
 

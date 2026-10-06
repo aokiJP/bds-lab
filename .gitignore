@@ -53,3 +53,5 @@ end/plugins/*/lab.mjs
 ll/mods/*/lab.mjs
 # fanout: その回の計画（司令塔のもの）
 .fanout/plan.json
+# fanout: レーンの作業フォルダ
+.claude/worktrees/

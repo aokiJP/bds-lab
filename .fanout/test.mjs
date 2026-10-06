@@ -52,9 +52,11 @@ export async function run() {
   });
   await t('renderPrompt: 欄がすべて埋まり、読むだけのレーンには書く手順が出ない', () => {
     const tpl = fs.readFileSync(path.join(HERE, 'LANE.md'), 'utf8');
-    const plan = { goal: 'G', base: 'abc', rules: ['R1'], lanes: [{ name: 'w', goal: 'WG', owns: ['a.mjs#f'], test: 'node t.mjs', details: ['D1'] }, { name: 'r', goal: 'RG', readonly: true, reviews: ['V1'] }] };
+    const plan = { goal: 'G', base: 'abc', rules: ['R1'], lanes: [{ name: 'w', goal: 'WG', owns: ['a.mjs#f'], test: 'node t.mjs', details: ['D1'], worktree: '/wt/w', branch: 'fanout/w' }, { name: 'r', goal: 'RG', readonly: true, reviews: ['V1'], worktree: '/wt/r', branch: 'fanout/r' }] };
+    let threw = false; try { F.renderPrompt(plan, { ...plan.lanes[0], worktree: undefined }, tpl); } catch { threw = true; }
+    ok(threw, '作業フォルダの無いレーンのプロンプトは出さない');
     const w = F.renderPrompt(plan, plan.lanes[0], tpl), r = F.renderPrompt(plan, plan.lanes[1], tpl);
-    ok(/a\.mjs#f/.test(w) && /D1/.test(w) && /R1/.test(w) && /scope w/.test(w) && !/V1/.test(w) && !/\{\{/.test(w), w);
+    ok(/cd \/wt\/w/.test(w) && /fanout\/w/.test(w) && /a\.mjs#f/.test(w) && /D1/.test(w) && /R1/.test(w) && /scope w/.test(w) && !/V1/.test(w) && !/\{\{/.test(w), w);
     ok(/V1/.test(r) && !/scope r/.test(r) && /読むだけ/.test(r) && !/\{\{/.test(r), r);
   });
 
@@ -89,7 +91,7 @@ export async function run() {
       p.lanes = [{ name: 'eff', goal: 'f を直す', owns: ['a.mjs#f', 'tests/eff.mjs'], test: 'node tests/eff.mjs' }, { name: 'gee', goal: 'g を直す', owns: ['a.mjs#g'], test: 'true', after: ['eff'] }];
       fs.writeFileSync(path.join(dir, '.fanout', 'plan.json'), JSON.stringify(p));
       const c = node('check'); ok(c.status === 0 && /eff → gee/.test(c.stdout), c.stdout + c.stderr);
-      ok(/a\.mjs#f/.test(node('prompt', 'eff').stdout));
+      ok(node('prompt', 'eff').status === 1, '作業フォルダの前はプロンプトを出さない');
     });
     await t('scope: 担当の関数の中は ✔、外の関数・共有・担当外のファイルは ✘（未 commit・新しいファイルも見る）', () => {
       const a = path.join(dir, 'a.mjs'), orig = fs.readFileSync(a, 'utf8');
@@ -105,14 +107,21 @@ export async function run() {
       fs.rmSync(path.join(dir, 'other.mjs'));
     });
     await t('worktree の枝: record → status（commit 済みの枝を土台と比べる）', () => {
-      sh('git', ['worktree', 'add', '-q', '-b', 'lane-eff', path.join(dir, '.wt-eff')]);
-      const wt = path.join(dir, '.wt-eff');
+      // (a commit after the base, as the orchestrator's own: the lane's folder still starts at the base)
+      fs.writeFileSync(path.join(dir, 'later.txt'), 'x'); sh('git', ['add', '-A']); sh('git', ['commit', '-qm', 'later']);
+      const w = node('worktree', 'eff'); ok(w.status === 0 && /fanout\/eff/.test(w.stdout), w.stdout + w.stderr);
+      const wt0 = F.loadPlan(dir).lanes[0].worktree;
+      ok(spawnSync('git', ['rev-parse', 'HEAD'], { cwd: wt0, encoding: 'utf8' }).stdout.trim() === F.loadPlan(dir).base, '作業フォルダは土台から');
+      ok(!fs.existsSync(path.join(wt0, 'later.txt')));
+      ok(/a\.mjs#f/.test(node('prompt', 'eff').stdout) && /cd .*fanout-eff/.test(node('prompt', 'eff').stdout));
+      ok(node('worktree', 'eff').status === 0, '2 回目は既にあるものを使う');
+      const wt = F.loadPlan(dir).lanes[0].worktree;
       fs.writeFileSync(path.join(wt, 'a.mjs'), fs.readFileSync(path.join(wt, 'a.mjs'), 'utf8').replace('return 1;', 'return 11;'));
       spawnSync('git', ['commit', '-qam', 'eff'], { cwd: wt });
-      ok(node('record', 'eff', 'lane-eff').status === 0);
+      ok(node('record', 'eff', 'fanout/eff').status === 0);
       const inWt = spawnSync(process.execPath, [path.join(wt, '.fanout', 'fanout.mjs'), 'scope', 'eff'], { cwd: wt, encoding: 'utf8' });
       ok(inWt.status === 0 && /✔ eff/.test(inWt.stdout), `worktree の中の scope（計画は親のもの）: ${inWt.stdout}${inWt.stderr}`);
-      const r = node('status'); ok(r.status === 0 && /✔ eff: lane-eff（1 commit）/.test(r.stdout) && /gee: 枝なし/.test(r.stdout), r.stdout + r.stderr);
+      const r = node('status'); ok(r.status === 0 && /✔ eff: fanout\/eff（1 commit）/.test(r.stdout) && /gee: 枝なし/.test(r.stdout), r.stdout + r.stderr);
     });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   console.log(`${failed ? '✘' : '✔'} fanout selftest: ${pass} 通過、${failed} 失敗`);

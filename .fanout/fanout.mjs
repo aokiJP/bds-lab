@@ -6,6 +6,7 @@
 //   node .fanout/fanout.mjs check               計画の検査（担当の重なり・共有ファイル・存在しない関数・レーン数）
 //   node .fanout/fanout.mjs prompt <レーン>      子に渡すプロンプト（.fanout/LANE.md から作る。人は書かない）
 //   node .fanout/fanout.mjs scope <レーン> [--head <ref>]   土台からの差分が担当の中か（作業ツリーの未 commit も見る）
+//   node .fanout/fanout.mjs worktree <レーン>     そのレーンの作業フォルダを土台から作る（枝 fanout/<レーン>、計画に記録）
 //   node .fanout/fanout.mjs record <レーン> <枝>  子が作った枝を計画に記録
 //   node .fanout/fanout.mjs order               統合の順番（after に従う）
 //   node .fanout/fanout.mjs status              レーンごとの枝・commit 数・範囲の検査
@@ -213,6 +214,7 @@ function scopeOf(top, plan, lane, head) {
 
 // ---- the lane's prompt ----
 export function renderPrompt(plan, lane, template) {
+  if (!lane.worktree || !lane.branch) throw new Error(`${lane.name}: 作業フォルダがまだありません（node .fanout/fanout.mjs worktree ${lane.name}）`);
   const shared = [...ALWAYS_SHARED, ...(plan.shared ?? [])];
   const list = (a) => (a?.length ? a.map((x) => `- ${x}`).join('\n') : '- （なし）');
   const vars = {
@@ -221,6 +223,7 @@ export function renderPrompt(plan, lane, template) {
     shared: list(shared), test: lane.test ?? '（なし）', details: list(lane.details), rules: list(plan.rules),
     others: list((plan.lanes ?? []).filter((x) => x.name !== lane.name).map((x) => `${x.name}: ${x.goal}`)),
     mode: lane.readonly ? 'readonly' : 'write',
+    worktree: lane.worktree ?? '', branch: lane.branch ?? '',
     reviews: list(lane.reviews),
     branches: list((plan.lanes ?? []).filter((x) => !x.readonly && (!lane.target || lane.target.includes(x.name))).map((x) => (x.branch ? `${x.name}: \`git diff ${plan.base}...${x.branch}\`` : `${x.name}: （枝がまだ記録されていません: 司令塔に聞く）`))),
   };
@@ -280,6 +283,23 @@ function actionsOff(top, { check = false } = {}) {
   return res;
 }
 
+// ---- a lane's own working folder: made here from the plan's base (a subagent tool's own worktree may start from the
+// default branch instead: the lane's first check stops it) ----
+export function laneWorktree(top, plan, lane) {
+  const main = path.dirname(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], top).out);
+  const wt = path.join(main, '.claude', 'worktrees', `fanout-${lane.name}`), branch = `fanout/${lane.name}`;
+  let made = false;
+  if (!fs.existsSync(wt)) {
+    const exists = git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], main).ok;
+    const r = git(['worktree', 'add', ...(exists ? [wt, branch] : ['-b', branch, wt, plan.base])], main);
+    if (!r.ok) throw new Error(`作業フォルダを作れません: ${r.err}`);
+    made = true;
+  }
+  if (git(['merge-base', '--is-ancestor', plan.base, 'HEAD'], wt).ok === false) throw new Error(`${wt} は土台 ${plan.base.slice(0, 10)} から始まっていません`);
+  lane.worktree = wt; lane.branch = branch;
+  return { path: wt, branch, made };
+}
+
 // ---- install into this repository ----
 const AGENTS_MARK = '<!-- fanout:rules -->';
 function install(top) {
@@ -309,7 +329,10 @@ function install(top) {
   else said.push('AGENTS.md: 規則は入っています');
   // the run's own files never go into git
   const gi = path.join(top, '.gitignore'), g = fs.existsSync(gi) ? fs.readFileSync(gi, 'utf8') : '';
-  if (!/^\.fanout\/plan\.json$/m.test(g)) fs.writeFileSync(gi, `${g.replace(/\n*$/, '\n')}# fanout: その回の計画（司令塔のもの）\n.fanout/plan.json\n`);
+  let g2 = g;
+  if (!/^\.fanout\/plan\.json$/m.test(g2)) g2 = `${g2.replace(/\n*$/, '\n')}# fanout: その回の計画（司令塔のもの）\n.fanout/plan.json\n`;
+  if (!/^\.claude\/worktrees\/$/m.test(g2)) g2 = `${g2.replace(/\n*$/, '\n')}# fanout: レーンの作業フォルダ\n.claude/worktrees/\n`;
+  if (g2 !== g) fs.writeFileSync(gi, g2);
   return said;
 }
 
@@ -349,6 +372,13 @@ async function main([cmd, ...rest]) {
       const hi = rest.indexOf('--head'), head = hi >= 0 ? rest[hi + 1] : null;
       const bad = scopeOf(top, plan, lane, head);
       if (bad.length) bad.forEach((b) => fail(b)); else console.log(`✔ ${lane.name}: 変更はすべて担当の中です`);
+      break;
+    }
+    case 'worktree': {
+      const plan = loadPlan(top), lane = plan.lanes.find((l) => l.name === rest[0]);
+      if (!lane) return fail(`レーン ${rest[0]} はありません`);
+      const r = laneWorktree(top, plan, lane); savePlan(top, plan);
+      console.log(`✔ ${lane.name}: ${r.path}（枝 ${r.branch}、土台 ${plan.base.slice(0, 10)}${r.made ? '' : '、既にあったもの'}）`);
       break;
     }
     case 'record': {
