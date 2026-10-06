@@ -1,0 +1,170 @@
+{
+  "goal": "app/redroid: 準備した /data を戻してからゲームのタイトルまでの 48〜50 秒を短くする（GitHub Actions を使わない。手元の Linux で動く形に）",
+  "base": "<new が入れる>",
+  "maxLanes": 10,
+  "shared": [
+    "tests/app-offline.mjs",
+    "app/redroid/README.md",
+    "tests/fakes/**"
+  ],
+  "rules": [
+    "このコンテナには binder が無く redroid は動かない。確かめるのは偽の docker / adb（PATH の先頭に置く sh スクリプト。自分のテストの中で一時フォルダに作る）と node --check まで",
+    "実機で測らないと分からない値（秒数・効果）は決めつけず、計測を出力するようにして「要実測」と報告する",
+    "既存の書き方に合わせる: 日本語のメッセージ、R.notice の 1 行、secs()、純粋関数には (pure) のコメント",
+    "エミュレータの経路（--device redroid でないとき）の振る舞いを変えない"
+  ],
+  "finalTests": [
+    "node tests/app-offline.mjs",
+    "for f in tests/rd-*-offline.mjs; do node $f || exit 1; done"
+  ],
+  "lanes": [
+    {
+      "name": "boot",
+      "goal": "端末の起動を待つ部分を速く・軽くする",
+      "owns": [
+        "app/redroid/redroid.mjs#up,down,restore,unmount,bootArgs",
+        "tests/rd-boot-offline.mjs"
+      ],
+      "test": "node tests/rd-boot-offline.mjs",
+      "details": [
+        "up(): 250 ms ごとに adb connect / getprop を起動し直すのをやめ、adb wait-for-device と端末側のループ 1 回で boot_completed を待つ（返り値 runS / adbS / bootS / readyS は同じ形）",
+        "down(): docker kill してから rm。restore() からの片付けは待たずに進められるようにする（名前がぶつからないこと）",
+        "REDROID_PROFILE=fast（画面を小さく・fps を下げる）を bootArgs に。既定は今のまま",
+        "段階ごとの ms を up() の返り値に足す"
+      ]
+    },
+    {
+      "name": "title",
+      "goal": "ゲームのタイトルを待つ間の CPU を減らす（OCR を毎 0.5 秒やめる）",
+      "owns": [
+        "app/redroid/game.mjs#launch,words,isTitle,focus,screenSize",
+        "tests/rd-title-offline.mjs"
+      ],
+      "test": "node tests/rd-title-offline.mjs",
+      "details": [
+        "安い信号（ゲームのプロセス・窓・logcat の行）を先に見て、OCR はその後、または前回の titleS（.lab/ に保存）の 7 割を過ぎてから、間隔を広げながら",
+        "判定の結果（titleS / license / firstRun の扱い）は今と同じ",
+        "OCR をいつ行うかの判断を純粋関数にしてテストする"
+      ]
+    },
+    {
+      "name": "prep",
+      "goal": "準備（prep）で、起動直後の CPU の取り合いを減らしておく",
+      "owns": [
+        "app/redroid/game.mjs#prep,QUIET,finishGame,root",
+        "tests/rd-prep-offline.mjs"
+      ],
+      "test": "node tests/rd-prep-offline.mjs",
+      "details": [
+        "ゲームを事前にコンパイル（cmd package compile -m speed -f）し、その結果を notice に",
+        "QUIET を見直し、起動直後のバックグラウンドの dexopt などを抑える設定を足す。Play・Play 開発者サービス・GSF は止めない（ライセンス確認が通らなくなる）",
+        "足した adb のコマンドの並びを、偽の adb で記録してテストする"
+      ]
+    },
+    {
+      "name": "overlap",
+      "goal": "BDS の用意・起動を端末の起動と並行にする（いまは端末がタイトルに着いてから app run が始まる）",
+      "owns": [
+        "app/redroid/game.mjs#debug,pullApks,bridgeIp",
+        "app/app.mjs#runCmd",
+        "tests/rd-overlap-offline.mjs"
+      ],
+      "test": "node tests/rd-overlap-offline.mjs",
+      "details": [
+        "debug() は app run をすぐ始め、端末の準備ができたら APP_DEVICE_READY_FILE（JSON: serial / ok / why）を書く。app.mjs の runCmd は、その環境変数があるときだけ BDS を先に進めてからそのファイルを待つ",
+        "APK の版は前回取り出したもの（apk/.version）を先に使い、端末の準備の後で確かめる",
+        "端末の準備に失敗したら BDS を止めて、理由が分かる形で終える。--keep の振る舞いは今のまま",
+        "偽の端末（準備ファイルを遅れて書く / 失敗を書く）で、重なっていることと後始末をテストする"
+      ],
+      "hard": "app.mjs と game.mjs をまたぐ、BDS と端末の待ち合わせ・失敗時の後始末"
+    },
+    {
+      "name": "resident",
+      "goal": "手元では端末を残す（常駐）のを既定にし、2 回目からの起動をほぼ 0 にする",
+      "owns": [
+        "app/redroid/redroid.mjs#running,lock",
+        "app/app.mjs#redroidCmd,REDROID_HELP",
+        "tests/rd-resident-offline.mjs"
+      ],
+      "test": "node tests/rd-resident-offline.mjs",
+      "details": [
+        "GITHUB_ACTIONS でないときは --keep を既定に（--no-keep で今の振る舞い）",
+        "node lab.mjs app redroid warm: 端末を起こしてゲームをタイトルで待たせておく",
+        "help の文を合わせる"
+      ]
+    },
+    {
+      "name": "timeline",
+      "goal": "どこが遅いかを毎回残し、前回と比べられるようにする",
+      "owns": [
+        "app/redroid/timeline.mjs",
+        "app/redroid/game.mjs#bench",
+        "tests/rd-timeline-offline.mjs"
+      ],
+      "test": "node tests/rd-timeline-offline.mjs",
+      "details": [
+        "timeline.mjs: 段階ごとの時間を app/redroid/.lab/timeline.jsonl に 1 行ずつ足す関数と、前回・中央値との差の表",
+        "bench() の結果をそこへ書く。表示は 1 回の表"
+      ]
+    },
+    {
+      "name": "local",
+      "goal": "redroid.yml がやっていた準備を、手元の Linux で 1 コマンドにする（Actions を使わない）",
+      "owns": [
+        "app/redroid/local.mjs",
+        "tests/rd-local-offline.mjs"
+      ],
+      "test": "node tests/rd-local-offline.mjs",
+      "details": [
+        "node app/redroid/local.mjs: doctor → 足りないもの（binder の modprobe、イメージ、prep / open）を順に。各段階はやる前に何をするかを 1 行出し、--dry-run で全部を出すだけ",
+        "秘密は環境変数か .env から読むだけ。表示しない",
+        "--dry-run の出力と、段階の順番をテストする"
+      ]
+    },
+    {
+      "name": "boost",
+      "goal": "ゲームの起動中だけ、ゲームを優先させる（REDROID_BOOST=1 のときだけ）",
+      "owns": [
+        "app/redroid/boost.mjs",
+        "tests/rd-boost-offline.mjs"
+      ],
+      "test": "node tests/rd-boost-offline.mjs",
+      "details": [
+        "boost.mjs: ゲームのプロセスの優先度を上げ、Google のサービスを起動中だけ後回しにし、終わったら戻す関数（adb のコマンドの並びを返す純粋関数 + 実行する関数）",
+        "game.mjs からの呼び出しは足さない（統合のときに司令塔がつなぐ）。報告の依頼に、どこで呼ぶとよいかを書く"
+      ]
+    },
+    {
+      "name": "review-a",
+      "goal": "boot・resident・local の枝を読んで、壊れる所を探す",
+      "readonly": true,
+      "reviews": [
+        "端末が起きないとき・途中で止めたときの後始末",
+        "常駐の端末を別の /data やイメージで使ってしまう道",
+        "手元の Linux で sudo が要る所の扱い"
+      ],
+      "target": [
+        "boot",
+        "resident",
+        "local"
+      ]
+    },
+    {
+      "name": "review-b",
+      "goal": "title・prep・overlap・timeline・boost の枝を読んで、壊れる所を探す",
+      "readonly": true,
+      "reviews": [
+        "タイトルを見逃す・誤って判定する道",
+        "BDS と端末の待ち合わせの競合・終わらない待ち",
+        "ライセンス確認を壊す設定"
+      ],
+      "target": [
+        "title",
+        "prep",
+        "overlap",
+        "timeline",
+        "boost"
+      ]
+    }
+  ]
+}

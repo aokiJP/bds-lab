@@ -4,13 +4,6 @@ name: verify
 # Endstone (Linux) and LeviLamina (Windows) — a macOS minute counts as 10 and a Windows one as 2 on a private repository.
 # (hashFiles is not allowed in a job's `if`: there it made the whole file invalid and no job ever ran; it is a step now)
 on:
-  push:
-    branches: ['**']
-    # the autopilot's memory alone (auto/: a ledger row after each task, failed ones too, every hour) is no code to verify: each such
-    # push used to start the whole verify run
-    paths-ignore: ['auto/**']
-  pull_request:
-    paths-ignore: ['auto/**']
   workflow_dispatch:
 # least privilege: CI only reads the repository
 permissions:

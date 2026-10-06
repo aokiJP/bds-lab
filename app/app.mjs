@@ -721,6 +721,22 @@ async function runCmd(args) {
   try {
     log(`app run ${addon} → ${rel(runDir)}`);
     let list = null, ready = null, warmOk = false, info;
+    // (app redroid debug: this run starts before its device is up — APP_DEVICE_READY_FILE says when the device is ready, or why
+    // it will not be; the BDS gets ready meanwhile. Without the APKs pulled last time, or with ones whose version is not known
+    // (APP_DEVICE_APKS_LATER: debug pulls them again into the same folder), the device first: they come from it — read only
+    // after its word, never while debug replaces them. Never with a person's device: that is --device <名前>, not redroid)
+    const readyFile = REAL ? null : process.env.APP_DEVICE_READY_FILE || null, ppid = process.ppid;
+    const RD = readyFile ? await import('./redroid/ready.mjs') : null;
+    let deviceWord = null;
+    const deviceReady = async () => {
+      if (!readyFile || deviceWord) return;
+      log(`      端末の準備を待っています（app redroid debug: ${rel(readyFile)}）`);
+      deviceWord = await RD.waitReady(readyFile, { timeoutMs: Number(process.env.APP_DEVICE_READY_MS) || 20 * 60_000, gone: () => process.ppid !== ppid });
+      st.timing.deviceWait = deviceWord.ms;
+      if (!deviceWord.ok) fail(`端末の準備に失敗しました: ${deviceWord.why || '理由は書かれていません'}`, '端末の側（app redroid debug）の行を見てください（この run の BDS は止めます）');
+      if (deviceWord.serial && deviceWord.serial !== D.SERIAL) fail(`準備ができた端末（${deviceWord.serial}）が、この run の端末（${D.SERIAL}）と違います`, 'APP_SERIAL を確かめてください');
+      log(`      端末の準備ができました（${(deviceWord.ms / 1000).toFixed(1)} 秒待ちました）`);
+    };
     if (REAL) {
       // 1. the person's device: online, looked at again, its way (none yet: what to do, and nothing else is started)
       stage(`[1/5] 端末 ${REAL.name}`);
@@ -736,6 +752,7 @@ async function runCmd(args) {
       // 1. the APK set (not needed when the prepared snapshot already has the game: `app prepare`, lib/warm.mjs)
       if (o.opts['--apk']) apkUse(o.opts['--apk']);
       list = apkPaths();
+      if (readyFile && (!list || process.env.APP_DEVICE_APKS_LATER === '1')) { await deviceReady(); list = apkPaths(); }
       ready = readySnapshot({ list, account, wipe: o.flags.has('--wipe') });
       warmOk = Boolean(ready && !ready.diff.length);
       if (!list && !warmOk) {
@@ -754,11 +771,15 @@ async function runCmd(args) {
       stage(`[1/5] APK ${info.versionName} (${info.versionCode}) ${info.abis.join(',')}${list ? '' : '（準備済みの端末に入っているもの）'}`);
     }
 
-    // 2. the emulator: started now, waited for after the BDS is up (both get ready at once). A person's device: as it is
+    // 2. the emulator: started now, waited for after the BDS is up (both get ready at once). A person's device: as it is.
+    // app redroid debug's device: being made ready meanwhile (the BDS first)
     const elog = (s) => log('      ' + s, /^W /.test(s));
     if (REAL) {
       stage(`[2/5] 端末 ${REAL.name}（${real.path.key}、${linkJa(real.facts.link)} ${real.serial}）`);
       emu = { started: false, warm: false, adb: new D.Adb({ bin: real.bin, serial: real.serial }) };
+    } else if (readyFile) {
+      stage('[2/5] 端末（app redroid debug が用意しています。BDS を先に）');
+      emu = { adb: adbReady() ?? fail('adb がありません', 'ANDROID_HOME の platform-tools か APP_ADB'), started: false, warm: false };
     } else {
       stage(`[2/5] エミュレータ${warmOk ? `（準備済みの状態 ${W.SNAPSHOT} から）` : ''}`);
       emu = await ensureEmulator({ window: o.flags.has('--window'), wipe: o.flags.has('--wipe'), writableSystem: account && vendingWanted(o.opts['--vending']), ready, noWait: true, log: elog });
@@ -821,10 +842,12 @@ async function runCmd(args) {
         await setupAccount(adb, { vending: o.opts['--vending'], log: (s) => { log('      ' + s, /^W /.test(s)); if (/^W /.test(s)) st.notes.push(s.slice(2)); } });
       }
     };
-    // (a cold boot is minutes: the device first, as before; from the snapshot: the BDS starts while it comes back)
-    if (!emu.warm) await deviceUp();
+    // (a cold boot is minutes: the device first, as before; from the snapshot or app redroid debug's device: the BDS starts
+    // while it comes back)
+    if (!emu.warm && !readyFile) await deviceUp();
 
     // 3. the BDS build for this app version (another protocol = "outdated" and no join)
+    if (readyFile && RD.readReady(readyFile)?.ok === false) await deviceReady();   // (the device failed already: no BDS for it)
     if (bdsWant === 'keep') stage('[3/5] BDS: いまのまま');
     else {
       const cands = bdsWant === 'auto' ? K.bdsCandidates(info.versionName, knownBds()) : [bdsWant];
@@ -858,7 +881,8 @@ async function runCmd(args) {
     const joinTo = (h, p) => (process.env.APP_JOIN_URI || 'minecraft://connect/?serverUrl={host}&serverPort={port}').replaceAll('{host}', h).replaceAll('{port}', String(p));
     let joinUri = joinTo(host, port);
 
-    if (emu.warm) await deviceUp();
+    await deviceReady();
+    if (emu.warm || readyFile) await deviceUp();
 
     // 5. root on the device (the game's content log is in its private folder; held keys go through the input device): before
     // logcat, since adbd restarts for it. Then logcat from here on, and the steps
@@ -2452,16 +2476,19 @@ function redroidRun(script, args) {
   const r = spawnSync(process.execPath, [path.join(REDROID, script), ...args], { cwd: TOP, stdio: 'inherit' });
   process.exitCode = r.status ?? 1;
 }
-const REDROID_HELP = `app redroid: 本物の Minecraft を redroid（コンテナの Android、VM なし）で。準備した /data を戻して起動 → タイトルまで約 50 秒
+const REDROID_HELP = `app redroid: 本物の Minecraft を redroid（コンテナの Android、VM なし）で。準備した /data を戻して起動 → タイトルまで約 50 秒（初回だけ）
   doctor                     このマシンに足りないものと直し方（docker・binder・sudo・adb・イメージ・準備済みの端末）
   setup                      端末のイメージを作る（redroid + MindTheGapps: Play ストアと Play 開発者サービス。約 1 分）
   prep [--data <dir>]        準備済みの端末を作る（一度だけ、約 8 分）: アカウント → checkin → Play がゲームを入れる → タイトル
-  run -a <アドオン> [--keep] [app run の指定 …]   = node lab.mjs app run -a <アドオン> --device redroid
-  ui -a <アドオン> [--keep] [app ui の指定 …]     = node lab.mjs app ui -a <アドオン> --device redroid
+  warm [--data <dir>]        端末を起こしてゲームをタイトルで待たせておく（常駐。次の run / ui はすぐ始まります）
+  local [--dry-run] [--bench]   手元の Linux で準備を 1 回で: doctor → binder → イメージ → open / prep（GitHub Actions を使わない）
+  run -a <アドオン> [--no-keep] [app run の指定 …]   = node lab.mjs app run -a <アドオン> --device redroid
+  ui -a <アドオン> [--no-keep] [app ui の指定 …]     = node lab.mjs app ui -a <アドオン> --device redroid
   up [--restore overlay|direct] / down / facts / launch   端末だけ起こす・止める・中身・ゲームだけ起動してタイトルまで計る
   bench [--rounds 3]         戻す → 起動 → タイトル の秒数（と常駐の端末でゲームだけ）       report   いちばん新しい実行の報告
   seal / open [--file f]     準備済みの端末を暗号化して 1 つのファイルに / そこから戻す（鍵: APP_CACHE_KEY か GOOGLE_AAS_TOKEN。root で）
-  （--keep で残した端末があれば、次の run / ui は戻さず起動もせずにそれを使います: 2 回目からはゲームの起動だけ）
+  （手元では run / ui の後も端末は動いたまま（常駐、Ctrl+C でも）: 次の run / ui は戻さず起動もせずにそれを使い、ゲームも
+    動いていればそのまま。--no-keep: 終わったら止める。止める: node lab.mjs app redroid down。GitHub Actions では --keep の時だけ残す）
   （Linux だけ: binder のカーネルモジュールと docker が要ります。GitHub Actions: node lab.mjs app ci --device redroid）`;
 async function redroidCmd(args) {
   const sub = args.shift();
@@ -2471,7 +2498,47 @@ async function redroidCmd(args) {
   if (sub === 'prep' || sub === 'bench' || sub === 'launch' || sub === 'report') return redroidRun('game.mjs', [sub, ...args]);
   // (the prepared device into / out of the encrypted vault: Android's uids, so as root)
   if (sub === 'seal' || sub === 'open') return redroidRun('game.mjs', [sub, ...args]);
+  // (what redroid.yml did, on this machine: only the stages it lacks, each said before it runs)
+  if (sub === 'local') return redroidRun('local.mjs', args);
+  // the device up and the game waiting at its title, left so (resident): the next run / ui on it starts at once. A device
+  // already up from the same --data and image is used as it is (no doctor, no restore, no boot; the game started only if not running)
+  if (sub === 'warm') {
+    const o = parse(args, { opts: ['--data', '--image'] });
+    const data = path.resolve(o.opts['--data'] ?? path.join(REDROID, '.lab', 'data')), img = o.opts['--image'] ?? R.GAPPS_TAG;
+    const t0 = performance.now(), secs = (ms) => Math.round(ms / 100) / 10;
+    let release;
+    try { release = R.lock('warm'); } catch (e) { if (e.held) fail(e.message, '終わってから、もう一度 node lab.mjs app redroid warm'); throw e; }
+    process.on('exit', release);
+    process.once('SIGINT', () => { release(); process.exit(130); });
+    try {
+      const G = await import(pathToFileURL(path.join(REDROID, 'game.mjs')).href);
+      const resident = R.running({ from: data, image: img }), mark = { resident };
+      if (!resident) {
+        const miss = R.doctor(R.hostFacts({ data, image: img })).find((r) => !r.ok && !r.soft);
+        if (miss) fail(`redroid の端末を使えません: ${miss.name} ${miss.detail}`, `${miss.fix}（全部: node lab.mjs app redroid doctor）`);
+        const r = R.restore(data, 'overlay', data + '.run');
+        const m = await R.up({ data: r.data, from: data, image: img, untilBoot: true });
+        Object.assign(mark, { restoreS: secs(r.ms), bootS: m.bootS });
+      }
+      const adb = new D.Adb({ bin: process.env.ADB || [process.env.ANDROID_HOME, process.env.ANDROID_SDK_ROOT].filter(Boolean).map((d) => path.join(d, 'platform-tools', 'adb')).find((p) => fs.existsSync(p)) || 'adb', serial: `127.0.0.1:${R.PORT}` });
+      const alive = adb.pid(K.PACKAGE) > 0, { why, ...g } = alive ? {} : await G.launch(adb);
+      Object.assign(mark, { game: alive ? '起動済み' : '起動しました', ...g, totalS: secs(performance.now() - t0) });
+      R.notice('常駐の端末（warm）', JSON.stringify(mark));
+      if (!alive && !g.titleS && !g.windowS) {
+        if (!resident) R.down({ quiet: true });
+        fail(`ゲームがタイトルまで起動しません（${g.license?.startsWith('no') ? `ライセンス: ${g.license}` : g.words || g.am || '画面なし'}）`, 'node lab.mjs app redroid prep で端末を作り直してください');
+      }
+      out(`OK 端末は動いたままです（127.0.0.1:${R.PORT}、ゲームは${g.titleS ? 'タイトル' : alive ? '起動済み' : '画面まで'}）。次: node lab.mjs app run -a <アドオン> --device redroid（止める: node lab.mjs app redroid down）`);
+    } finally { release(); }
+    return;
+  }
   if (sub === 'run' || sub === 'ui') {
+    // (off GitHub Actions the device stays after the run by default — resident: the second run costs the game's start at most;
+    // --no-keep = stopped after, as on Actions where --keep alone leaves it)
+    const noKeep = args.includes('--no-keep');
+    args = args.filter((x) => x !== '--no-keep' && !(noKeep && x === '--keep'));
+    if (!noKeep && process.env.GITHUB_ACTIONS !== 'true' && !args.includes('--keep')) args.push('--keep');
+    if (args.includes('--keep')) R.notice('redroid の端末', '終わっても動いたままにします（次の run / ui はすぐ始まります。止める: node lab.mjs app redroid down、毎回止める: --no-keep）');
     const a = R.appArgs(sub, args);
     if (a.error) fail(a.error, a.hint);
     const at = (k) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : undefined; };

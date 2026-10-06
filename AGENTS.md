@@ -16,3 +16,12 @@ Players (real clients, op, spawn 0 -60 0, flat x,z -32..31): `@A join|leave` `@A
 Debug: `node lab.mjs run <cmd>...` (fresh world, everything printed; also `trace src/main.ts:12 [expr]`, `events on`, `states on`) · `help debug|tests|world|model|ui` (`help <topic> <word>`: only the lines with it).
 
 Other: no request / on your own: `auto next` … `auto done <id> ok|fail "<lesson>"` (`help auto`; never touch auto/policy.json, auto/STOP) · no close sample: `skill bds-from-scratch` (practice: `scratch next`) · beyond BDS scripts (HTTP, per-player UI, packets, SQL, files, logins): Endstone `node lab.mjs end ...` / LeviLamina `node lab.mjs ll ...` (their AGENTS.md; `help ideas`) · `checkpoint`/`undo` · `upkeep` (Minecraft updated) · `deploy <BDS folder>` · people's distributed worlds/addons (Crafters Colony): `colony search|show|get|import` · others' addons that work on this BDS, to fix and learn from (never handed out): `colony harvest` (`help colony`) · CI minutes a lender lends (their repo, your own gh login; AI-free jobs only): `host add|run|results` (docs/guide/host.md) · `status` · `help quality|env|chat|engine|lan|import|skills|scratch` · JSON UI in the real app: `node lab.mjs app`.
+
+<!-- fanout:rules -->
+## 並行開発（fanout）の規則 — AI が複数で作業するとき
+
+- 複数の AI で分担するときは `/fanout "<目標>"`（.claude/skills/fanout/SKILL.md）。人も司令塔もレーンのプロンプトを手で書かない: `node .fanout/fanout.mjs prompt <レーン>` が計画から作る。
+- 計画は `.fanout/plan.json` の 1 枚だけ。`node .fanout/fanout.mjs check` が通らない計画では子を立てない。人の承認は計画に 1 回。
+- 子（レーン）は自分専用の worktree でだけ作業し、担当（owns）の外を変えない。push・マージ・PR はしない。共有ファイル（AGENTS.md・README・CHANGES・.github・.claude・.fanout・package.json ほか plan.shared）は司令塔だけが触る。
+- 統合は司令塔だけ: `node .fanout/fanout.mjs status` が全部 ✔ → `order` の順にマージ → 全体のテスト → push。
+- GitHub Actions は手動（workflow_dispatch）だけ。自動の契機を足さない（`node .fanout/fanout.mjs actions-off --check`）。

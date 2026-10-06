@@ -13,19 +13,22 @@ app/ はいま、エミュレータ（VM）のスナップショットを戻し�
 redroid は `app run` / `app ui` の端末の一つです（既定はエミュレータ）。
 
 ```
+node lab.mjs app redroid local [--dry-run]      # 手元の Linux で準備を 1 回で（doctor → binder → イメージ → open / prep）。GitHub Actions は使わない
 node lab.mjs app redroid doctor                 # 足りないもの（docker・binder・overlay・sudo・adb・python3・イメージ・準備済みの端末）と直し方
 node lab.mjs app redroid setup                  # イメージ bdslab/redroid:gapps（redroid 14 + MindTheGapps）
 node lab.mjs app redroid prep                   # 準備済みの端末（app/redroid/.lab/data）を一度だけ: GOOGLE_EMAIL + GOOGLE_AAS_TOKEN が要る
-node lab.mjs app run -a <アドオン> --device redroid [--keep] [app run の指定 …]   # = APP_DEVICE=redroid node lab.mjs app run -a …
+node lab.mjs app redroid warm                   # 端末を起こしてゲームをタイトルで待たせておく（次の run / ui はすぐ始まる）
+node lab.mjs app run -a <アドオン> --device redroid [--no-keep] [app run の指定 …]   # = APP_DEVICE=redroid node lab.mjs app run -a …
 node lab.mjs app ui  -a <アドオン> --device redroid [--all] [--screens …]
-node lab.mjs app redroid down                   # --keep で残した端末を止める
+node lab.mjs app redroid down                   # 残した端末を止める
 node lab.mjs app redroid seal / open [--file f] # 準備済みの端末を暗号化して 1 ファイルに / そこから戻す（root で）
 node lab.mjs app ci --device redroid -a <アドオン> [--mode run|ui] [--bench] [--keep] [--fresh] [--wait]   # GitHub の redroid.yml
 node lab.mjs app ci watch|fetch <番号> --device redroid                       # 待って / すぐ、成果物と注釈を app/runs/gh-<番号>/ へ
 ```
 
-常駐: `--keep` で残した端末（コンテナが動いていて boot_completed）があれば、次の `--device redroid` は戻さず起動もせずにそれを
-使い、ゲームが止まっていれば起動するだけ。APK は版（versionCode）が変わったときだけ取り出し直す。常駐の端末を使うのは、
+常駐: 手元では run / ui の後も端末を残すのが既定（`--no-keep` で止める。GitHub Actions では `--keep` のときだけ残す）。
+残した端末（コンテナが動いていて boot_completed）があれば、次の `--device redroid` は戻さず起動もせずにそれを使い、ゲームが
+タイトルに居なければ起動し直すだけ。タイトルまで着かなかった端末・起動の途中で止めた端末は残さない。APK は版（versionCode）が変わったときだけ取り出し直す。常駐の端末を使うのは、
 同じ準備済みの端末（--data）と同じイメージから起こしたときだけ（コンテナのラベル bdslab.from / bdslab.image）。
 
 端末を起こすコマンド（prep・bench・run / ui）は 1 台に 1 つずつ（app/redroid/.lab/device.lock: 2 つ目は誰が使っているかを
@@ -73,6 +76,24 @@ GApps なしの redroid は 2 回目から boot_completed まで 13 秒（GApps 
 
 描画は ANGLE → SwiftShader Vulkan（GLES 3.1）。エミュレータと同じ種類のソフトウェア描画を、VM なしで。
 
+## 速くするために入れたもの（2026-10、すべて実機では未計測: `app redroid bench` の表で前と比べる）
+
+| どこ | なにを | 戻し方 / つまみ |
+|---|---|---|
+| 起動を待つ（redroid.mjs up） | 250 ms ごとに adb を起こし直すのをやめ、端末の中のループで boot_completed を待つ（20 秒ずつ）。段階ごとの ms を notice に | — |
+| 前の端末の片付け（restore / down） | コンテナとフォルダの削除を待たずに裏で。残りは次の restore / down が掃く | — |
+| BDS（game.mjs debug + app.mjs） | app run を端末の起動と同時に始め、BDS を先に上げて端末を待つ（`APP_DEVICE_READY_FILE`、上限 `APP_DEVICE_READY_MS`） | — |
+| タイトルを待つ（launch） | OCR を毎 0.5 秒やめる: 窓が出てから、前回の titleS の 7 割（上限 10 秒）から、1〜1.5 秒おき。記録は .lab/title-pace.json | `REDROID_OCR_PACE=0` で前の読み方、`REDROID_TITLE_LOG`（タイトルが近い logcat の行） |
+| 準備（prep） | ゲームを先にコンパイル（speed）、バックグラウンドの dexopt を止める（起動の設定 `pm.dexopt.disable_bg_dexopt=true` も）、同梱アプリをもう 1 つ止める | — |
+| 常駐 | 手元では残すのが既定、`app redroid warm` | `--no-keep` |
+| 優先度（boost.mjs） | ゲームの起動中だけゲームのスレッドを nice -10、ライセンスに関わらない Google のもの（gms.ui・gapps）を 10。終わったら元に戻す | `REDROID_BOOST=1` のときだけ（`REDROID_BOOST_GAME` / `_LOW` / `_LOW_NAMES` / `_EVERY_S` / `_MAX_S`） |
+| 画面 | 速さ優先の小さい画面 | `REDROID_PROFILE=fast`（1040x480@187・10 fps） |
+| 記録（timeline.mjs） | bench の段階ごとの秒を .lab/timeline.jsonl に、前回・中央値との差の表 | `node app/redroid/timeline.mjs` |
+
+確かめること（実機で）: adb が docker-proxy 越しにつながる速さ、`pm bg-dexopt-job --disable` と起動の設定が Android 14 で効くか、
+REDROID_BOOST がライセンス確認（PairIP）を遅らせないか、BDS を重ねたときにタイトルが遅れないか（debug の notice の
+runAheadS と titleS）、裏の削除が bench の値をゆがめないか。
+
 ## 部品ごとに（app/ を通さずに）
 
 ```
@@ -81,6 +102,8 @@ node app/redroid/game.mjs prep --data <dir>         # アカウント → checki
 node app/redroid/game.mjs bench --data <dir>        # overlay で戻す → 起動 → ゲームのタイトルまで（と、常駐の端末でゲームだけ）
 node app/redroid/game.mjs debug --data <dir> --addon <name> [--mode run|ui] [--keep] [-- <app run の指定>]
 node app/redroid/redroid.mjs up --data <dir> --restore overlay   /   down
+node app/redroid/local.mjs [--dry-run] [--bench]    # 手元の準備を 1 回で（redroid.yml の手順を、足りないものだけ）
+node app/redroid/timeline.mjs                       # いちばん新しい bench を前回・中央値と比べる
 ```
 
 game.mjs debug は app.mjs に `APP_SERIAL`（起動済みの端末）、`APP_LIVE_DEVICE=1`（インストールも停止もせずに使う）、

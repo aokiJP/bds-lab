@@ -53,3 +53,7 @@ end/plugins/*/lab.mjs
 ll/mods/*/lab.mjs
 # borrowed addons (colony harvest / borrow): someone else's, run and fixed here only — never committed or handed out
 bds/addons/borrowed_*/
+# fanout: その回の計画（司令塔のもの）
+.fanout/plan.json
+# fanout: レーンの作業フォルダ
+.claude/worktrees/
