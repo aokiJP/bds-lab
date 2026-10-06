@@ -40,7 +40,10 @@ export function plan(f, o) {
   const stages = [{ id: 'doctor', say: '足りないものを調べる（読むだけ）', cmds: [] }];
   const blocked = R.doctor(f).filter((r) => !r.ok && !r.soft && !OURS.includes(r.name)).map(({ name, detail, fix }) => ({ name, detail, fix }));
   if (!f.binder || !f.overlay || !f.uinput) {
-    const mods = [...(f.binder ? [] : [`${BINDER} || { apt-get install -y -qq linux-modules-extra-${o.kernel} && ${BINDER}; }`]), ...(f.overlay ? [] : ['modprobe overlay']), ...(f.uinput ? [] : ['modprobe uinput || true'])];
+    // (apt-get update first: a machine with no package lists can't find linux-modules-extra; no apt-get → say so and stop)
+    const extra = `linux-modules-extra-${o.kernel}`;
+    const noApt = `command -v apt-get >/dev/null 2>&1 || { echo "apt-get がありません: ${extra} を手で入れてから ${BINDER}" >&2; exit 1; }`;
+    const mods = [...(f.binder ? [] : [`${BINDER} || { ${noApt}; apt-get update -qq && apt-get install -y -qq ${extra} && ${BINDER}; }`]), ...(f.overlay ? [] : ['modprobe overlay']), ...(f.uinput ? [] : ['modprobe uinput || true'])];
     const what = [...(f.binder ? [] : ['binder']), ...(f.overlay ? [] : ['overlay']), ...(f.uinput ? [] : ['uinput'])].join(' / ');
     stages.push({ id: 'binder', say: `カーネルの部品（${what}）を modprobe で入れる${f.binder ? '（無くても動くものだけ）' : '（無ければ linux-modules-extra を入れてから）'}`, cmds: [cmd(su(['sh', '-c', mods.join('; ')]))] });
   }
@@ -48,7 +51,10 @@ export function plan(f, o) {
   if (!f.prepared) {
     if (f.sealed && f.key) stages.push({ id: 'open', say: `準備済みの端末を ${o.fileShow} から戻す（暗号化を解く: 鍵は環境から、表示しません）`, cmds: [
       cmd(suE([o.node, o.game, 'open', '--data', o.data, '--file', o.file]), `${f.root ? '' : 'sudo -E '}node ${o.gameShow} open --data ${o.dataShow} --file ${o.fileShow}`),
-      ...(f.root ? [] : [cmd(su(['chown', '-R', o.owner, o.lab]))]),
+      // (not root: give back only our own files right under .lab (game-prep.json …), never the data folder: vault restored
+      //  Android's uids with --numeric-owner, and changing them breaks the device. Run only when open succeeded: local() stops
+      //  a stage at its first failing command)
+      ...(f.root ? [] : [cmd(su(['find', o.lab, '-mindepth', '1', '-maxdepth', '1', '-type', 'f', '!', '-path', o.data, '-exec', 'chown', o.owner, '{}', '+']))]),
     ] });
     if (!f.account && !(f.sealed && f.key)) blocked.push({ name: 'Google の認証', detail: 'GOOGLE_EMAIL / GOOGLE_AAS_TOKEN がありません（準備済みの端末も、戻せるファイルもありません）', fix: 'node lab.mjs app token（または .env.local に GOOGLE_EMAIL / GOOGLE_AAS_TOKEN）' });
     stages.push({ id: 'prep', say: `準備済みの端末を作る（アカウント → checkin → Play がゲームを入れる → 初回の起動、約 8 分）${f.sealed && f.key ? ': open で戻せなかったときだけ' : ''}`, cmds: [cmd([o.node, o.game, 'prep', '--data', o.data, '--image', o.image], `node ${o.gameShow} prep --data ${o.dataShow} --image ${o.image}`)] });
@@ -97,7 +103,7 @@ export async function local(o, { facts = gather, exec = execInherit, log = (t) =
     if (s.id === 'prep' && !f.account) { log('  ✘ prep: GOOGLE_EMAIL / GOOGLE_AAS_TOKEN がありません（open でも戻せませんでした） → node lab.mjs app token'); return { code: 1, ran, times, blocked }; }
     const t0 = now();
     let status = 0;
-    for (const c of s.cmds) { status = exec(c.argv); if (status !== 0 && s.id !== 'open') break; }
+    for (const c of s.cmds) { status = exec(c.argv); if (status !== 0) break; }
     times[s.id] = secs(now() - t0); ran.push(s.id);
     notice(`local: ${s.id}`, `${times[s.id]} 秒${status ? `（終了コード ${status}）` : ''}`);
     // (each stage judged by what doctor sees after it, not only by the exit code)

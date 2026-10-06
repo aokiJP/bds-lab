@@ -30,9 +30,9 @@ check(JSON.stringify(ids({ image: false })) === '["doctor","image"]', 'plan: the
 const soft = L.plan({ ...all, uinput: false }, o).stages;
 check(soft[1]?.id === 'binder' && /uinput/.test(soft[1].say) && !/binder_linux/.test(soft[1].cmds[0].show) && /modprobe uinput/.test(soft[1].cmds[0].show), 'plan: only uinput missing → modprobe uinput, not binder', JSON.stringify(soft[1]));
 const bin = L.plan({ ...all, binder: false }, o).stages[1];
-check(/^sh -c 'modprobe binder_linux devices=binder,hwbinder,vndbinder \|\| \{ apt-get install -y -qq linux-modules-extra-\$\(uname -r\) && modprobe binder_linux/.test(bin.cmds[0].show), 'plan: binder = modprobe, else linux-modules-extra then modprobe (as root: no sudo)', bin.cmds[0].show);
+check(/^sh -c 'modprobe binder_linux devices=binder,hwbinder,vndbinder \|\| \{ command -v apt-get .*exit 1; \}; apt-get update -qq && apt-get install -y -qq linux-modules-extra-\$\(uname -r\) && modprobe binder_linux/.test(bin.cmds[0].show), 'plan: binder = modprobe, else apt-get update → linux-modules-extra then modprobe (as root: no sudo)', bin.cmds[0].show);
 const user = L.plan({ ...all, root: false, binder: false, prepared: false, sealed: true, key: true }, o).stages;
-check(user[1].cmds[0].argv.slice(0, 2).join(' ') === 'sudo -n' && /^sudo -n -E env PATH=\/usr\/bin /.test(user.find((s) => s.id === 'open').cmds[0].argv.join(' ')) && /^sudo -E node /.test(user.find((s) => s.id === 'open').cmds[0].show) && /^sudo -n chown -R /.test(user.find((s) => s.id === 'open').cmds[1].show), 'plan: not root → sudo -n (open keeps the environment: sudo -E), the .lab folder given back', JSON.stringify(user.map((s) => s.cmds.map((c) => c.show))));
+check(user[1].cmds[0].argv.slice(0, 2).join(' ') === 'sudo -n' && /^sudo -n -E env PATH=\/usr\/bin /.test(user.find((s) => s.id === 'open').cmds[0].argv.join(' ')) && /^sudo -E node /.test(user.find((s) => s.id === 'open').cmds[0].show) && /^sudo -n find .* -maxdepth 1 -type f .*-exec chown /.test(user.find((s) => s.id === 'open').cmds[1].show) && !user.some((s) => s.cmds.some((c) => /chown -R/.test(c.show))), 'plan: not root → sudo -n (open keeps the environment: sudo -E), only the files right under .lab given back (no chown -R)', JSON.stringify(user.map((s) => s.cmds.map((c) => c.show))));
 check(!L.plan({ ...all, root: false }, o).stages.some((s) => s.cmds.some((c) => /PATH=\//.test(c.show))), 'plan: PATH shown as $PATH');
 const noAcct = L.plan({ ...all, prepared: false, account: false }, o);
 check(noAcct.blocked.some((b) => b.name === 'Google の認証' && /app token/.test(b.fix)), 'plan: no account and nothing to open → blocked (Google)', JSON.stringify(noAcct.blocked));
@@ -41,6 +41,32 @@ const noDocker = L.plan({ ...all, docker: false, dockerd: false, image: false },
 check(noDocker.blocked.map((b) => b.name).join() === 'docker' && /docs\.docker\.com/.test(noDocker.blocked[0].fix), 'plan: no docker → blocked with doctor\'s fix (a person installs it)', JSON.stringify(noDocker.blocked));
 check(L.plan({ ...all, platform: 'darwin' }, o).blocked.some((b) => b.name === 'Linux'), 'plan: not Linux → blocked');
 check(L.secretsLine({ GOOGLE_EMAIL: 'a@b.c', GOOGLE_AAS_TOKEN: 'aas_et/SECRETVALUE123' }) === 'GOOGLE_EMAIL あり、GOOGLE_AAS_TOKEN あり、APP_CACHE_KEY なし（値は出しません）', 'secretsLine: presence only', L.secretsLine({ GOOGLE_EMAIL: 'a@b.c', GOOGLE_AAS_TOKEN: 'x' }));
+
+// ---- 1b. the commands themselves, run with fakes (nothing real changed) ----
+const FB = path.join(T, 'fakebin'), FLOG = path.join(T, 'fake.txt');
+fs.mkdirSync(FB, { recursive: true });
+const fakeIn = (name, body = 'exit 0') => { fs.writeFileSync(path.join(FB, name), `#!/bin/sh\necho "${name} $*" >> "${FLOG}"\n${body}\n`); fs.chmodSync(path.join(FB, name), 0o755); };
+const shRun = (argv) => { fs.rmSync(FLOG, { force: true }); const p = spawnSync('/bin/sh', ['-c', argv[2]], { encoding: 'utf8', env: { PATH: FB } }); return { code: p.status, err: p.stderr ?? '', log: fs.existsSync(FLOG) ? fs.readFileSync(FLOG, 'utf8') : '' }; };
+fakeIn('modprobe', 'exit 1');
+let sr = shRun(bin.cmds[0].argv);
+check(sr.code === 1 && /apt-get がありません/.test(sr.err) && !/apt-get/.test(sr.log), 'binder command: no apt-get → says so and stops', sr.err + sr.log);
+fakeIn('apt-get');
+sr = shRun(bin.cmds[0].argv);
+const aptLines = sr.log.split('\n').filter((l) => l.startsWith('apt-get '));
+check(aptLines[0] === 'apt-get update -qq' && /^apt-get install -y -qq linux-modules-extra-/.test(aptLines[1] ?? ''), 'binder command: apt-get update -qq before apt-get install', sr.log);
+// the chown after open: only our own files right under .lab, never the data folder or what is in it
+const LABT = path.join(T, 'lab'), DATAT = path.join(LABT, 'data');
+fs.mkdirSync(path.join(DATAT, 'system'), { recursive: true });
+fs.writeFileSync(path.join(DATAT, 'system', 'packages.xml'), 'x');
+fs.writeFileSync(path.join(LABT, 'game-prep.json'), '{}');
+fs.writeFileSync(path.join(LABT, 'data.bin'), 'sealed');
+fakeIn('chown');
+const own = L.plan({ ...all, root: false, prepared: false, sealed: true, key: true }, { ...o, lab: LABT, data: DATAT }).stages.find((s) => s.id === 'open').cmds[1].argv;
+fs.rmSync(FLOG, { force: true });
+const bare = own[0] === 'sudo' ? own.slice(2) : own; // (sudo -n stripped: the command itself, with a fake chown)
+const op = spawnSync(bare[0], bare.slice(1), { encoding: 'utf8', env: { PATH: `${FB}:/usr/bin:/bin` } });
+const owned = fs.existsSync(FLOG) ? fs.readFileSync(FLOG, 'utf8') : '';
+check(op.status === 0 && owned.includes(path.join(LABT, 'game-prep.json')) && !owned.includes(DATAT + ' ') && !owned.includes(DATAT + '\n') && !owned.includes(DATAT + path.sep) && !/ -R /.test(owned), 'chown after open: game-prep.json given back, the data folder and its contents never', owned + (op.stderr ?? ''));
 
 // ---- 2. local(): runs in order, judges each stage by the facts after it, stops where it must ----
 const run = async (start, after, oo = {}) => {
@@ -64,6 +90,10 @@ r = await run({ ...fresh, docker: false, dockerd: false }, fixes);
 check(r.code === 1 && r.calls.length === 0 && r.lines.some((l) => /✘ docker: .*→ /.test(l)), 'local: blocked (no docker) → nothing run, the fix printed', r.lines.join('\n'));
 r = await run({ prepared: false, account: false, sealed: true, key: true }, () => null);
 check(r.code === 1 && r.ran.join() === 'open' && r.lines.some((l) => /✘ prep: GOOGLE_EMAIL/.test(l)), 'local: open failed and no account → stops at prep with the fix', r.lines.join('\n'));
+r = await run({ ...fresh, root: false }, (s) => (/ open /.test(s) ? { status: 1 } : fixes(s)));
+check(r.calls.some((c) => / open /.test(c)) && !r.calls.some((c) => /chown/.test(c)) && r.ran.join() === 'binder,image,open,prep', 'local: open failed → no chown (prep still tries)', r.calls.join('\n'));
+r = await run({ ...fresh, root: false }, (s) => (/ open /.test(s) ? { facts: { prepared: true } } : fixes(s)));
+check(r.calls.some((c) => /chown/.test(c)) && !r.calls.some((c) => /chown -R/.test(c)), 'local: open succeeded → the chown runs (not -R)', r.calls.join('\n'));
 r = await run(fresh, fixes, { dryRun: true });
 check(r.code === 0 && r.calls.length === 0 && r.lines.filter((l) => /^→ /.test(l)).length === 5 && r.lines.filter((l) => /^ {4}\$ /.test(l)).length === 4, 'local --dry-run: every stage and command printed, nothing run', r.lines.join('\n'));
 r = await run({ ...fresh, docker: false, dockerd: false }, fixes, { dryRun: true });
