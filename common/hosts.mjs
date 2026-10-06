@@ -438,7 +438,9 @@ async function reportCmd(args, out) {
  *  history), pushed with the person's own gh login */
 function pushTree(files, slug, branch) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bdslab-host-'));
-  const git = (args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8', timeout: 600_000, maxBuffer: 64e6 });
+  // (no automatic gc / maintenance: git can leave one running in the background, still writing into .git while the folder
+  // is removed below — ENOTEMPTY on a CI runner)
+  const git = (args) => spawnSync('git', ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', ...args], { cwd: dir, encoding: 'utf8', timeout: 600_000, maxBuffer: 64e6 });
   try {
     for (const [rel, buf, mode] of files) { const f = path.join(dir, rel); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, buf); try { fs.chmodSync(f, mode & 0o111 ? 0o755 : 0o644); } catch { /* no modes */ } }
     git(['init', '-q', '-b', 'main']);
@@ -447,7 +449,7 @@ function pushTree(files, slug, branch) {
     if (c.status !== 0) throw new Error(`commit: ${(c.stderr || c.stdout).trim().slice(0, 200)}`);
     const p = git(['-c', 'credential.helper=', '-c', `credential.helper=!${GH()} auth git-credential`, 'push', '-q', '--force', `https://github.com/${slug}.git`, `HEAD:refs/heads/${branch}`]);
     if (p.status !== 0) throw new Error(`push できません: ${(p.stderr || p.stdout).trim().split('\n').pop()?.slice(0, 200)}`);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
 }
 
 // ---------------------------------------------------------------- on the host (host.yml): the job, the lender's rules first

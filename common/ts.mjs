@@ -107,7 +107,14 @@ function said(r, out, label = '') {
 }
 
 // ---------- the sandbox (no server): the same code, the same names (world system mc ui player dimension say run) ----------
-function tsLib() { for (const t of [path.join(TOP, kind(), '.lab', 'tool', 'package.json'), path.join(TOP, 'bds', '.lab', 'tool', 'package.json')]) { try { return createRequire(t)('typescript'); } catch { /* next */ } } return null; }
+// TypeScript: the lab's own tool folder first; then next to the lab, and the global folder of the node that runs it
+// (`npm i -g typescript` puts it there, and node does not look there by itself: a fresh lab or CI found none, and the value
+// of `ts try`'s last expression was lost)
+function tsLib() {
+  const dir = path.dirname(process.execPath), global = process.platform === 'win32' ? path.join(dir, 'node_modules') : path.join(dir, '..', 'lib', 'node_modules');
+  for (const t of [path.join(TOP, kind(), '.lab', 'tool', 'package.json'), path.join(TOP, 'bds', '.lab', 'tool', 'package.json'), path.join(TOP, 'package.json'), path.join(global, 'package.json')]) { try { return createRequire(t)('typescript'); } catch { /* next */ } }
+  return null;
+}
 export function sandboxModule(code, ts = tsLib()) {
   let js = code, imports = [];
   if (ts) {   // TypeScript → JS; the last expression is the value shown (as TS REPL does); imports go to the top

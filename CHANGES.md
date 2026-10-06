@@ -30,6 +30,11 @@
 - 分かっていること: `share` の検証の中で colony-offline の harvest の確認が時々落ちる（5 回中 2 回。単独・gate の並びでは 10 回以上通る）。原因は未確定で、次に落ちたら .verify.log に全文が残る。`common/colony.mjs` を非同期に書き換える案は、レビューで後退（止めた記事を「落とした」と記録する等）が見つかったので採らなかった。
 - `node .fanout/fanout.mjs clean`: 統合したレーンの作業フォルダと枝を消す（全体のテストの前に。残すとラボの試験が写しまで拾う）。
 
+### GitHub Actions の本物のランナーで見つけて直したもの（手元では通っていた）
+- `ts try` の「最後の式の値」: TypeScript をラボの道具フォルダと NODE_PATH でしか探さず、`npm i -g typescript` だけの場所（新しいラボ・CI）では値が出なかった。node の global のフォルダとラボの隣も探す。
+- `host run`: 送るために作る一時リポジトリで、git の自動の gc / maintenance が裏で .git に書き続け、消すときに ENOTEMPTY で落ちた。その一時リポジトリでは自動の gc を止め、消すときは少し待ってやり直す。
+- tests/rd-local-offline: root でない場所（CI）では open が `sudo -E` つきになる（正しい）のに、試験が root の形だけを見ていた。
+
 ### 合わせたところ（v1.23.0 との統合）
 - `app run` の始まり: v1.23.0 の自分の端末（`--device <名前>`）と、redroid debug が端末を並行に用意する道（`APP_DEVICE_READY_FILE`）の両方を残した。本物の端末のときは `APP_DEVICE_READY_FILE` を読まない（redroid だけのもの）。
 - AGENTS.md: v1.23.0 の「Other」の行（colony harvest・host）に fanout の規則を足した。.gitignore: 借りたアドオン（`bds/addons/borrowed_*/`）と fanout の計画・作業フォルダの両方。
