@@ -218,7 +218,8 @@ export function lock(what, file = path.join(LAB, 'device.lock')) {
   return () => { try { if (JSON.parse(fs.readFileSync(file, 'utf8')).pid === process.pid) fs.rmSync(file, { force: true }); } catch { /* gone */ } };
 }
 
-/** a device already up and booted (the one `--keep` left): the container running, adb connected, boot completed */
+/** a device already up and booted (the one a run left — kept by default off GitHub Actions, `--keep` on it — or `app redroid
+ *  warm` started): the container running, adb connected, boot completed */
 export function running({ name = NAME, port = PORT, from, image: img } = {}) {
   const [on, was, of] = sh('docker', ['inspect', '-f', '{{.State.Running}}|{{index .Config.Labels "bdslab.from"}}|{{index .Config.Labels "bdslab.image"}}', name], { quiet: true, timeout: 20_000 }).stdout.trim().split('|');
   if (on !== 'true' || (from && was !== from) || (img && of !== img)) return false;
