@@ -23,12 +23,19 @@
 - **fanout がこのリポジトリの作業の既定に**: 司令塔（セッション）は Opus（settings の `model`）、子は Sonnet 約 6 割・Opus 約 4 割（`node .fanout/fanout.mjs models`: レビューと hard を先に、残りは重い順に Opus へ。計画の `mix` で変えられる。渡し忘れは `CLAUDE_CODE_SUBAGENT_MODEL=sonnet`）。起動のたびに SessionStart のフックが進め方（`fanout.mjs brief`）を文脈に入れる。
 - `node .fanout/fanout.mjs size [行数…]`: いちばん安く並行できる体数（1 体ごとの起動の分と仕事の量から。1 本 300〜1500 行相当、読む役は書く 4 本に 1 本）と費用の見積もり。1 体と出れば司令塔が自分でやる。
 
+### 配布物の検証を調べられるように（fanout の回: 司令塔 Opus・子 3 体 = Sonnet 2・Opus 1）
+- `share` の検証で落ちた試験の出力の全文を `<zip>.verify.log` に（秘密の検査を通し、当たった行は ***。長い行も・環境の秘密の値も伏せる。大きな出力でも書ける）。全部通れば作らず、前の回のものは消す。試験の実行器が落ちたときはその出力を。
+- `tests/guards-offline.mjs`: 上の .verify.log と、本物の端末（`--device <名前>`）では `APP_DEVICE_READY_FILE` を読まないこと（統合で決めた振る舞い）を、偽の adb で app run を走らせて確かめる。
+- `tests/colony-offline.mjs`: harvest の 2 つの確認が落ちたとき、見た記録（記事・結果・段階・理由）と harvest の出力の最後を出す。
+- 分かっていること: `share` の検証の中で colony-offline の harvest の確認が時々落ちる（5 回中 2 回。単独・gate の並びでは 10 回以上通る）。原因は未確定で、次に落ちたら .verify.log に全文が残る。`common/colony.mjs` を非同期に書き換える案は、レビューで後退（止めた記事を「落とした」と記録する等）が見つかったので採らなかった。
+- `node .fanout/fanout.mjs clean`: 統合したレーンの作業フォルダと枝を消す（全体のテストの前に。残すとラボの試験が写しまで拾う）。
+
 ### 合わせたところ（v1.23.0 との統合）
 - `app run` の始まり: v1.23.0 の自分の端末（`--device <名前>`）と、redroid debug が端末を並行に用意する道（`APP_DEVICE_READY_FILE`）の両方を残した。本物の端末のときは `APP_DEVICE_READY_FILE` を読まない（redroid だけのもの）。
 - AGENTS.md: v1.23.0 の「Other」の行（colony harvest・host）に fanout の規則を足した。.gitignore: 借りたアドオン（`bds/addons/borrowed_*/`）と fanout の計画・作業フォルダの両方。
 - 別の zip（bds-lab-extras）のファイルはこの版にも入れた（extras.json つき。bds-lab のコマンドからは呼ばれない）。
 - 試験: tests/rd-local-offline の偽のトークンが share の秘密の検査に当たってリリースが作れなかった → 文字列を分けた。tests/cli-offline の app token の試験が、環境に本人の GOOGLE_* があると落ちた → この呼び出しでは空にする。
-- 確かめたこと: 全オフライン試験 48 本（`node lab.mjs auto gate --all`、rd-*-offline の 8 本を含む）・`node .fanout/fanout.mjs selftest`（16）・`actions-off --check`・share の検証（配布物を単独で展開して gate）。v1.23.0 の配布 zip は履歴の v1.23.0 から 1 バイトも違わず作り直せる。
+- 確かめたこと: 全オフライン試験 49 本（`node lab.mjs auto gate --all`、rd-*-offline の 8 本を含む）・`node .fanout/fanout.mjs selftest`（16）・`actions-off --check`・share の検証（配布物を単独で展開して gate）。v1.23.0 の配布 zip は履歴の v1.23.0 から 1 バイトも違わず作り直せる。
 - まだ確かめていないこと: redroid の秒数の実測（binder のある手元の Linux で `node lab.mjs app redroid bench`）、本物の端末・本物のサイト・本物の貸し手での動き（v1.23.0 から）。
 
 ## v1.23.0 (2026-10-06)
