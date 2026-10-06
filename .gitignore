@@ -51,3 +51,5 @@ auto/.lock
 bds/addons/*/lab.mjs
 end/plugins/*/lab.mjs
 ll/mods/*/lab.mjs
+# fanout: その回の計画（司令塔のもの）
+.fanout/plan.json
