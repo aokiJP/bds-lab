@@ -28,12 +28,20 @@ const git = (args, cwd) => {
 };
 const topOf = (cwd = process.cwd()) => { const r = git(['rev-parse', '--show-toplevel'], cwd); if (!r.ok) throw new Error('git のリポジトリの中で実行してください'); return r.out; };
 const planFile = (top) => path.join(top, '.fanout', 'plan.json');
+/** the plan of this checkout, or (inside a lane's worktree, where the git-ignored plan is not) the main checkout's */
+function planPath(top) {
+  const here = planFile(top);
+  if (fs.existsSync(here)) return here;
+  const common = git(['rev-parse', '--path-format=absolute', '--git-common-dir'], top);
+  const main = common.ok ? planFile(path.dirname(common.out)) : here;
+  return fs.existsSync(main) ? main : here;
+}
 export function loadPlan(top) {
-  const f = planFile(top);
+  const f = planPath(top);
   if (!fs.existsSync(f)) throw new Error('.fanout/plan.json がありません（node .fanout/fanout.mjs new "<目標>"）');
   return JSON.parse(fs.readFileSync(f, 'utf8'));
 }
-const savePlan = (top, p) => fs.writeFileSync(planFile(top), JSON.stringify(p, null, 2) + '\n');
+const savePlan = (top, p) => fs.writeFileSync(planPath(top), JSON.stringify(p, null, 2) + '\n');
 
 // ---- globs and owns ----
 /** glob → RegExp: ** = any depth, * = within one folder, ? = one char (pure) */

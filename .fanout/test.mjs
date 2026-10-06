@@ -63,7 +63,7 @@ export async function run() {
   const node = (...a) => sh(process.execPath, [path.join(dir, '.fanout', 'fanout.mjs'), ...a]);
   try {
     sh('git', ['init', '-q', '-b', 'main']); sh('git', ['config', 'user.email', 't@t']); sh('git', ['config', 'user.name', 't']);
-    fs.cpSync(HERE, path.join(dir, '.fanout'), { recursive: true });
+    fs.cpSync(HERE, path.join(dir, '.fanout'), { recursive: true, filter: (f) => path.basename(f) !== 'plan.json' });
     fs.mkdirSync(path.join(dir, '.github', 'workflows'), { recursive: true });
     fs.writeFileSync(path.join(dir, '.github', 'workflows', 'v.yml'), 'on:\n  push:\n  workflow_dispatch:\njobs: {}\n');
     fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
@@ -110,6 +110,8 @@ export async function run() {
       fs.writeFileSync(path.join(wt, 'a.mjs'), fs.readFileSync(path.join(wt, 'a.mjs'), 'utf8').replace('return 1;', 'return 11;'));
       spawnSync('git', ['commit', '-qam', 'eff'], { cwd: wt });
       ok(node('record', 'eff', 'lane-eff').status === 0);
+      const inWt = spawnSync(process.execPath, [path.join(wt, '.fanout', 'fanout.mjs'), 'scope', 'eff'], { cwd: wt, encoding: 'utf8' });
+      ok(inWt.status === 0 && /✔ eff/.test(inWt.stdout), `worktree の中の scope（計画は親のもの）: ${inWt.stdout}${inWt.stderr}`);
       const r = node('status'); ok(r.status === 0 && /✔ eff: lane-eff（1 commit）/.test(r.stdout) && /gee: 枝なし/.test(r.stdout), r.stdout + r.stderr);
     });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
