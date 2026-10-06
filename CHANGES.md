@@ -1,5 +1,26 @@
 # bds-lab の変更
 
+## 未リリース（2026-10-06）
+**app/redroid を GitHub Actions なしで手元の Linux で回せるようにし、「戻す → 起動 → タイトル」（48〜50 秒）を削る手を入れた。AI の並行開発の仕組み（fanout）も入れた。秒数はまだ実機で計っていない（`node lab.mjs app redroid bench` の表で前と比べる）。**
+
+### redroid（app/redroid/）
+- 起動を待つ: 250 ms ごとに adb を起動し直すのをやめ、端末の中のループで待つ（20 秒ずつ、wait-for-device は 3 秒まで）。段階ごとの ms を notice に。前の端末の片付け（コンテナ・run フォルダ）は待たずに裏で、残りは次が掃く。`REDROID_PROFILE=fast`（1040x480@187・10 fps）。
+- BDS を端末と並行に: `app run --device redroid` は app run をすぐ始め、BDS を上げてから端末を待つ（`APP_DEVICE_READY_FILE`）。APK は前回の版を先に使い、版が違えば取り出し直してやり直す。
+- タイトルを待つ OCR を間引く: 窓が出てから、前回の titleS の 7 割（上限 10 秒）から 1〜1.5 秒おき（`REDROID_OCR_PACE=0` で前の読み方）。
+- 準備（prep）: ゲームを先にコンパイル（speed）、バックグラウンドの dexopt を止める（起動の設定 `pm.dexopt.disable_bg_dexopt=true` も）、同梱アプリをもう 1 つ止める。Play・Play 開発者サービス・GSF は触らない。
+- 常駐: 手元では run / ui の後も端末を残すのが既定（`--no-keep`）。`app redroid warm`。タイトルに着かなかった端末・途中で止めた端末は残さない。
+- `REDROID_BOOST=1`: ゲームの起動中だけゲームを優先し、ライセンスに関わらない Google のもの（gms.ui・gapps）を後回しに。終わったら（Ctrl+C でも）元に戻す。
+- `app redroid local [--dry-run]`: redroid.yml がやっていた準備（binder・イメージ・open / prep）を手元で 1 回に。
+- `app/redroid/timeline.mjs`: bench の段階ごとの秒を .lab/timeline.jsonl に、前回・中央値との差の表。
+- 試験: tests/rd-*-offline.mjs（8 本、偽の docker / adb で）。
+
+### GitHub Actions
+- すべてのワークフローを手動（workflow_dispatch）だけにした（push・schedule・issues では走らない）。`node .fanout/fanout.mjs actions-off --check` で確かめる。
+
+### AI の並行開発（fanout）
+- `/fanout "<目標>"`（.claude/skills/fanout/SKILL.md）と `.fanout/fanout.mjs`: 計画 1 枚（担当のファイル・関数）、計画から作るプロンプト、土台から作る作業フォルダ、担当の外を見つける検査（scope）、統合の順。説明は FANOUT-README.md。
+- .claude/settings.json: サブエージェントと worktree のツールを拒否から外した（1 ターンが少し重くなる）。
+
 ## v1.22.0 (2026-10-06)
 **クラフターズコロニーの配布物を扱う `colony` を戻して、本物のワールドが読めるようにした。使われていない部分は別の zip へ、内側のループ（sim・試験・CI）は速く、見本は直した。**
 
