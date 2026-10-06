@@ -9,6 +9,7 @@
 //   node .fanout/fanout.mjs worktree <レーン>     そのレーンの作業フォルダを土台から作る（枝 fanout/<レーン>、計画に記録）
 //   node .fanout/fanout.mjs record <レーン> <枝>  子が作った枝を計画に記録
 //   node .fanout/fanout.mjs order               統合の順番（after に従う）
+//   node .fanout/fanout.mjs models              レーンごとに使うモデル（Agent の model に渡す）と、その理由
 //   node .fanout/fanout.mjs status              レーンごとの枝・commit 数・範囲の検査
 //   node .fanout/fanout.mjs actions-off [--check]   .github/workflows を手動（workflow_dispatch）だけにする
 //   node .fanout/fanout.mjs selftest            この道具自身のテスト（一時フォルダの git で）
@@ -105,6 +106,7 @@ export function checkPlan(plan, fileText = () => null) {
     if (names.has(l.name)) bad.push(`レーンの名前「${l.name}」が重なっています`);
     names.add(l.name);
     if (!l.goal) bad.push(`${l.name}: goal がありません`);
+    if (l.model !== undefined && !MODELS.includes(l.model)) bad.push(`${l.name}: model は ${MODELS.join(' / ')}（${l.model}）`);
     const owns = l.owns ?? [];
     if (l.readonly) {
       if (owns.length) bad.push(`${l.name}: readonly なのに owns があります`);
@@ -142,6 +144,18 @@ export function checkPlan(plan, fileText = () => null) {
   return bad;
 }
 /** the lanes in an order where each comes after its `after` (pure; throws on a cycle) */
+// ---- which model a lane runs on: Sonnet by default (half Opus's price per token), Opus only where a mistake is expensive ----
+export const MODELS = ['sonnet', 'opus'];
+/** a lane → {model, why}: its own `model` if set; else Opus for a readonly lane (a review: finding what breaks is the hard
+ *  part, and its findings decide what gets fixed) or a lane marked `hard` (several files, processes or waiting on each
+ *  other, cleanup, security); else Sonnet. A fix round goes up to Opus after `escalateAfter` failed rounds (pure) */
+export function modelOf(lane, { round = 0, escalateAfter = 2 } = {}) {
+  if (lane.model) return { model: lane.model, why: '計画で指定' };
+  if (round >= escalateAfter) return { model: 'opus', why: `直しが ${round} 回通らなかった` };
+  if (lane.readonly) return { model: 'opus', why: 'レビュー（壊れる道を探す）' };
+  if (lane.hard) return { model: 'opus', why: `難しい: ${typeof lane.hard === 'string' ? lane.hard : '計画で hard'}` };
+  return { model: 'sonnet', why: '既定' };
+}
 export function order(plan) {
   const lanes = plan.lanes ?? [], done = [], state = new Map();
   const visit = (l, trail) => {
@@ -397,6 +411,11 @@ async function main([cmd, ...rest]) {
       break;
     }
     case 'order': console.log(order(loadPlan(top)).join('\n')); break;
+    case 'models': {
+      const plan = loadPlan(top);
+      for (const l of plan.lanes) { const m = modelOf(l); console.log(`${l.name.padEnd(14)} ${m.model.padEnd(7)} ${m.why}`); }
+      break;
+    }
     case 'status': {
       const plan = loadPlan(top);
       for (const name of order(plan)) {

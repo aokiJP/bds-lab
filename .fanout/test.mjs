@@ -34,6 +34,14 @@ export async function run() {
     eq(F.checkPlan({ goal: 'x', base: 'b', lanes: [{ name: 'one', goal: 'g', owns: ['a.mjs#f'], test: 't' }, { name: 'two', goal: 'g', owns: ['a.mjs#g'], test: 't', after: ['one'] }] }, text), []);
     ok(F.checkPlan({ goal: 'x', base: 'b', lanes: Array.from({ length: 11 }, (_, i) => ({ name: `l${i}`, goal: 'g', owns: [`f${i}.mjs`], test: 't' })) }).some((b) => /多すぎ/.test(b)));
   });
+  await t('modelOf: 既定は sonnet、レビューと hard は opus、計画の指定が勝つ、直しが 2 回通らなければ opus', () => {
+    eq(F.modelOf({ name: 'a' }).model, 'sonnet');
+    eq(F.modelOf({ name: 'r', readonly: true }).model, 'opus');
+    eq(F.modelOf({ name: 'h', hard: '並行の待ち合わせ' }), { model: 'opus', why: '難しい: 並行の待ち合わせ' });
+    eq(F.modelOf({ name: 'x', hard: true, model: 'sonnet' }).model, 'sonnet');
+    eq([F.modelOf({ name: 'a' }, { round: 1 }).model, F.modelOf({ name: 'a' }, { round: 2 }).model], ['sonnet', 'opus']);
+    ok(F.checkPlan({ goal: 'x', base: 'b', lanes: [{ name: 'a', goal: 'g', owns: ['f.mjs'], test: 't', model: 'haiku' }] }).some((b) => /model は/.test(b)));
+  });
   await t('order: after の後ろに並ぶ', () => {
     eq(F.order({ lanes: [{ name: 'c', after: ['b'] }, { name: 'a' }, { name: 'b', after: ['a'] }] }), ['a', 'b', 'c']);
   });
