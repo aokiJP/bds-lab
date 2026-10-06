@@ -27,6 +27,7 @@ import { PACKAGE, redact } from '../lib/apk.mjs';
 import * as L from '../lib/license.mjs';
 import * as C from '../lib/client.mjs';
 import * as V from '../lib/vault.mjs';
+import * as PF from './prepfast.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)), LAB = path.join(HERE, '.lab');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -127,9 +128,12 @@ export async function launch(adb, { timeoutMs = 240_000, shots = null } = {}) {
   return m;
 }
 
+// MindTheGapps' apps that only take CPU on this device (prep disables them; Play, Play services and GSF are never on it:
+// prepfast's quietable takes them out). onetimeinitializer: its work runs right after a boot
 export const QUIET = ['com.google.android.googlequicksearchbox', 'com.google.android.apps.wellbeing', 'com.google.android.feedback',
   'com.google.android.syncadapters.calendar', 'com.google.android.syncadapters.contacts', 'com.google.android.gm.exchange',
-  'com.google.android.partnersetup', 'com.google.android.apps.restore', 'com.google.android.projection.gearhead', 'com.google.android.setupwizard'];
+  'com.google.android.partnersetup', 'com.google.android.apps.restore', 'com.google.android.projection.gearhead', 'com.google.android.setupwizard',
+  'com.google.android.onetimeinitializer'];
 /** adbd as root (licenseFacts reads Play's databases): service.adb.root=1 at boot does it; else `adb root` once */
 async function root(adb) {
   if (adb.shell(['id', '-u']).stdout.trim() === '0') return true;
@@ -203,11 +207,12 @@ export async function prep({ data, img = R.GAPPS_TAG, shots } = {}) {
   const id = injectAccount(data);
   res.second = await R.up({ data, image: img });
   res.root = await root(adb);
-  // (MindTheGapps' apps that only take CPU on this device: the game waits on the 2 cores. Not Play, Play services, GSF)
-  for (const p of QUIET) adb.shell(['pm', 'disable-user', '--user', '0', p], { timeout: 30_000 });
+  // (MindTheGapps' apps that only take CPU on this device, the background dexopt job, account sync: the game waits on the
+  // 2 cores. Not Play, Play services, GSF)
+  res.quiet = PF.quiet(adb, QUIET);
   res.accountS = await waitFor('アカウントの読み込み', () => hasAccount(adb.shell(['dumpsys', 'account'], { timeout: 20_000 }).stdout, process.env.GOOGLE_EMAIL), { timeoutMs: 120_000 });
   res.checkinS = await waitFor('Google への登録（checkin）', () => checkedIn(data), { timeoutMs: 15 * 60_000, every: 5000 });
-  R.notice('準備: Google', `アカウントを accounts_de.db / accounts_ce.db に（_id ${id}）、読み込み ${res.accountS} 秒、checkin ${res.checkinS} 秒（2 回目の起動から）、負荷 ${fs.readFileSync('/proc/loadavg', 'utf8').split(' ').slice(0, 3).join(' ')}`);
+  R.notice('準備: Google', `アカウントを accounts_de.db / accounts_ce.db に（_id ${id}）、読み込み ${res.accountS} 秒、checkin ${res.checkinS} 秒（2 回目の起動から）、${PF.quietNote(res.quiet)}、負荷 ${fs.readFileSync('/proc/loadavg', 'utf8').split(' ').slice(0, 3).join(' ')}`);
   const t0 = now();
   const page = await L.readPlayPage(adb, { pkg: PACKAGE, log: say, timeoutMs: 6 * 60_000 });
   R.notice('準備: Play のページ', `${page.action ?? 'ボタンなし'}「${page.label ?? ''}」（${page.via}）、画面: ${(page.texts ?? []).slice(0, 15).join(' / ').slice(0, 300)}`);
@@ -215,7 +220,10 @@ export async function prep({ data, img = R.GAPPS_TAG, shots } = {}) {
   if (page.action !== 'open') await L.playInstall(adb, { pkg: PACKAGE, page, log: say, timeoutMs: 20 * 60_000 });
   res.installS = secs(now() - t0);
   const lf = L.licenseFacts(adb, { pkg: PACKAGE });
-  R.notice('準備: ゲーム', `Play が入れました（${res.installS} 秒）: ${lf.lines.slice(0, 3).join(' / ').slice(0, 400)}`);
+  // (compiled ahead, all of it: no JIT and no profile-guided compile in the CPU of every start from this /data. Android may
+  // still hold the package frozen just after Play's install: tried again at the end then)
+  res.compile = PF.compileGame(adb, PACKAGE);
+  R.notice('準備: ゲーム', `Play が入れました（${res.installS} 秒）、${PF.compileNote(res.compile)}: ${lf.lines.slice(0, 3).join(' / ').slice(0, 400)}`);
   adb.shell(['pm', 'grant', PACKAGE, 'android.permission.POST_NOTIFICATIONS']);
   res.firstLaunch = await launchFresh(adb, { timeoutMs: 6 * 60_000, shots });
   const { why, ...fl } = res.firstLaunch;
@@ -226,6 +234,7 @@ export async function prep({ data, img = R.GAPPS_TAG, shots } = {}) {
   if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `game_ok=${res.firstLaunch.titleS || res.firstLaunch.windowS ? 'true' : 'false'}\n`);
   await sleep(5000);   // (what the first start writes: options.txt, the content log switches)
   adb.shell(['am', 'force-stop', PACKAGE]);
+  if (!res.compile.ok) { res.compile = PF.compileGame(adb, PACKAGE); R.notice('準備: ゲームのコンパイル（もう一度）', PF.compileNote(res.compile)); }
   R.down({ quiet: true });
   return res;
 }
