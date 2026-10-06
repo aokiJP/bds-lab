@@ -20,6 +20,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as R from './redroid.mjs';
+import { PACE, ocrDue, logSignals, readyRe, prevTitleMs, keepTitle, readPace, writePace } from './pace.mjs';
 import { accountSql, hasAccount } from '../lib/account.mjs';
 import { Adb, startPad } from '../lib/android.mjs';
 import * as WD from '../lib/world.mjs';
@@ -88,10 +89,15 @@ function words(adb) {
 // with More options, while Get started comes out as "ay" or "Get ey")
 export const isTitle = (w) => !/Play Games|account settings/i.test(w.map((x) => x.text).join(' ')) && (C.titleWords(w) || Boolean(C.findText(w, /^Get started$/i)) || (/mo[j]+ang\s*a[bg]\b/i.test(w.map((x) => x.text).join(' ')) && Boolean(C.findText(w, /^More options$/i))));
 const screenSize = () => { const m = /^(\d+)x(\d+)/.exec(process.env.REDROID_SIZE || '1560x720'); return { w: Number(m?.[1]) || 1560, h: Number(m?.[2]) || 720 }; };
-/** starts the game (cold) and waits for its title → {pidS, windowS, titleS, words, license} seconds from the launch */
-export async function launch(adb, { timeoutMs = 240_000, shots = null } = {}) {
+/** starts the game (cold) and waits for its title → {pidS, windowS, drawnS, titleS, words, license, ocr} seconds from the
+ *  launch. The screen is read (OCR) only after the cheap signals (process, window, logcat) and, when earlier starts are kept
+ *  (paceFile), from 7/10 of their titleS on, at widening gaps (pace.mjs); ocr = {n, fromS, gate}: how many reads, from when */
+export async function launch(adb, { timeoutMs = 240_000, shots = null, paceFile = path.join(LAB, 'title-pace.json') } = {}) {
   adb.shell(['am', 'force-stop', PACKAGE]);
   const t0 = now(), m = {};
+  const kept = readPace(paceFile), prevMs = prevTitleMs(kept), ready = readyRe(), off = process.env.REDROID_OCR_PACE === '0';
+  const o = { n: 0, last: null, logAt: null, drawn: false, ready: false };
+  m.ocr = { n: 0, fromS: null, gate: null, prevS: prevMs ? secs(prevMs) : null };
   adb.run(['logcat', '-c'], { timeout: 15_000 });
   // (am start -W: its answer says whether the activity started at all, and how long Android took)
   const comp = adb.shell(['cmd', 'package', 'resolve-activity', '--brief', '-c', 'android.intent.category.LAUNCHER', PACKAGE], { timeout: 30_000 }).stdout.trim().split('\n').pop();
@@ -99,14 +105,28 @@ export async function launch(adb, { timeoutMs = 240_000, shots = null } = {}) {
   m.am = `${st.stdout}${st.stderr}`.split('\n').filter((l) => /Status|Error|Warning|Activity|TotalTime|WaitTime/.test(l)).map((l) => l.trim()).join(' | ').slice(0, 300);
   let last = [], n = 0, goneAt = null;
   while (now() - t0 < timeoutMs) {
-    if (!m.pidS && adb.pid(PACKAGE) > 0) m.pidS = secs(now() - t0);
+    // (one pidof a round: it says both "started" and "gone")
+    const pid = adb.pid(PACKAGE);
+    if (!m.pidS && pid > 0) m.pidS = secs(now() - t0);
     const f = focus(adb);
     if (!m.windowS && f.startsWith(PACKAGE)) m.windowS = secs(now() - t0);
     // Play's paywall or the game gone: the license check said no
     // (gone for 4 s: not the moment between its splash and its main process)
-    const gone = m.pidS && adb.pid(PACKAGE) === 0 ? (goneAt ??= now()) : (goneAt = null);
+    const gone = m.pidS && pid === 0 ? (goneAt ??= now()) : (goneAt = null);
     if (m.pidS && (/^com\.android\.vending/.test(f) || (gone && now() - gone > 4000))) { m.license = `no（${f || 'ゲームが終わった'}）`; break; }
-    if (m.windowS) {
+    // logcat, until what it is read for is seen: Android's "Displayed" (the first frame) and the REDROID_TITLE_LOG line
+    if (m.pidS && !off && (!o.drawn || (ready && !o.ready)) && (o.logAt === null || now() - o.logAt >= PACE.logEveryMs)) {
+      o.logAt = now();
+      const s = logSignals(adb.run(['logcat', '-d', '-v', 'brief'], { timeout: 15_000 }).stdout, { pkg: PACKAGE, readyRe: ready });
+      if (s.drawn && !o.drawn) { o.drawn = true; m.drawnS = secs(now() - t0); }
+      if (s.ready && !o.ready) { o.ready = true; m.logS = secs(now() - t0); o.n = 0; o.last = null; }
+    }
+    const due = ocrDue({ atMs: now() - t0, windowSeen: Boolean(m.windowS), readySeen: o.ready, prevTitleMs: prevMs, timeoutMs, lastOcrMs: o.last, n: o.n, off });
+    // (no OCR on this machine: said at the window, as before, not at the gate)
+    if (m.windowS && !off && (o.can ??= C.ocrAvailable()) === false) { m.titleS = null; m.note = 'OCR なし: タイトルは見ていません'; break; }
+    if (due.ocr) {
+      m.ocr.fromS ??= secs(now() - t0); m.ocr.gate ??= due.gate;
+      o.last = now() - t0; o.n++; m.ocr.n++;
       const w = words(adb);
       if (w === null) { m.titleS = null; m.note = 'OCR なし: タイトルは見ていません'; break; }
       last = w.map((x) => x.text).filter((x) => x.length > 1).slice(0, 30);
@@ -117,13 +137,15 @@ export async function launch(adb, { timeoutMs = 240_000, shots = null } = {}) {
       if (isTitle(w)) { m.titleS = secs(now() - t0); m.license = 'ok'; break; }
       // the game's first-start screens (WELCOME: Sign in now / Maybe later …): the button that leaves without signing in
       const b = C.firstRunButton(w, screenSize());
-      if (b && (m.firstRun ?? 0) < 8) { m.firstRun = (m.firstRun ?? 0) + 1; m.license = 'ok'; adb.tap(b.x, b.y, 'hold'); await sleep(2500); continue; }
+      // (the next screen comes soon after a tap: read again at the first gap)
+      if (b && (m.firstRun ?? 0) < 8) { m.firstRun = (m.firstRun ?? 0) + 1; m.license = 'ok'; adb.tap(b.x, b.y, 'hold'); o.n = 0; o.last = null; await sleep(2500); continue; }
     }
     await sleep(500);
   }
   m.words = last.join(' ').slice(0, 200);
   if (m.trail) m.trail = m.trail.slice(-14);
   if (!m.titleS) m.why = whyNot(adb);
+  writePace(paceFile, keepTitle(kept, m));
   return m;
 }
 
