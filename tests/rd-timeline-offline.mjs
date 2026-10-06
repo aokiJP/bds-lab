@@ -115,6 +115,9 @@ tool('mount', 'exit 0');
 tool('umount', 'exit 0');
 tool('sudo', '[ "$1" = "-n" ] && shift; exec "$@"');
 tool('adb', `case "$*" in
+  *"echo booted"*) echo booted ;;
+  *"echo ready"*) echo ready ;;
+  *wait-for-device*) ;;
   *"connect "*) echo "connected to 127.0.0.1:5600" ;;
   *get-state*) echo device ;;
   *sys.boot_completed*) echo 1 ;;
