@@ -25,7 +25,9 @@
 - `app run` の始まり: v1.23.0 の自分の端末（`--device <名前>`）と、redroid debug が端末を並行に用意する道（`APP_DEVICE_READY_FILE`）の両方を残した。本物の端末のときは `APP_DEVICE_READY_FILE` を読まない（redroid だけのもの）。
 - AGENTS.md: v1.23.0 の「Other」の行（colony harvest・host）に fanout の規則を足した。.gitignore: 借りたアドオン（`bds/addons/borrowed_*/`）と fanout の計画・作業フォルダの両方。
 - 別の zip（bds-lab-extras）のファイルはこの版にも入れた（extras.json つき。bds-lab のコマンドからは呼ばれない）。
-- まだ確かめていないこと: この統合のあとの全オフライン試験（`node lab.mjs auto gate --all`・`node .fanout/fanout.mjs selftest`）と、redroid の秒数の実測。
+- 試験: tests/rd-local-offline の偽のトークンが share の秘密の検査に当たってリリースが作れなかった → 文字列を分けた。tests/cli-offline の app token の試験が、環境に本人の GOOGLE_* があると落ちた → この呼び出しでは空にする。
+- 確かめたこと: 全オフライン試験 47 本（`node lab.mjs auto gate --all`、rd-*-offline の 8 本を含む）・`node .fanout/fanout.mjs selftest`（12）・`actions-off --check`・share の検証（配布物を単独で展開して gate）。v1.23.0 の配布 zip は履歴の v1.23.0 から 1 バイトも違わず作り直せる。
+- まだ確かめていないこと: redroid の秒数の実測（binder のある手元の Linux で `node lab.mjs app redroid bench`）、本物の端末・本物のサイト・本物の貸し手での動き（v1.23.0 から）。
 
 ## v1.23.0 (2026-10-06)
 **自分の Android 端末（root あり・なし × USB・Wi-Fi）で app ラボを、他の人の配布アドオン（最新の BDS で動くものだけ）を借りて直して学ぶ道を、知り合いが貸してくれる GitHub Actions の時間でラボの試験を。**
