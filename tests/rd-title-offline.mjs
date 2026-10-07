@@ -94,7 +94,9 @@ const dev = path.join(tmp, 'dev'), bin = path.join(tmp, 'bin');
 fs.mkdirSync(dev); fs.mkdirSync(bin);
 // the fake's clock: ms since `am start` (-1 before it)
 const CLOCK = `D=${dev}
-ms() { [ -f "$D/t0" ] || { echo -1; return; }; echo $(( ($(date +%s%N) - $(cat "$D/t0")) / 1000000 )); }
+# (nanoseconds: BSD date (macOS) has no %N, it prints "N": perl's clock then)
+ns() { n=$(date +%s%N); case "$n" in *N) perl -MTime::HiRes=time -e 'printf "%d\\n", time * 1e9';; *) echo "$n";; esac; }
+ms() { [ -f "$D/t0" ] || { echo -1; return; }; echo $(( ($(ns) - $(cat "$D/t0")) / 1000000 )); }
 cfg() { cat "$D/$1" 2>/dev/null || echo "$2"; }
 `;
 fs.writeFileSync(path.join(bin, 'adb'), `#!/bin/sh
@@ -117,13 +119,13 @@ case "$*" in
     [ "$E" -ge "$(cfg logline 999999)" ] && echo "I/MinecraftPE( 900): lab title near"
     : ;;
   "shell cmd package resolve-activity"*) echo "com.mojang.minecraftpe/.MainActivity" ;;
-  "shell am start"*) date +%s%N > "$D/t0"; echo "Status: ok"; echo "TotalTime: 900" ;;
+  "shell am start"*) ns > "$D/t0"; echo "Status: ok"; echo "TotalTime: 900" ;;
   "shell pidof"*) [ "$E" -ge "$(cfg pid 0)" ] && [ "$E" -lt "$(cfg gone 999999)" ] && echo 1234; : ;;
   *mCurrentFocus*)
     if [ "$E" -ge "$(cfg vending 999999)" ]; then echo "  mCurrentFocus=Window{a1 u0 com.android.vending/com.google.android.finsky.Paywall}"
     elif [ "$E" -ge "$(cfg win 999999)" ]; then echo "  mCurrentFocus=Window{a1 u0 com.mojang.minecraftpe/com.mojang.minecraftpe.MainActivity}"
     else echo "  mCurrentFocus=Window{a0 u0 com.android.launcher3/.Launcher}"; fi ;;
-  "exec-out screencap -p") printf '\\211PNG %s %s\\n' "$(screen)" "$(date +%s%N)" ;;
+  "exec-out screencap -p") printf '\\211PNG %s %s\\n' "$(screen)" "$(ns)" ;;
   "shell input swipe"*) touch "$D/tapped" ;;
   *) : ;;
 esac

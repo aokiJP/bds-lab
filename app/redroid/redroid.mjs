@@ -18,7 +18,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { profile, bootLoop, readyLoop, stages, asideName, later, q, ADB_WAIT_MS, SLICE_MS, slice, breath, oldRunsLine, oldContainersLine, overlayOf } from './wait.mjs';
+import { profile, bootLoop, readyLoop, stages, asideName, later, q, ADB_WAIT_MS, SLICE_MS, slice, breath, oldRunsLine, rmFlags, oldContainersLine, overlayOf } from './wait.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LAB = path.join(HERE, '.lab');
@@ -129,8 +129,8 @@ export function restore(src, mode, work) {
   unmount(work);
   if (sh('test', ['-e', work], { sudo: true, quiet: true }).status === 0) {
     const old = `${work}.old-${process.pid}-${Date.now()}`, su = process.getuid?.() === 0 ? '' : 'sudo -n ';
-    const moved = sh('mv', ['-T', work, old], { sudo: true, quiet: true }).status === 0;
-    if (!moved || !later(`${su}rm -rf --one-file-system ${q(old)} >/dev/null 2>&1`)) sh('rm', ['-rf', moved ? old : work], { sudo: true, quiet: true });
+    const moved = sh('mv', process.platform === 'linux' ? ['-T', work, old] : [work, old], { sudo: true, quiet: true }).status === 0;
+    if (!moved || !later(`${su}rm ${rmFlags()} ${q(old)} >/dev/null 2>&1`)) sh('rm', ['-rf', moved ? old : work], { sudo: true, quiet: true });
   }
   if (mode === 'overlay') {
     for (const d of ['upper', 'work', 'merged']) sh('mkdir', ['-p', path.join(work, d)], { sudo: true });
@@ -209,8 +209,9 @@ export async function up({ data, from = data, image: img = GAPPS_TAG, name = NAM
 }
 
 /** one redroid device per machine (one container name, one adb port): a second command would stop the first one's device.
+ *  (REDROID_LOCK: another lock file, for a test that runs beside another one on the same checkout)
  *  → a release function; throws with who holds it. A lock whose process is gone is taken over */
-export function lock(what, file = path.join(LAB, 'device.lock')) {
+export function lock(what, file = process.env.REDROID_LOCK || path.join(LAB, 'device.lock')) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   try {
     const held = JSON.parse(fs.readFileSync(file, 'utf8'));

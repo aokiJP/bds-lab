@@ -197,7 +197,9 @@ check(r.code === 0 && fs.readFileSync(path.join(REPO, 'bds', '.lab', 'bds', 'VER
   const noNet = { LAB_CACHE: path.join(T, 'cache-carry'), npm_config_registry: 'http://127.0.0.1:9/', npm_config_fetch_retries: '0', npm_config_fetch_timeout: '2000' };
   fs.writeFileSync(path.join(U, 'src', 'main.ts'), "import { world } from '@minecraft/server';\nexport function hi() { world.sendMesage('x'); }\n");
   r = lab(['bds', 'check'], noNet, 200000);
-  check(cr.count === 4 && /^E src\/main\.ts:2 .*sendMesage/m.test(r.text) && /types from carry\//.test(r.text), 'carry: offline check catches a wrong @minecraft API call', r.text);
+  // (off Linux there is no BDS build and no docker: "scripts not type checked" and OK, as it should: no type check to catch a call with)
+  if (process.platform !== 'linux' && /^W build tools unavailable/m.test(r.text) && /not type checked/.test(r.text)) console.log('SKIP carry: offline check catches a wrong @minecraft API call: no type check on this machine (Linux with docker only)');
+  else check(cr.count === 4 && /^E src\/main\.ts:2 .*sendMesage/m.test(r.text) && /types from carry\//.test(r.text), 'carry: offline check catches a wrong @minecraft API call', r.text);
   fs.writeFileSync(path.join(U, 'src', 'main.ts'), "import { world } from '@minecraft/server';\nexport function hi() { world.sendMessage('x'); }\n");   // (in a function: world.* at the top level is an E of its own)
   r = lab(['bds', 'check'], noNet, 200000);
   check(r.code === 0 && !/^E /m.test(r.text), 'carry: the right call passes offline', r.text);

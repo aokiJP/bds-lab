@@ -107,6 +107,9 @@ ok(niceOf(100, 100) === -10 && niceOf(200, 201) === 10 && fs.readFileSync(path.j
 const child = spawn('sleep', ['60']);
 const stuck = { plan: { ...plan, stop: ['shell', 'true'] }, opts: o, child, out: '', t0: performance.now(), done: new Promise((r) => child.on('close', r)) };
 const r2 = await B.stopBoost(adb, stuck, { timeoutMs: 500 });
+// (restore checks the loop's pid through /proc/<pid>/cmdline, as the Android device has; a host without /proc (macOS) cannot show it: the loop is killed here instead)
+const hostProc = fs.existsSync('/proc/self/cmdline');
+if (!hostProc) { console.log('SKIP the device loop killed by restore: this host has no /proc (Linux only)'); loop.kill('SIGKILL'); }
 const gone = await Promise.race([loopEnd.then(() => true), sleep(3000).then(() => false)]);
 thread(100, 104, 0); thread(200, 203, 0);
 await sleep(800);
