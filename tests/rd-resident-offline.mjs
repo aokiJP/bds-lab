@@ -32,7 +32,7 @@ esac`);
 const env = (more = {}) => {
   const e = { ...process.env };
   delete e.GITHUB_ACTIONS; delete e.APP_DEVICE; delete e.APP_SERIAL;
-  Object.assign(e, { PATH: `${bin}${path.delimiter}${process.env.PATH}`, ADB: path.join(bin, 'adb'), APP_TESSERACT: path.join(tmp, 'no-tesseract'), FAKE_RUNNING: 'false', ...more });
+  Object.assign(e, { PATH: `${bin}${path.delimiter}${process.env.PATH}`, ADB: path.join(bin, 'adb'), APP_TESSERACT: path.join(tmp, 'no-tesseract'), FAKE_RUNNING: 'false', REDROID_LOCK: LOCK, ...more });
   for (const [k, v] of Object.entries(more)) if (v === undefined) delete e[k];
   return e;
 };
@@ -42,7 +42,8 @@ const lab = (args, more) => {
   return { status: r.status, text: `${r.stdout}${r.stderr}` };
 };
 const KEPT = /redroid の端末: 終わっても動いたままにします/;
-const LOCK = path.join(TOP, 'app', 'redroid', '.lab', 'device.lock');
+// (its own lock file: tests run side by side, and rd-overlap's `game.mjs debug` takes the lab's one)
+const LOCK = path.join(tmp, 'device.lock');
 
 // ---- help ----
 {
@@ -54,7 +55,8 @@ const LOCK = path.join(TOP, 'app', 'redroid', '.lab', 'device.lock');
 {
   const r = lab(['run', '-a', 'jsonui_demo', '--device', 'redroid']);
   ok(KEPT.test(r.text), 'run --device redroid (not on Actions): the device is kept, said in one line', r.text);
-  ok(r.status === 1 && /redroid の端末を使えません: docker/.test(r.text), 'run: doctor still stops a machine that lacks docker (after the line)', r.text);
+  // (off Linux the first thing doctor says is the kernel: redroid runs on a Linux kernel only)
+  ok(r.status === 1 && (process.platform === 'linux' ? /redroid の端末を使えません: docker/ : /redroid の端末を使えません: Linux /).test(r.text), 'run: doctor still stops a machine that lacks docker (after the line)' + (process.platform === 'linux' ? '' : ' (not Linux: stopped for the kernel)'), r.text);
   const u = lab(['redroid', 'ui', '-a', 'jsonui_demo']);
   ok(KEPT.test(u.text), 'app redroid ui (not on Actions): kept by default too', u.text);
   const nk = lab(['run', '-a', 'jsonui_demo', '--device', 'redroid', '--no-keep']);
@@ -84,7 +86,7 @@ const lockBefore = fs.existsSync(LOCK);
 }
 {
   const r = lab(['redroid', 'warm', '--data', data], { FAKE_RUNNING: 'false' });
-  ok(r.status === 1 && /redroid の端末を使えません: docker/.test(r.text), 'warm with no device up on a machine without docker: doctor says what is missing', r.text);
+  ok(r.status === 1 && (process.platform === 'linux' ? /redroid の端末を使えません: docker/ : /redroid の端末を使えません: Linux /).test(r.text), 'warm with no device up on a machine without docker: doctor says what is missing', r.text);
 }
 ok(fs.existsSync(LOCK) === lockBefore, 'warm releases the device lock (also when it fails)');
 if (!lockBefore) {

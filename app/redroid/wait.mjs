@@ -53,9 +53,12 @@ export const slice = (leftMs, sliceMs = SLICE_MS) => Math.max(0, Math.min(sliceM
 /** gives timers and signal handlers (SIGTERM) their turn between blocking steps */
 export const breath = () => new Promise((r) => setImmediate(r));
 
+/** rm's flags for a run folder: it must not cross into a mount (GNU rm; BSD rm on macOS has no such flag, and no overlay mounts there) (pure) */
+export const rmFlags = (platform = process.platform) => (platform === 'linux' ? '-rf --one-file-system' : '-rf');
+
 /** a shell line removing every `<work>.old-*` (run folders an earlier background rm failed on or never finished) (pure) */
 export function oldRunsLine(work, sudo = false) {
-  return `${sudo ? 'sudo -n ' : ''}rm -rf --one-file-system ${q(work)}.old-* >/dev/null 2>&1`;
+  return `${sudo ? 'sudo -n ' : ''}rm ${rmFlags()} ${q(work)}.old-* >/dev/null 2>&1`;
 }
 /** a shell line removing every container named `<name>-old-…` (asideName's, left by an rm that failed or was stopped) (pure) */
 export function oldContainersLine(name) {
