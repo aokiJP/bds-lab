@@ -1,6 +1,7 @@
 name: verify
 # every push: the engine against fake servers (no network), then every unit of each lab on its real server with the real client
-# On push and pull requests: Linux only (the offline tests and the BDS lab). By hand (workflow_dispatch): macOS too, and
+# On push and pull requests: Linux only (the offline tests and the BDS lab). By hand (workflow_dispatch) or a push whose commit
+# message has [full ci]: macOS too, and
 # Endstone (Linux) and LeviLamina (Windows) — a macOS minute counts as 10 and a Windows one as 2 on a private repository.
 # (hashFiles is not allowed in a job's `if`: there it made the whole file invalid and no job ever ran; it is a step now)
 on:
@@ -28,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[full ci]')) && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     # (the app lab's fake device alone is ~20 minutes on 2 cores; a private repository's runner has 2)
     timeout-minutes: 45
@@ -89,7 +90,7 @@ jobs:
 
   end:
     # Endstone on Linux: Python venv + endstone from PyPI; Endstone downloads the BDS it supports
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[full ci]')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     defaults: { run: { working-directory: end } }
@@ -115,18 +116,22 @@ jobs:
       - name: test and pack every plugin
         if: steps.has.outputs.yes == 'true'
         run: |
-          set -e
+          # every plugin, then the ones that failed (one failure does not hide the rest)
+          bad=""
           for d in plugins/*/; do
             [ -d "$d" ] || continue; p=$(basename "$d")
-            echo "::group::$p"; node lab.mjs test -a "$p" --cov; node lab.mjs pack -a "$p"; echo "::endgroup::"
+            echo "::group::$p"
+            if node lab.mjs test -a "$p" --cov && node lab.mjs pack -a "$p"; then :; else bad="$bad $p"; echo "::error title=endstone $p::test or pack failed"; fi
+            echo "::endgroup::"
           done
+          [ -z "$bad" ] || { echo "failed:$bad"; exit 1; }
       - if: always() && steps.has.outputs.yes == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with: { name: endstone-plugins, path: 'end/dist/*', if-no-files-found: ignore }
 
   ll:
     # LeviLamina natively on Windows: lip installs LeviLamina + LegacyScriptEngine; xmake builds native mods
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[full ci]')
     runs-on: windows-latest
     timeout-minutes: 60
     defaults: { run: { working-directory: ll, shell: bash } }
@@ -151,11 +156,15 @@ jobs:
       - name: test and pack every mod
         if: steps.has.outputs.yes == 'true'
         run: |
-          set -e
+          # every mod, then the ones that failed (one failure does not hide the rest)
+          bad=""
           for d in mods/*/; do
             [ -d "$d" ] || continue; m=$(basename "$d")
-            echo "::group::$m"; node lab.mjs test -a "$m"; node lab.mjs pack -a "$m"; echo "::endgroup::"
+            echo "::group::$m"
+            if node lab.mjs test -a "$m" && node lab.mjs pack -a "$m"; then :; else bad="$bad $m"; echo "::error title=levilamina $m::test or pack failed"; fi
+            echo "::endgroup::"
           done
+          [ -z "$bad" ] || { echo "failed:$bad"; exit 1; }
       - if: always() && steps.has.outputs.yes == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with: { name: levilamina-mods, path: 'll/dist/*', if-no-files-found: ignore }
