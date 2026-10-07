@@ -27,8 +27,11 @@ name: app
 # トークンは sqlite3 の標準入力でエミュレータへ。コマンドラインにもログにも出さない。結果は guard が確かめる
 #
 # 守ること:
-#   - キャッシュ（APK・BDS・Play ストア・準備済みの端末）は private リポジトリのときだけ。public / internal では一切使わない
-#     （ステップの if と、lib/vault.mjs が APP_REPO_VISIBILITY を見る。中身は AES-256-GCM で暗号化。鍵は秘密からだけ作れる）
+#   - キャッシュ（APK・BDS・Play ストア・準備済みの端末）は AES-256-GCM で暗号化して置く（lib/vault.mjs。鍵は Secrets の APP_CACHE_KEY
+#     か GOOGLE_AAS_TOKEN からだけ作れる。鍵が無ければ置かない）。private でも public でも同じ
+#   - public / internal のリポジトリ: 結果（スクショ・ログ）は同じ鍵で封じた results.sealed にして成果物に（`app checks --seal`）。
+#     公開されるチェック・注釈・エラーの文には要約（合否・数・秒）だけ。ライブの issue の命令・返事・番号も封じる（lib/live.mjs）。
+#     手元では同じ鍵で開く（node lab.mjs app ci watch）
 #   - アプリのジョブは GitHub への書き込み権限を持たない（contents: read、checkout の資格情報も残さない）。
 #     結果をチェックに出す最後のジョブ（report）は checks: write だけで、秘密を持たない
 #   - Google の秘密は、版の確認・準備・アプリの実行のステップにだけ渡す。apkeep / gpdl へは 600 の一時 ini で渡し、終わったら消す
@@ -101,7 +104,6 @@ env:
   APP_SCREEN: ${{ inputs.screen }}
   # キャッシュは private のときだけ（lib/vault.mjs もこれを確かめ、private 以外では何も読み書きしない）
   APP_REPO_VISIBILITY: ${{ github.event.repository.visibility }}
-  PRIVATE: ${{ github.event.repository.visibility == 'private' }}
   # エミュレータ本体とシステムイメージのキャッシュ（Google が公開しているもの。秘密は入らない）。準備済みの端末は、
   # 作ったときと同じエミュレータでないと読めないので、ランナーに入っているものではなく、これを使う
   SDK_KEY: app-sdk-v1-Linux-android-34-google_apis-x86_64
@@ -174,7 +176,6 @@ jobs:
           [[ "$APP_SCREEN" =~ ^([0-9]{3,4}x[0-9]{3,4})?$ ]] || { echo "::error::screen は 720x1560 のように（幅x高さ）"; exit 1; }
           [[ "$DEVICES" =~ ^([1-8]|auto)$ ]] || { echo "::error::devices は 1〜8 か auto"; exit 1; }
           if [ "$DEVICES" = auto ]; then DEVICES=4; fi
-          if [ "$PRIVATE" != true ]; then echo "::warning title=キャッシュなし::リポジトリが ${APP_REPO_VISIBILITY} なので、APK・BDS・端末をキャッシュしません（private のときだけ）。毎回すべて作るので遅くなります"; fi
           # (mode run は 1 台: app.txt は 1 本の流れ。hold も 1 台: 常駐の端末をもう 1 台なら、もう 1 本の実行で並行に)
           n=$DEVICES; if [ "$MODE" = run ] || [ "$MODE" = hold ]; then n=1; fi
           echo "devices=$n" >> "$GITHUB_OUTPUT"
@@ -197,7 +198,6 @@ jobs:
       # できる target/ は名前に入れない: 入れると保存と読み込みで名前が変わる）。作ったらすぐ保存する（ジョブの最後の保存は、
       # ジョブが失敗すると行われない）
       - name: gpdl（キャッシュ）
-        if: env.PRIVATE == 'true'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
@@ -213,7 +213,7 @@ jobs:
           rm -rf app/gpdl/target app/.lab/rs-google-play ~/.cargo/registry/cache
 
       - name: gpdl を保存
-        if: env.PRIVATE == 'true' && steps.gpdl.outputs.built == 'true'
+        if: steps.gpdl.outputs.built == 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
@@ -308,7 +308,6 @@ jobs:
       # エミュレータのキャッシュがあるか（端末を作らない実行でも: 無ければここで入れて保存する。準備済みの端末はこれと組でしか動かない）
       - name: エミュレータはキャッシュにあるか
         id: sdklook
-        if: env.PRIVATE == 'true'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
@@ -319,7 +318,7 @@ jobs:
 
       - name: エミュレータとシステムイメージ（キャッシュ）
         id: sdkcache
-        if: (steps.need.outputs.device == 'true' || steps.sdklook.outputs.cache-hit != 'true') && env.PRIVATE == 'true'
+        if: (steps.need.outputs.device == 'true' || steps.sdklook.outputs.cache-hit != 'true')
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
@@ -329,7 +328,7 @@ jobs:
 
       - name: キャッシュに無ければランナーのエミュレータとシステムイメージ
         id: sdkfill
-        if: (steps.need.outputs.device == 'true' || (env.PRIVATE == 'true' && steps.sdklook.outputs.cache-hit != 'true')) && steps.sdkcache.outputs.cache-hit != 'true'
+        if: (steps.need.outputs.device == 'true' || steps.sdklook.outputs.cache-hit != 'true') && steps.sdkcache.outputs.cache-hit != 'true'
         env:
           SDK_DIR: ${{ steps.sdk.outputs.dir }}
         run: |
@@ -338,7 +337,7 @@ jobs:
           echo "fill=true" >> "$GITHUB_OUTPUT"
 
       - name: エミュレータとシステムイメージを保存
-        if: env.PRIVATE == 'true' && steps.sdkfill.outputs.fill == 'true'
+        if: steps.sdkfill.outputs.fill == 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
@@ -412,6 +411,7 @@ jobs:
           LIVE_USER: ${{ github.actor }}
           HOLD: ${{ inputs.hold }}
           APP_CACHE_KEY: ${{ secrets.APP_CACHE_KEY }}
+          GOOGLE_AAS_TOKEN: ${{ secrets.GOOGLE_AAS_TOKEN }}
           APP_ACCOUNT: ${{ inputs.account && '1' || '0' }}
           APP_PLAY_CODE: ${{ steps.keys.outputs.play_code }}
           # (live signin, then seal: the signed-in device kept)
@@ -478,8 +478,17 @@ jobs:
         if: failure()
         run: node lab.mjs app guard app/runs
 
-      - name: 準備の記録をアップロード
+      # （private でないリポジトリ: 成果物は誰でも取れる。中身は鍵で封じ、平文は要約だけ。封じられなければ出さない）
+      - name: 結果を封じる
+        id: seal
         if: failure() && steps.guard.outcome == 'success'
+        env:
+          APP_CACHE_KEY: ${{ secrets.APP_CACHE_KEY }}
+          GOOGLE_AAS_TOKEN: ${{ secrets.GOOGLE_AAS_TOKEN }}
+        run: node lab.mjs app checks --seal app/runs
+
+      - name: 準備の記録をアップロード
+        if: failure() && steps.guard.outcome == 'success' && steps.seal.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: app-${{ inputs.addon }}-${{ github.run_id }}-prep
@@ -625,7 +634,6 @@ jobs:
 
       - name: エミュレータとシステムイメージ（キャッシュ）
         id: sdkcache
-        if: env.PRIVATE == 'true'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
@@ -676,8 +684,11 @@ jobs:
             *) cmd=run; if [ -n "$SCENARIO" ]; then args+=(--scenario "$SCENARIO"); fi ;;
           esac
           set +e
-          node lab.mjs app "$cmd" "${args[@]}" 2>&1 | tee /tmp/app-run.out
+          # (not private: the log is read by anyone — only the verdict lines here, the whole of it in the sealed results' run.txt)
+          if [ "$APP_REPO_VISIBILITY" = private ]; then node lab.mjs app "$cmd" "${args[@]}" 2>&1 | tee /tmp/app-run.out
+          else node lab.mjs app "$cmd" "${args[@]}" > /tmp/app-run.out 2>&1; fi
           rc=${PIPESTATUS[0]}
+          if [ "$APP_REPO_VISIBILITY" != private ]; then grep -E '^(PASS|FAIL) ' /tmp/app-run.out | sed -E 's/ .*//' | tail -n 1 || true; fi
           set -e
           if [ "$rc" != 0 ]; then
             # 結果とエラーだけを注釈に出す（成果物を開けない環境でも API で読める）。値は伏せ、端末まわりの語は控える。詳細は checks ジョブ
@@ -686,6 +697,8 @@ jobs:
                        -e 's#(setCachedDeviceId\()[0-9a-fx]+#\1<id>#g' -e 's#(/home/\|/Users/)[^/ ]+#\1<user>#g' \
                        -e 's/エミュレータ[ー]?/端末/g' -e 's/Play ストア/必要な部品/g' -e 's/ライセンス/起動時チェック/g' \
               | cut -c1-280 | sed -e 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+            # (public: annotations are read by anyone — the lines stay in the sealed results)
+            if [ "$APP_REPO_VISIBILITY" != private ]; then body="失敗しました。中身は封じた成果物に: 手元で node lab.mjs app ci watch ${GITHUB_RUN_ID}"; fi
             echo "::error title=結果とエラー（${SHARD}）::${body}"
             exit "$rc"
           fi
@@ -701,6 +714,9 @@ jobs:
           HOLD: ${{ (inputs.hold != '' && inputs.hold != '0') && inputs.hold || '60' }}
           APP_ACCOUNT: ${{ inputs.account && '1' || '0' }}
           APP_PLAY_CODE: ${{ needs.prep.outputs.play_code }}
+          # (the live issue's commands and answers are sealed with it where the repository is not private)
+          APP_CACHE_KEY: ${{ secrets.APP_CACHE_KEY }}
+          GOOGLE_AAS_TOKEN: ${{ secrets.GOOGLE_AAS_TOKEN }}
         run: node lab.mjs app hold --minutes "$HOLD"
 
       - name: 端末の記録を結果に入れる
@@ -716,8 +732,17 @@ jobs:
         if: always()
         run: node lab.mjs app guard app/runs
 
-      - name: 結果（スクリーンショットとログ）をアップロード
+      # （private でないリポジトリ: 成果物は誰でも取れる。中身は鍵で封じ、平文は要約だけ。封じられなければ出さない）
+      - name: 結果を封じる
+        id: seal
         if: always() && steps.guard.outcome == 'success'
+        env:
+          APP_CACHE_KEY: ${{ secrets.APP_CACHE_KEY }}
+          GOOGLE_AAS_TOKEN: ${{ secrets.GOOGLE_AAS_TOKEN }}
+        run: node lab.mjs app checks --seal app/runs
+
+      - name: 結果（スクリーンショットとログ）をアップロード
+        if: always() && steps.guard.outcome == 'success' && steps.seal.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: app-${{ inputs.addon }}-${{ github.run_id }}${{ needs.prep.outputs.devices != '1' && format('-{0}of{1}', matrix.shard, needs.prep.outputs.devices) || '' }}

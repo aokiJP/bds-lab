@@ -46,7 +46,7 @@ node lab.mjs app ci watch|fetch <番号> --device redroid                       
 - **キャッシュは頼まれたときだけ保存する**（`--keep` / 入力 keep）。リポジトリのキャッシュは全体で 10 GB、いま 9.2 GB（app の
   端末 7.5 GB、SDK 1.7 GB …）。保存すると古いものから消えるので、app の端末が追い出されて app の準備が 18 分のやり直しになり得る。
   保存するのは準備済みの /data を app の vault で暗号化した 1 ファイル（AES-256-GCM、鍵は APP_CACHE_KEY か GOOGLE_AAS_TOKEN
-  から。private リポジトリだけ。Android の uid と xattr を保つ: tar --xattrs --numeric-owner）。読むのは毎回（あれば prep を飛ばす）。
+  から。公開・非公開とも。Android の uid と xattr を保つ: tar --xattrs --numeric-owner）。読むのは毎回（あれば prep を飛ばす）。
 - Google アカウントの秘密は game ジョブの準備のステップにだけ渡し、**app ワークフローが動いている間は待つ**
   （同じアカウントを二つの端末で同時に使わない。CI では数分だけ待ち、まだ動いていればアカウントの段階を飛ばす: runner は待つ間も分を使う）。Play の画面の絵（アカウントが写る）は成果物に入れない。
 - **CI は自動では走らない**: 2026-10-04 にアカウントの Actions の分（支払いの上限）に達して app を含むすべてのジョブが
@@ -120,4 +120,4 @@ binder が要る（Linux: `modprobe binder_linux devices=binder,hwbinder,vndbind
 2. 参加を CI で確かめる: ゲームの LAN の発見（172.17.0.2:7551 → 172.17.255.255:7551、2 秒ごと）はブリッジを渡るが、BDS は
    放送には答えなかった（ブリッジで tcpdump）。いまは app run 自身の中継（`lab-relay --reflect`）で送る（エミュレータと同じ）。
    `app ci --device redroid` の報告（report.md の「参加」）で確かめる。
-3. ~~準備した /data をジョブをまたいで持つ~~: 済み（private リポジトリで、app の vault で暗号化して。保存は `--keep` のときだけ）。
+3. ~~準備した /data をジョブをまたいで持つ~~: 済み（app の vault で暗号化して。保存は `--keep` のときだけ）。

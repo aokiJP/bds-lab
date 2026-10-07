@@ -1,4 +1,4 @@
-# app/ の設計: 本物の Minecraft を GitHub の 2 CPU で、速く、private のまま
+# app/ の設計: 本物の Minecraft を GitHub の 2 CPU で、速く、公開リポジトリでも秘密を出さずに
 
 読む人: このラボの app/ を直す人（人でも AI でも）。使い方は README.md、AI 向けの短い要約は AGENTS.md。
 
@@ -6,9 +6,10 @@
 
 - 本物の Minecraft（Android 版、Google Play のもの）をエミュレータで動かし、ラボの BDS（アドオン入り）に入れて、
   JSON UI の画面・クライアントにしか出ないエラー（コンテンツログ）・操作の結果を取る。
-- 動く場所は GitHub Actions の private リポジトリの runner: **2 vCPU・7.8 GB・GPU なし**（KVM はある）、ジョブは 6 時間まで、
+- 動く場所は GitHub Actions の標準 runner: **private では 2 vCPU・7.8 GB、公開リポジトリでは 4 vCPU・16 GB、GPU なし**（KVM はある。設計は小さい方に合わせる）、ジョブは 6 時間まで、
   キャッシュはリポジトリ全体で 10 GB（超えると使われていない順に消える）。
-- APK・BDS・端末（ゲーム入りのスナップショット）は **private リポジトリのキャッシュにだけ**、AES-256-GCM で暗号化して置く
+- APK・BDS・端末（ゲーム入りのスナップショット）はキャッシュに AES-256-GCM で暗号化して置く（公開・非公開とも。鍵は Secrets から）。
+  公開リポジトリでは成果物とライブの issue も同じ鍵で封じ、注釈・チェックは合否だけ
   （lib/vault.mjs。public では何も読み書きしない）。成果物には APK・.so・トークンを入れない（`app guard` が中身まで見る）。
 
 ## 2. 流れ
@@ -21,7 +22,7 @@ app（N 台、並行）: 端末と BDS のキャッシュを取る → 裏で解
 report: 成果物を check run に（秘密なし。API だけで報告・ログ・画面が読める）
 ```
 
-常駐（`--mode hold`）: 戻すのは 1 回だけ。あとは private の issue のコメント（`app live`）で `run` / `ui` / `pull <枝>` /
+常駐（`--mode hold`）: 戻すのは 1 回だけ。あとは issue のコメント（公開リポジトリでは封じて）（`app live`）で `run` / `ui` / `pull <枝>` /
 `last` を何度でも（その端末のまま `app run`。始まるまで数秒）。端末を直接さわる命令（screen / tap / pad / key / sh / logcat …）も
 同じ道で、それぞれ何秒かかったかを返す。
 
@@ -143,7 +144,7 @@ rated」で Proceed → 「Download Resource Packs?」で Download Everything & 
 
 | # | 工夫 | 効くところ | つまみ |
 |---|---|---|---|
-| 1 | 準備済みの端末: タイトル画面のゲームごとスナップショット、private キャッシュに暗号化 | 起動 18 分 → 16〜33 秒 | `--fresh` |
+| 1 | 準備済みの端末: タイトル画面のゲームごとスナップショット、キャッシュに暗号化 | 起動 18 分 → 16〜33 秒 | `--fresh` |
 | 2 | キャッシュの解読を裏で: 端末の解読と、エミュレータ本体のダウンロードを重ねる | 1〜2 分 | — |
 | 3 | 常駐の端末（mode hold）: 戻すのは 1 回、テストは live の `run` で何度でも | 2 回目から数秒で始まる | `--mode hold` |
 | 4 | 並行が既定: 実行ごとに別の列、`--try` で設定違いを同時に 8 本 | 待ち時間 | `--lane` |
@@ -167,7 +168,7 @@ rated」で Proceed → 「Download Resource Packs?」で Download Everything & 
 ## 6. 参考にした公開プロジェクト（何を取り、何を取らなかったか）
 
 - **ReactiveCircus/android-emulator-runner**（GitHub Actions でエミュレータ）: AVD スナップショットのキャッシュ、`-no-window -no-audio
-  -no-boot-anim`、アニメーションを切る、KVM の udev ルール → 取り入れた（キャッシュは暗号化して private だけ）。
+  -no-boot-anim`、アニメーションを切る、KVM の udev ルール → 取り入れた（キャッシュは暗号化して）。
 - **google/android-emulator-container-scripts**（エミュレータの gRPC）: ホスト側の画面取得（縮小して取れる）と入力 → 画面は
   エミュレータ側で撮る（#6、コンソールの `screenrecord screenshot`）。縮小した絵を直接取る gRPC は次の候補。
 - **remote-android/redroid**（＋ GApps を足す redroid-script）: VM を使わず、ホストのカーネルの上のコンテナで Android。

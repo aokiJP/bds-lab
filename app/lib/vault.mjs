@@ -1,12 +1,13 @@
-// The private cache: what must never be public (the Minecraft APK, the BDS, the Play Store, the device with the account on
-// it) is kept between runs only as one sealed file per part, and only for a private repository.
+// The sealed cache: what must never be public (the Minecraft APK, the BDS, the Play Store, the device with the account on
+// it) is kept between runs only as one sealed file per part, in a private or a public repository alike (the key decides).
 //   seal: tar (sparse) → zstd (gzip without it) → AES-256-GCM → <name>.bin     open: the reverse into a temporary folder,
 //   moved into place only when the whole file decrypted and its tag matched (a cut or altered file is a miss, never half a tree)
 // The key: APP_CACHE_KEY (a secret of its own), else derived from GOOGLE_AAS_TOKEN (HKDF; the token itself is never
 // written anywhere). Its id (a hash of the derived key, not of the secret) is part of the cache names: a new secret is a
 // new cache, and an old file opened with the wrong key fails on the id before anything is decrypted.
-// In GitHub Actions nothing is sealed or opened unless the workflow says the repository is private (APP_REPO_VISIBILITY
-// from github.event.repository.visibility): a public (or internal) repository gets no cache at all, encrypted or not.
+// In GitHub Actions the cache is used whenever there is a key (from Secrets), whatever the repository's visibility:
+// only the same repository's workflows can read a cache, and what is in it is already encrypted. No key, no cache.
+// sealText / openText: one string sealed the same way (AES-256-GCM, one line) for what is shown live (an issue comment).
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -34,12 +35,38 @@ export function vaultKey(env = process.env) {
   const key = Buffer.from(crypto.hkdfSync('sha256', Buffer.from(own || aas), Buffer.from('bds-lab vault salt v1'), Buffer.from(own ? 'app cache key v1' : 'app cache from aas v1'), 32));
   return { key, id: crypto.createHash('sha256').update('bds-lab vault id v1').update(key).digest('hex').slice(0, 16) };
 }
-/** may this run keep things in the cache? {ok, why} — in GitHub Actions only a private repository (pure) */
+/** may this run keep things in the cache? {ok, why} — in GitHub Actions whenever there is a key, public repository or not
+ *  (APP_REPO_VISIBILITY is only named in the reason) (pure but for crypto) */
 export function vaultAllowed(env = process.env) {
   if (env.GITHUB_ACTIONS !== 'true') return { ok: true, why: 'このパソコンのディスクだけ' };
+  if (!vaultKey(env)) return { ok: false, why: 'キャッシュの鍵がありません（APP_CACHE_KEY か GOOGLE_AAS_TOKEN を Secrets に）' };
   const v = String(env.APP_REPO_VISIBILITY ?? '').toLowerCase();
-  if (v === 'private') return { ok: true, why: 'private リポジトリ' };
-  return { ok: false, why: v ? `リポジトリが ${v} です（キャッシュは private だけ）` : 'リポジトリが private か分かりません（APP_REPO_VISIBILITY が無い）' };
+  return { ok: true, why: `暗号化（AES-256-GCM、鍵は Secrets から）${v ? `・リポジトリは ${v}` : ''}` };
+}
+
+const SEAL_PREFIX = 'lab-sealed:v1:', SEAL_AAD = Buffer.from('bds-lab live v1');
+/** text → one line `lab-sealed:v1:<base64url(iv|tag|ciphertext)>` (AES-256-GCM, a new random iv every time); key: vaultKey()'s or its Buffer */
+export function sealText(text, key) {
+  const k = key?.key ?? key;
+  if (!Buffer.isBuffer(k) || k.length !== 32) throw new AppError('封じる鍵がありません', 'APP_CACHE_KEY か GOOGLE_AAS_TOKEN が要ります。');
+  const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', k, iv);
+  c.setAAD(SEAL_AAD);
+  const ct = Buffer.concat([c.update(String(text), 'utf8'), c.final()]);
+  return SEAL_PREFIX + Buffer.concat([iv, c.getAuthTag(), ct]).toString('base64url');
+}
+/** sealText's line → the text, or null (not ours, wrong key, cut or altered) */
+export function openText(str, key) {
+  const k = key?.key ?? key;
+  if (typeof str !== 'string' || !Buffer.isBuffer(k) || k.length !== 32) return null;
+  const s = str.trim();
+  if (!s.startsWith(SEAL_PREFIX)) return null;
+  const raw = Buffer.from(s.slice(SEAL_PREFIX.length), 'base64url');
+  if (raw.length < 28) return null;
+  try {
+    const d = crypto.createDecipheriv('aes-256-gcm', k, raw.subarray(0, 12));
+    d.setAAD(SEAL_AAD); d.setAuthTag(raw.subarray(12, 28));
+    return Buffer.concat([d.update(raw.subarray(28)), d.final()]).toString('utf8');
+  } catch { return null; }
 }
 const waitExit = (c, what) => new Promise((res, rej) => { c.on('error', (e) => rej(new AppError(`${what} を起動できません: ${e.message}`))); c.on('close', (code) => (code === 0 ? res() : rej(new AppError(`${what} が失敗しました（終了コード ${code}）`, c.errText?.trim().slice(-300))))); });
 const collect = (c) => { c.errText = ''; c.stderr?.on('data', (d) => { c.errText = (c.errText + d).slice(-2000); }); return c; };

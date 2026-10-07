@@ -266,10 +266,14 @@ GitHub のリポジトリの **Actions → app → Run workflow** で、アド�
 **速さ（準備済みの端末と、非公開のキャッシュ）**: 最初のジョブ（`prep`）が、Minecraft をタイトル画面まで起動した端末をスナップショットにして
 キャッシュします（初回と、Minecraft の更新のあとだけ。10〜30 分）。次の実行からは、端末ジョブがそれを戻すだけで、ゲームは起動済み・
 ライセンス確認も済みのタイトル画面から、すぐ参加します。報告の「参加」の行が、参加リンクからワールドに出るまでの秒数です。
-キャッシュするもの（APK・BDS・Play ストア・準備済みの端末）は **private リポジトリのときだけ**、しかも **AES-256-GCM で暗号化**して置きます
-（鍵は Secrets の `APP_CACHE_KEY`、無ければ `GOOGLE_AAS_TOKEN` から作る。トークン自体はどこにも書きません）。public / internal の
-リポジトリでは、暗号化してあってもキャッシュは一切使いません（毎回すべて作るので遅くなります）。エミュレータ本体とシステムイメージ
-（Google が公開しているもの）も、同じ条件でキャッシュします。
+キャッシュするもの（APK・BDS・Play ストア・準備済みの端末）は、リポジトリが公開でも非公開でも **AES-256-GCM で暗号化**して置きます
+（鍵は Secrets の `APP_CACHE_KEY`、無ければ `GOOGLE_AAS_TOKEN` から作る。トークン自体はどこにも書きません。鍵が無ければキャッシュは
+使わず、毎回すべて作ります）。エミュレータ本体とシステムイメージ（Google が公開しているもの。秘密を含まない）もキャッシュします。
+
+**公開リポジトリでも private 並み**: 誰でも見られるもの（ログ・注釈・チェック・issue・成果物）に秘密や画面の中身を出しません。
+成果物（報告・スクリーンショット・ログ）は同じ鍵で `results.sealed` に暗号化し、平文は合否・手順の数・秒数・版だけの `summary.json`。
+チェックと注釈は合否だけ。`app ci watch <番号>` が取るときに `.env.local` の鍵（Secrets と同じ `APP_CACHE_KEY`、無ければ
+`GOOGLE_AAS_TOKEN`）で開きます。鍵が無い実行は中身を成果物に出しません。
 **端末の土台**: `account` のとき、ゲームを入れる前の端末（Play ストアを system に入れ、アカウントを書き込み、Google の最初の重い処理が
 終わったところ）も別にキャッシュします。Minecraft が更新されたら、端末はゼロからではなくこの土台から作ります（アカウントの書き込みも、
 Google への端末の登録もやり直さない。数分で済む）。土台を使わないなら `APP_BASE=0`。
@@ -319,9 +323,9 @@ node lab.mjs app live --run <番号> "options set screen_animations=0" "kill" "l
 node lab.mjs app live --run <番号> "seal"                  # この状態を準備済みの端末としてキャッシュへ（次の実行から使う）
 ```
 
-命令は数秒で端末に届き、返事（各命令の答えと、その後の画面）がそのまま返ってきます（private リポジトリの issue
+命令は数秒で端末に届き、返事（各命令の答えと、その後の画面）がそのまま返ってきます（リポジトリの issue
 「app live: 実機をそのまま調べる（ラボが使います）」のコメントでやりとりします）。動くのは、その実行を起動した人の命令だけで、
-効くのは端末（adb）だけです（ランナーのシェルではない）。返事は匿名化されます。命令の一覧は `app live "help"`:
+効くのは端末（adb）だけです（ランナーのシェルではない）。返事は匿名化されます。公開リポジトリでは命令も返事も（画面の PNG も）vault の鍵で封じて書き、手元で開きます（`.env.local` に Secrets と同じ鍵）。命令の一覧は `app live "help"`:
 `screen` `tap <x> <y> [tap|hold|motion]` `swipe` `key` `text` `wait` `sh <端末のシェル>` `logcat [行数] [正規表現]`
 `input`（Android が入力をどの窓へ送ったか）`windows` `fps` `gpu` `launch` `kill` `options [正規表現] | options set k=v`
 `title [分]` `answer`（Android の「応答なし」に答える）`bds up|down|do` `bdslog [行数] [正規表現]`（この runner の BDS のログ）
@@ -393,7 +397,7 @@ node lab.mjs app run -a jsonui_demo --device redroid      # いつも（app ui �
 `node lab.mjs app ci --device redroid -a <名前> --wait`（結果は app/runs/gh-<番号>/）。
 
 - `--keep` で残した端末は、次の `--device redroid` がそのまま使います（戻さず起動もせず、ゲームが止まっていれば起動するだけ）。
-- GitHub（private リポジトリ）では、準備済みの端末を app と同じ暗号化キャッシュから戻し、prep を飛ばします。作った端末を
+- GitHub では（公開でも非公開でも、鍵があれば）、準備済みの端末を app と同じ暗号化キャッシュから戻し、prep を飛ばします。作った端末を
   キャッシュへ残すのは `app ci --device redroid --keep` のときだけ（約 1 GB。キャッシュは共有で 10 GB まで）。`--fresh` で作り直し。
 
 詳しく: [redroid/README.md](redroid/README.md)。
@@ -494,7 +498,7 @@ node lab.mjs app run -a jsonui_demo --device phone
 | `lib/client.mjs` | ゲームのクライアントの操作: キーの名前、押したままのキー、OCR、コンテンツログ、メモリとフレーム数、録画 |
 | `lib/uicatalog.mjs` | JSON UI の画面の一覧と開き方（`app ui`） |
 | `lib/warm.mjs` | 準備済みの端末（スナップショット）と、それが何から作られたかの印 |
-| `lib/vault.mjs` | 非公開のキャッシュ（暗号化。private リポジトリのときだけ） |
+| `lib/vault.mjs` | 暗号化キャッシュ（AES-256-GCM。公開・非公開とも、鍵があるとき）と、ライブの issue の文を封じる sealText / openText |
 | `lib/screen.mjs` | 位置を測る格子 |
 | `lib/report.mjs` | 報告と、成果物の検査（guard）、ログの要約 |
 | `lib/host.mjs` | このパソコンの負荷・メモリ・ディスクの記録（host.txt、notice） |
@@ -509,7 +513,7 @@ node lab.mjs app run -a jsonui_demo --device phone
 
 ## 今の状態（GitHub で `--account` を動かして分かったこと。2026-10-03）
 
-- **ランナー**: private リポジトリの標準ランナーは 2 CPU・7.8 GB・空きディスク 14 GB（使わない道具を消すと 30 GB ほど）。CPU は
+- **ランナー**: 標準ランナー（private リポジトリの計測）は 2 CPU・7.8 GB・空きディスク 14 GB（使わない道具を消すと 30 GB ほど）。CPU は
   AMD EPYC 7763 / 9V74 / 9V45 と毎回変わります。KVM あり。端末は Android 14 の Google APIs イメージ（x86_64）。
 - **ライセンス確認（PairIP）**: ゲームは起動のたびに Play に問い合わせます。**adb で入れたゲームは、アカウントが買っていても
   「ライセンスなし」**と答えられ、Play の購入ページ（Play Pass の paywall）が出てゲームが終わります（Play のログには

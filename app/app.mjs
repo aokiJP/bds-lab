@@ -705,7 +705,9 @@ async function runCmd(args) {
     const md = writeReport(runDir, st);
     const bad = guard(runDir, [process.env.GOOGLE_AAS_TOKEN, process.env.GOOGLE_PASSWORD, (await import('../common/secrets.mjs')).readSecret(TOP, 'GOOGLE_PASSWORD')].filter(Boolean));
     if (bad.length) { bad.forEach((b) => log(`E guard: ${b}`)); st.ok = false; log('E 結果のフォルダに入れてはいけないものがありました（アップロードしないでください）'); }
-    if (process.env.GITHUB_STEP_SUMMARY) try { fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n'); } catch { /* not ours */ }
+    // (a repository that is not private shows the job summary to everyone: the verdict only, the report in the sealed artifact)
+    const open = String(process.env.APP_REPO_VISIBILITY ?? '').toLowerCase() === 'private';
+    if (process.env.GITHUB_STEP_SUMMARY) try { fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, (open ? md : `# app: ${st.ok ? 'PASS' : 'FAIL'}\n\n中身は封じた成果物に: 手元で node lab.mjs app ci watch ${process.env.GITHUB_RUN_ID ?? '<番号>'}`) + '\n'); } catch { /* not ours */ }
     log('');
     if (st.fatal) log(`E 途中で止まりました: ${st.fatal}`);
     st.notes.forEach((n) => log(`W ${n}`));
@@ -1907,7 +1909,7 @@ function liveChannel({ secrets = [] } = {}) {
   let issue = null, since = new Date(Date.now() - 60_000).toISOString();
   const seen = new Set();
   return {
-    tell: async (m) => { try { issue ??= await api.issue(); await api.comment(issue, `lab-live@${run} ${G.anonymize(m, secrets)}`); } catch (e) { out(`W ${e.message}`); } },
+    tell: async (m) => { try { issue ??= await api.issue(); await api.comment(issue, Live.tellBody(run, G.anonymize(m, secrets))); } catch (e) { out(`W ${e.message}`); } },
     // a `lab@<run> code 123456` from the run's user, waited for up to 3 minutes at a call
     nextCode: async () => {
       issue ??= await api.issue();
@@ -1916,8 +1918,8 @@ function liveChannel({ secrets = [] } = {}) {
         for (const c of list) {
           if (seen.has(c.id) || (user && c.user?.login !== user)) continue;
           seen.add(c.id);
-          const m = /^lab@\d+\s+code\s+(\d{4,10})\b/.exec(String(c.body ?? '').trim());
-          if (m && String(c.body).startsWith(`lab@${run}`)) { CODES_TAKEN.add(c.id); return m[1]; }
+          const code = Live.codeOf(c.body, run);
+          if (code) { CODES_TAKEN.add(c.id); return code; }
         }
         await sleep(Number(process.env.APP_LIVE_POLL_MS) || 3000);
       }
@@ -2022,14 +2024,26 @@ async function liveCmd(args) {
     posted = ghJson([`repos/${repo}/issues/comments/${o.opts['--reply']}`]);
   } else {
     if (!o.rest.length) fail('書き方: node lab.mjs app live [--run <番号>] "<コマンド>" ["<コマンド>" …]（--steps <ファイル>: その手順をこの端末で）', Live.HELP);
-    const r = gh(['api', '-X', 'POST', `repos/${repo}/issues/${issue}/comments`, '-f', `body=lab@${run} ${o.rest.join('\n')}`]);
+    // (the command sealed with the vault key whenever there is one — the runner opens a sealed one in any repository; plain
+    // text only in a private repository without a key. The issue of a public repository is read by anyone)
+    const vis = gh(['repo', 'view', repo, '--json', 'visibility', '-q', '.visibility']).stdout?.trim().toLowerCase();
+    const lenv = { ...process.env, APP_REPO_VISIBILITY: V.vaultKey() ? 'public' : vis || 'public' };
+    const body = Live.commandBody(run, o.rest.join('\n'), lenv);
+    if (body === null) fail('この命令を issue に書けません: 公開のリポジトリで、封じる鍵がありません', '.env.local に、Secrets と同じ APP_CACHE_KEY（無ければ GOOGLE_AAS_TOKEN）');
+    const r = gh(['api', '-X', 'POST', `repos/${repo}/issues/${issue}/comments`, '-f', `body=${body}`]);
     if (r.status !== 0) fail('命令を書けません', (r.stderr || r.stdout).trim().split('\n')[0]);
     posted = JSON.parse(r.stdout);
     if (o.flags.has('--no-wait')) { out(`送りました（#${posted.id}）。返事: node lab.mjs app live --run ${run} --reply ${posted.id}`); return; }
   }
+  const shown = new Set();
   for (;;) {
     await sleep(3000);
     const list = ghJson([`repos/${repo}/issues/${issue}/comments?per_page=100&since=${encodeURIComponent(posted.created_at)}`]) ?? [];
+    // (what the run says meanwhile — a sign-in step asking for a code — sealed in a public repository: opened here)
+    for (const c of list) {
+      if (shown.has(c.id) || !String(c.body).startsWith(`lab-live@${run} lab-sealed:`)) continue;
+      shown.add(c.id); const t = Live.tellText(c.body, run); out(`  ▶ ${t ?? '（封じた知らせを開けません: 鍵が Secrets と違います）'}`);
+    }
     const rep = list.map((c) => Live.replyParts(c.body, run)).find((x) => x && x.id === posted.id);
     if (rep) {
       out(rep.text);
@@ -2212,7 +2226,7 @@ async function secretsCmd(args) {
     'secrets は GitHub Actions（ai-make / app ワークフロー）で APK を取るときだけ要ります。このPCで使うだけなら不要（.env.local にもうあります）。\n'
     + `  Actions でも使うなら、先にリポジトリを作る: git init && git add -A && git commit -m init && gh repo create ${repo} --private --source . --push\n  そのあと: node lab.mjs app secrets --repo ${repo}`);
   if (vis.status !== 0) { const me = login(); fail('リポジトリが分かりません', `--repo ${me || '<owner>'}/<リポジトリ名> を付けてください（例: node lab.mjs app secrets --repo ${me || '<owner>'}/bds-lab）。` + (vis.stderr ? `（${vis.stderr.trim().slice(0, 120)}）` : '')); }
-  if (vis.stdout.trim() === 'PUBLIC') out('W 公開リポジトリです。スクショは Actions の成果物として、ログインした誰でも見られます（APK とトークンは出ません）');
+  if (vis.stdout.trim() === 'PUBLIC') out('  公開リポジトリです: キャッシュ・成果物（スクショ・ログ）・ライブの issue は、この鍵（APP_CACHE_KEY か GOOGLE_AAS_TOKEN）で AES-256-GCM に封じます。手元の .env.local にも同じ鍵を置いてください（取った結果を開くのに使います）');
   for (const [k, v] of [['GOOGLE_EMAIL', c.email], ['GOOGLE_AAS_TOKEN', c.aasToken]]) {
     const r = spawnSync('gh', ['secret', 'set', k, ...(repo ? ['--repo', repo] : []), ...(envName ? ['--env', envName] : [])], { input: v, encoding: 'utf8' });
     if (r.status !== 0) fail(`gh secret set ${k} が失敗しました`, (r.stderr || '').trim().slice(0, 200));
@@ -2234,18 +2248,97 @@ async function ghFetch(url, { method = 'GET', body } = {}) {
   if (!r.ok) fail(`GitHub API ${method} ${url.replace(/^https:\/\/[^/]+/, '')}: HTTP ${r.status}`, (await r.text()).slice(0, 300));
   return r.json();
 }
-/** (in the workflow's second job) the run folder → check runs on the commit; --artifact <name> takes it from this run's artifact */
+/** (in the workflow's second job) the run folder → check runs on the commit; --artifact <name> takes it from this run's artifact.
+ *  A repository that is not private (APP_REPO_VISIBILITY): the app job seals its run folder before the upload (--seal <folder>:
+ *  everything in it → results.sealed with the vault's key, AES-256-GCM; in the clear only summary.json: the verdict, the number
+ *  of steps and which failed, seconds, the BDS and app versions — no screenshot, log line, screen text, e-mail or device id).
+ *  A sealed run becomes one check from summary.json alone. No key: nothing of it is uploaded (summary.json only).
+ *  --open <folder>: (this machine, through app ci) every results.sealed under it opened in place with the key of .env.local */
 async function checksCmd(args) {
-  const o = parse(args, { flags: ['--print'], opts: ['--artifact', '--devices'] });
+  const o = parse(args, { flags: ['--print'], opts: ['--artifact', '--devices', '--seal', '--open'] });
+  const SEALED = 'results.sealed', SUMMARY = 'summary.json';
+  const readT = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return ''; } };
+  // what summary.json may hold, read back the same way (a version, a name: short and plain; numbers only as numbers)
+  const word = (s) => (typeof s === 'string' && /^[\w.()+-]{1,40}$/.test(s) ? s : null), num = (x) => (Number.isFinite(x) ? x : null);
+  const summaryOf = (d) => {
+    let r = null;
+    try { r = JSON.parse(readT(path.join(d, 'result.json'))); } catch { /* no result.json: a prepare record, redroid's out/ */ }
+    const md = readT(path.join(d, 'report.md')), cell = (k) => new RegExp(`^\\| ${k} \\| ([\\w.()+-]+)`, 'm').exec(md)?.[1] ?? null;
+    const steps = Array.isArray(r?.results) ? r.results.map((x) => ({ ok: Boolean(x?.ok), line: num(x?.line) }))
+      : readT(path.join(d, 'steps.txt')).split('\n').filter((l) => /^(OK |FAIL)/.test(l)).map((l) => ({ ok: l.startsWith('OK'), line: num(Number(/^\S+\s+(\d+)/.exec(l)?.[1])) }));
+    const secs = r && num(r.ended) !== null && num(r.started) !== null ? Math.round((r.ended - r.started) / 1000) : num(Number(/^\| 時間 \| (\d+)s/m.exec(md)?.[1]));
+    return {
+      run: word(path.basename(d)), addon: word(r?.addon), ok: r ? r.ok === true : /^# app: PASS/m.test(md),
+      steps: steps.length, failed: steps.flatMap((x, i) => (x.ok ? [] : [i + 1])), failed_lines: steps.filter((x) => !x.ok && x.line !== null).map((x) => x.line),
+      seconds: secs, join_seconds: num(r?.timing?.join) !== null ? Math.round(r.timing.join / 100) / 10 : null,
+      bds: word(r?.bds?.version) ?? cell('BDS'), app: word(r?.app?.versionName) ?? cell('アプリ'),
+    };
+  };
+  // the run folders under a folder: itself when it holds files, else each folder in it (app/runs: every run of the job)
+  const runFolders = (d) => { const es = fs.readdirSync(d, { withFileTypes: true }); return es.some((e) => e.isFile()) ? [d] : es.filter((e) => e.isDirectory()).map((e) => path.join(d, e.name)); };
+  if (o.opts['--seal']) {
+    const top = path.resolve(o.opts['--seal']);
+    if (!fs.existsSync(top)) { out(`${rel(top)} がありません（封じるものはありません）`); return; }
+    if (String(process.env.APP_REPO_VISIBILITY ?? '').toLowerCase() === 'private') { out('private のリポジトリ: 結果は封じません（今まで通り）'); return; }
+    const key = V.vaultKey();
+    for (const d of runFolders(top)) {
+      const entries = fs.readdirSync(d).filter((e) => e !== SEALED && e !== SUMMARY && !e.endsWith('.part'));
+      if (!entries.length) continue;
+      const s = summaryOf(d);
+      // (a seal that fails — an unreadable file, a full disk — leaves nothing in the clear either: the summary only)
+      let sealed = false;
+      if (key) try { await V.seal({ base: d, entries, outFile: path.join(d, SEALED), key }); sealed = true; } catch (e) { fs.rmSync(path.join(d, SEALED), { force: true }); out(`W ${rel(d)}: 封じられません（${String(e?.message ?? e).split('\n')[0].slice(0, 200)}）: 中身は出しません`); }
+      for (const e of entries) fs.rmSync(path.join(d, e), { recursive: true, force: true });
+      fs.writeFileSync(path.join(d, SUMMARY), JSON.stringify({ ...s, sealed }, null, 2) + '\n');
+      if (key && !sealed) continue;
+      out(key ? `OK ${rel(d)}: 中身を ${SEALED} に暗号化しました（AES-256-GCM、鍵は Secrets から）。平文は ${SUMMARY}（合否・手順の数・秒数・版）だけ`
+        : `W ${rel(d)}: 封じる鍵がありません（APP_CACHE_KEY か GOOGLE_AAS_TOKEN を Secrets に）: 中身は成果物に出しません（${SUMMARY} だけ）`);
+    }
+    return;
+  }
+  if (o.opts['--open']) {
+    const top = path.resolve(o.opts['--open']);
+    const found = fs.existsSync(top) ? fs.readdirSync(top, { recursive: true }).map(String).filter((f) => path.basename(f) === SEALED).map((f) => path.join(top, f)) : [];
+    if (!found.length) { out('暗号化された結果はありません'); return; }
+    const key = V.vaultKey(), how = '.env.local に、その実行の Secrets と同じ APP_CACHE_KEY を（Secrets に APP_CACHE_KEY が無いなら、同じ GOOGLE_AAS_TOKEN: node lab.mjs app token）';
+    if (!key) fail(`暗号化された結果を開く鍵がありません（${found.length} 個）。読めるのは要約（${SUMMARY}）だけです`, how);
+    let bad = 0;
+    for (const f of found) {
+      const said = [];
+      if (await V.open({ inFile: f, dest: path.dirname(f), key, log: (l) => said.push(l.trim()) })) { fs.rmSync(f, { force: true }); out(`OK ${rel(path.dirname(f))}: 暗号化された結果を開きました`); }
+      else { bad++; out(`W ${rel(f)}: 開けません${said.length ? `（${said.join(' ')}）` : ''}`); }
+    }
+    if (bad) fail(`${bad} 個の暗号化された結果を開けません（鍵が違うか、壊れている）。読めるのは要約（${SUMMARY}）だけです`, how);
+    return;
+  }
   const api = process.env.GITHUB_API_URL || 'https://api.github.com', repo = process.env.GITHUB_REPOSITORY, runId = process.env.GITHUB_RUN_ID;
   const secrets = [process.env.GOOGLE_AAS_TOKEN, process.env.GOOGLE_EMAIL].filter(Boolean), full = process.env.APP_FULL_LOGS === '1';
+  // a sealed run folder: one check from summary.json alone (no screen text, log line or screenshot: those stay encrypted)
+  const sealedPayload = (runDir, shard, plain = false) => {
+    let s = {};
+    if (plain) s = { ...summaryOf(runDir), sealed: false };
+    else try { s = JSON.parse(readT(path.join(runDir, SUMMARY))) ?? {}; } catch { /* a broken summary: only what is certain */ }
+    const tag = shard ? ` [${shard}]` : '', ok = s.ok === true, n = num(s.steps), failed = (Array.isArray(s.failed) ? s.failed : []).filter((x) => num(x) !== null).slice(0, 20);
+    const lines = (Array.isArray(s.failed_lines) ? s.failed_lines : []).filter((x) => num(x) !== null).slice(0, 20);
+    return [{ name: `${G.CHECK_PREFIX}結果${tag}`, title: `${ok ? 'PASS' : 'FAIL'}${tag} ${word(s.run) ?? path.basename(runDir)}${s.sealed === false ? '（中身は出していません）' : '（中身は暗号化）'}`, text: '',
+      summary: [`# app: ${ok ? 'PASS' : 'FAIL'}${word(s.addon) ? ` — ${s.addon}` : ''}`, '', '| | |', '|---|---|',
+        `| 結果 | ${ok ? 'PASS' : 'FAIL'}${n !== null ? `（手順 ${n} 個${failed.length ? `、落ちた: ${failed.join(', ')} 番目${lines.length ? `（${lines.map((x) => `${x} 行目`).join(', ')}）` : ''}` : ''}）` : ''} |`,
+        `| アプリ | ${word(s.app) ?? '—'} |`, `| BDS | ${word(s.bds) ?? '—'} |`,
+        ...(num(s.join_seconds) !== null ? [`| 参加 | ${s.join_seconds} 秒 |`] : []), `| 時間 | ${num(s.seconds) !== null ? `${s.seconds}s` : '—'} |`, '',
+        s.sealed === false ? '- 中身は封じる鍵が無かったので成果物に入れていません（APP_CACHE_KEY か GOOGLE_AAS_TOKEN を Secrets に）'
+          : `- 中身は暗号化されています: 手元で node lab.mjs app ci watch ${runId ?? '<run の番号>'}`].join('\n') }];
+  };
   // the run folder(s): this machine's newest run, or (in the workflow) each device's artifact: <name> for one device,
   // <name>-<k>of<n> for n devices run at once, each posted with "[k/n]" in its checks
   const n = Math.max(1, Number(o.opts['--devices']) || 1), payload = [];
   const fromDir = (dir, shard) => {
     const runDir = newestRun(dir), tag = shard ? ` [${shard}]` : '';
-    return runDir ? G.checksPayload(runDir, { pkg: K.PACKAGE, full, secrets, shard })
-      : [{ name: `${G.CHECK_PREFIX}結果${tag}`, title: `FAIL${tag} 実行の記録がありません`, summary: `${rel(dir)} に実行の記録がありません`, text: '' }];
+    return runDir && fs.existsSync(path.join(runDir, SUMMARY)) && !fs.existsSync(path.join(runDir, 'report.md')) ? sealedPayload(runDir, shard)
+      // (an unsealed run in a workflow of a repository that is not private — prep's artifact, a seal that never ran: the summary
+      //  alone all the same, never the screen text, log lines or screenshots in a public check)
+      : runDir && process.env.GITHUB_ACTIONS === 'true' && String(process.env.APP_REPO_VISIBILITY ?? '').toLowerCase() !== 'private' ? sealedPayload(runDir, shard, true)
+      : runDir ? G.checksPayload(runDir, { pkg: K.PACKAGE, full, secrets, shard })
+        : [{ name: `${G.CHECK_PREFIX}結果${tag}`, title: `FAIL${tag} 実行の記録がありません`, summary: `${rel(dir)} に実行の記録がありません`, text: '' }];
   };
   if (!o.opts['--artifact']) payload.push(...fromDir(path.resolve(o.rest[0] ?? RUNS), null));
   else {
@@ -2330,7 +2423,30 @@ function ciFetch(repo, id, { full = false } = {}) {
   fs.writeFileSync(path.join(dir, 'steps.txt'), G.anonymize(steps.join('\n')) + '\n');
   fs.writeFileSync(path.join(dir, 'annotations.txt'), G.anonymize(ann.join('\n\n')) + '\n');
   if (explain) fs.writeFileSync(path.join(dir, 'explain.txt'), G.anonymize(`${explain.title}\n${explain.summary}`) + '\n');
-  return { dir, run, files: [...files, 'steps.txt', 'annotations.txt', ...(explain ? ['explain.txt'] : [])], checks: cr.length, explain };
+  // a repository that is not private: the checks hold the summary only, the run itself is in the artifact, sealed
+  // (results.sealed): taken (gh run download) and opened with the key of .env.local, each run back where its checks go
+  if (cr.some((c) => /中身は暗号化/.test(`${c.output?.title ?? ''}`))) {
+    const got = path.join(dir, '.artifacts'), d = gh(['run', 'download', String(id), '--repo', repo, '-D', got]);
+    if (d.status !== 0) out(`W 暗号化された成果物を取れません（${(d.stderr || d.stdout).trim().split('\n').pop()}）: 要約だけ読みます`);
+    else {
+      const op = spawnSync(process.execPath, [path.join(TOP, 'lab.mjs'), 'app', 'checks', '--open', got], { cwd: TOP, encoding: 'utf8', env: process.env });
+      `${op.stdout ?? ''}${op.stderr ?? ''}`.split('\n').filter((l) => l.trim()).forEach((l) => out(`     ${l}`));
+      // <artifact>[-<k>of<n>]/<run folder>/: the newest run of each artifact (as the checks did) → gh-<id>/ or shard-<k>/
+      const runsOf = {};
+      for (const f of fs.readdirSync(got, { recursive: true }).map(String).filter((f) => path.basename(f) === 'summary.json')) {
+        const a = f.split(path.sep)[0], r = path.dirname(f);
+        if (!runsOf[a] || r > runsOf[a]) runsOf[a] = r;
+      }
+      for (const [a, r] of Object.entries(runsOf)) {
+        const k = /-(\d+)of\d+$/.exec(a)?.[1], sub = k ? `shard-${k}` : '', from = path.join(got, r);
+        if (fs.existsSync(path.join(from, 'results.sealed'))) continue;   // (not opened: the summary from the checks stays)
+        fs.cpSync(from, path.join(dir, sub), { recursive: true, force: true });
+        for (const e of fs.readdirSync(from, { recursive: true }).map(String)) if (fs.statSync(path.join(from, e)).isFile()) files.push(path.posix.join(sub, e.split(path.sep).join('/')));
+      }
+    }
+    fs.rmSync(got, { recursive: true, force: true });
+  }
+  return { dir, run, files: [...new Set([...files, 'steps.txt', 'annotations.txt', ...(explain ? ['explain.txt'] : [])])], checks: cr.length, explain };
 }
 async function ciCmd(args) {
   const sub = ['fetch', 'watch'].includes(args[0]) ? args.shift() : 'run';
@@ -2438,6 +2554,8 @@ function annotateCmd(args) {
   const dir = path.resolve(parse(args).rest[0] ?? RUNS);
   const runDir = newestRun(dir);
   if (!runDir) { out(`::notice title=app の結果::${rel(dir)} に実行の記録がありません`); return; }
+  // (annotations are public in a public repository: the screen's words, the steps and the logs stay in the sealed results)
+  if (process.env.GITHUB_ACTIONS === 'true' && String(process.env.APP_REPO_VISIBILITY ?? '').toLowerCase() !== 'private') { out('::notice title=app の結果::中身は暗号化した成果物に（公開のリポジトリなので注釈には出しません）: 手元で node lab.mjs app ci watch <番号>'); return; }
   // (the same tesseract the run used: APP_TESSERACT, else the one on PATH)
   const TESS = process.env.APP_TESSERACT || 'tesseract', tess = C.ocrAvailable(TESS);
   const ocr = tess ? (png) => { const r = spawnSync(TESS, [png, '-', '--psm', '11'], { encoding: 'utf8', timeout: 60_000 }); return r.status === 0 ? r.stdout : '（OCR 失敗）'; } : null;
@@ -2456,6 +2574,11 @@ function redroidCiWatch(repo, id, { wait = true } = {}) {
   fs.rmSync(dir, { recursive: true, force: true });
   const d = gh(['run', 'download', String(id), '--repo', repo, '-D', dir]);
   if (d.status !== 0) out(`W 成果物を取れません（${(d.stderr || d.stdout).trim().split('\n').pop()}）: 注釈だけ読みます`);
+  // a repository that is not private: the artifact is sealed (results.sealed + summary.json); opened in place with the key of .env.local
+  else if (fs.readdirSync(dir, { recursive: true }).map(String).some((f) => path.basename(f) === 'results.sealed')) {
+    const op = spawnSync(process.execPath, [path.join(TOP, 'lab.mjs'), 'app', 'checks', '--open', dir], { cwd: TOP, encoding: 'utf8', env: process.env });
+    `${op.stdout ?? ''}${op.stderr ?? ''}`.split('\n').filter((l) => l.trim()).forEach((l) => out(`  ${l}`));
+  }
   // the notices the scripts left (seconds to the title, app run's verdict, why it stopped): readable without the artifacts
   const notes = [];
   for (const j of ghJson([`repos/${repo}/actions/runs/${id}/jobs`]).jobs ?? []) {
@@ -2857,7 +2980,9 @@ try {
     const logf = path.join(LAB, cmd === 'vending' ? 'emulator-playstore.log' : 'emulator.log');
     const emu = fs.existsSync(logf) ? fs.readFileSync(logf, 'utf8').split('\n').filter((l) => l.trim() && !/\|   /.test(l)).slice(-15) : [];
     const body = G.anonymize([...SAID.slice(-40), ...(emu.length ? [`--- ${path.basename(logf)} ---`, ...emu] : [])].join('\n'), [process.env.GOOGLE_AAS_TOKEN, process.env.GOOGLE_EMAIL].filter(Boolean));
-    process.stdout.write(`::error title=node lab.mjs app ${cmd} が失敗::${ghEscape(G.tailFit(body, 1800))}\n`);
+    // (a repository that is not private shows annotations to everyone: that it failed, the rest in the sealed results)
+    const shown = String(process.env.APP_REPO_VISIBILITY ?? '').toLowerCase() === 'private' ? G.tailFit(body, 1800) : `失敗しました（中身は封じた成果物に: 手元で node lab.mjs app ci watch ${process.env.GITHUB_RUN_ID ?? '<番号>'}）`;
+    process.stdout.write(`::error title=node lab.mjs app ${cmd} が失敗::${ghEscape(shown)}\n`);
   }
   process.exit(known ? 1 : 2);
 }

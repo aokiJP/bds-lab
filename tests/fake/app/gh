@@ -7,6 +7,8 @@ if (process.env.FAKE_GH_LOG) fs.appendFileSync(process.env.FAKE_GH_LOG, a.join('
 const say = (x) => process.stdout.write(typeof x === 'string' ? x : JSON.stringify(x) + '\n');
 if (a[0] === '--version') { say('gh version 2.0.0 (fake)\n'); process.exit(0); }
 if (a[0] === 'workflow' && a[1] === 'run') { say('✓ Created workflow_dispatch event for app.yml\nhttps://github.com/o/r/actions/runs/123\n'); process.exit(0); }
+// (the repository's visibility, as gh repo view --json visibility -q .visibility says it: FAKE_GH_VISIBILITY, else PRIVATE)
+if (a[0] === 'repo' && a[1] === 'view') { say(`${process.env.FAKE_GH_VISIBILITY ?? 'PRIVATE'}\n`); process.exit(0); }
 if (a[0] !== 'api') { process.stderr.write('fake gh: ' + a.join(' ') + '\n'); process.exit(1); }
 // the live issue (app live): FAKE_GH_LIVE = a JSON state { issues, comments }; a command comment gets the held run's
 // answer at once (text and a small PNG), as app hold would write it

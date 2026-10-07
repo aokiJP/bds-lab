@@ -48,6 +48,14 @@
 - 試験: cli-offline と offline は同じ `.lab-kind` を読み書きするので並べない。rd-title は落ちたとき launch の結果を全部出す。
 - verify: コミットのメッセージに `[full ci]` で、push でも macOS・Endstone・LeviLamina まで走る。プラグイン・mod は 1 つ落ちても全部を試してまとめて言う。
 
+### 公開リポジトリでも private 並みの安全さ（private の前提を消した。fanout: 司令塔 Opus・子 4 体 = Sonnet 2・Opus 2）
+- 暗号化キャッシュ（APK・BDS・Play ストア・準備済みの端末・redroid の /data）は、鍵（Secrets の `APP_CACHE_KEY`、無ければ `GOOGLE_AAS_TOKEN`）があれば公開でも使う。形式は変えず、前に封じたキャッシュも開ける。鍵が無ければ使わない。
+- 成果物: private でないとき、app と redroid のジョブは上げる前に `node lab.mjs app checks --seal <フォルダ>` で中身を `results.sealed`（AES-256-GCM）にし、平文は `summary.json`（合否・手順の数・落ちた番号・秒数・版）だけ。封じられなければ中身は上げない（上げるのは封じたステップが通ったときだけ）。`app ci watch` が手元の `.env.local` の鍵で開く（`app checks --open <フォルダ>`）。
+- 公開されるもの: チェック・注釈・ジョブの要約・app run のログは合否だけ（画面の文字・ログの行・スクリーンショットは封じた成果物に）。封じていない run がチェックに来ても要約だけ。redroid の report も合否だけ。
+- ライブの issue（`app live`）: 命令・返事（画面の PNG も）・2 段階の確認の番号を vault の鍵で封じる（`lab-sealed:v1:`、AAD つき、開けないコメントは命令にしない）。手元は `gh repo view` で公開かを確かめ、鍵が無ければ書かずに止まる。Actions で公開かが分からないときは公開として扱う。返事の大きさはバイトで数える（日本語でも 65,536 字に収まる）。
+- ワークフロー: app.yml の `PRIVATE` の条件と警告を外した（gpdl・SDK のキャッシュは秘密を含まない）。redroid.yml の private の条件も。hold の 2 つのステップに鍵を渡す。
+- `bundle.yml` は private のときだけのまま（Mojang の BDS を配るのは公開では許されないため。安全のためではない）。
+
 ### 合わせたところ（v1.23.0 との統合）
 - `app run` の始まり: v1.23.0 の自分の端末（`--device <名前>`）と、redroid debug が端末を並行に用意する道（`APP_DEVICE_READY_FILE`）の両方を残した。本物の端末のときは `APP_DEVICE_READY_FILE` を読まない（redroid だけのもの）。
 - AGENTS.md: v1.23.0 の「Other」の行（colony harvest・host）に fanout の規則を足した。.gitignore: 借りたアドオン（`bds/addons/borrowed_*/`）と fanout の計画・作業フォルダの両方。

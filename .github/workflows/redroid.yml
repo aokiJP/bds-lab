@@ -6,9 +6,9 @@ name: redroid
 #     app/redroid/ or this file changed)
 #   - the secrets (GOOGLE_EMAIL / GOOGLE_AAS_TOKEN) reach the prep step only; while the app workflow runs it waits a few
 #     minutes, then skips the account's part (one Google account on two devices at once is not done)
-#   - the prepared device (/data) comes from app's encrypted vault when the repository is private and a run saved one; it is
+#   - the prepared device (/data) comes from app's encrypted vault (AES-256-GCM, any repository) when a run saved one; it is
 #     saved only when asked (input keep: the repository's 10 GB is shared and near its limit, saving can push app's device out)
-#   - small artifacts only (JSON, a few game pictures, app run's report), 3 days; a newer run on the same ref cancels the older
+#   - small artifacts only (JSON, a few game pictures, app run's report; not private: sealed, summary.json in the clear), 3 days; a newer run on the same ref cancels the older
 run-name: "redroid ${{ github.event_name == 'workflow_dispatch' && format('{0} {1}', inputs.mode, inputs.addon) || 'push' }} ${{ github.sha }}"
 
 on:
@@ -27,7 +27,7 @@ on:
         type: boolean
         default: false
       keep:
-        description: keep the prepared device in the encrypted cache for the next run (private repository only; ~1 GB of the shared 10 GB)
+        description: keep the prepared device in the encrypted cache for the next run (sealed with the vault's key; ~1 GB of the shared 10 GB)
         type: boolean
         default: false
       fresh:
@@ -95,7 +95,7 @@ jobs:
 
       - name: the prepared device in the cache?
         id: cache
-        if: steps.turn.outputs.ok == 'true' && github.event.repository.visibility == 'private' && !inputs.fresh
+        if: steps.turn.outputs.ok == 'true' && !inputs.fresh
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: /mnt/redroid/data.bin
@@ -134,7 +134,7 @@ jobs:
 
       - name: seal the prepared device (input keep)
         id: seal
-        if: inputs.keep && steps.prep.outputs.game_ok == 'true' && github.event.repository.visibility == 'private'
+        if: inputs.keep && steps.prep.outputs.game_ok == 'true'
         env:
           APP_REPO_VISIBILITY: ${{ github.event.repository.visibility }}
           GOOGLE_AAS_TOKEN: ${{ secrets.GOOGLE_AAS_TOKEN }}
@@ -152,10 +152,11 @@ jobs:
           path: /mnt/redroid/data.bin
           key: redroid-data-v1-${{ github.run_id }}
 
-      - name: report (app run's, in notices of its own)
+      - name: report (app run's, in notices of its own, only the verdict when not private)
         if: always() && steps.turn.outputs.ok == 'true'
         env:
           REDROID_LAN_FILE: /mnt/redroid/lan.txt
+          APP_REPO_VISIBILITY: ${{ github.event.repository.visibility }}
         run: node app/redroid/game.mjs report
 
       - name: after
@@ -172,8 +173,19 @@ jobs:
           r=$(ls -td app/runs/*/ 2>/dev/null | head -1); [ -n "$r" ] && { cp "$r/report.md" out/ 2>/dev/null; cp "$r/run.txt" out/ 2>/dev/null; for f in $(printf '%s\n' "$r"shots/*.png | tail -n 6); do [ -f "$f" ] && cp "$f" "out/run-$(basename "$f")"; done; }
           ls -la out
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      # (not private: out/ sealed with the vault's key, only summary.json in the clear; no key → summary.json only.
+      # Read on this machine: node lab.mjs app ci watch <run> opens it with the key of .env.local)
+      - name: seal the results
+        id: sealout
         if: always()
+        env:
+          APP_REPO_VISIBILITY: ${{ github.event.repository.visibility }}
+          GOOGLE_AAS_TOKEN: ${{ secrets.GOOGLE_AAS_TOKEN }}
+          APP_CACHE_KEY: ${{ secrets.APP_CACHE_KEY }}
+        run: node lab.mjs app checks --seal out
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && steps.sealout.outcome == 'success'
         with:
           name: redroid-game
           path: out/

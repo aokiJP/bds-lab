@@ -6,7 +6,7 @@
 //                                                              first start to the title, stopped (the data folder is the result)
 //   node app/redroid/game.mjs bench --data <dir> [--rounds 3]  starts from it (overlay: nothing copied) → seconds to the title
 //   node app/redroid/game.mjs seal|open --data <dir> [--file f]   the prepared device into / out of app's vault (encrypted;
-//                                                              in GitHub Actions only for a private repository; as root)
+//                                                              in GitHub Actions in any repository, sealed with the vault key; as root)
 //   node app/redroid/game.mjs launch [--port p]                the game on a running device, timed to its title
 //   node app/redroid/game.mjs debug --data <dir> [--addon a] [--mode run|ui] [--keep] [-- <app run / ui の指定>]
 //                                                              app/'s own `app run` (or `app ui`) started at once beside it (its
@@ -397,7 +397,7 @@ export async function debug({ data, img = R.GAPPS_TAG, addon = 'jsonui_demo', mo
 }
 
 // ---- the prepared device kept between CI jobs: app's own vault (AES-256-GCM, the key from APP_CACHE_KEY or GOOGLE_AAS_TOKEN;
-// in GitHub Actions only for a private repository). Root's work: /data is Android's uids (sudo -E node … seal / open) ----
+// in GitHub Actions in any repository: sealed, AES-256-GCM with the vault key). Root's work: /data is Android's uids (sudo -E node … seal / open) ----
 export const VAULT_TAR = ['--xattrs', '--xattrs-include=*', '--numeric-owner'];
 /** data + what prep found (game-prep.json: doctor's "prepared") → one sealed file → {bytes, comp} | {skipped: why} */
 export async function sealData({ data, file }) {
@@ -425,6 +425,11 @@ export function report() {
   const runs = path.join(HERE, '..', 'runs'), last = fs.existsSync(runs) ? fs.readdirSync(runs).filter((d) => fs.existsSync(path.join(runs, d, 'report.md'))).sort().pop() : null;
   if (!last) { R.notice('app run の報告', 'ありません'); return null; }
   const md = fs.readFileSync(path.join(runs, last, 'report.md'), 'utf8').split('\n').filter((l) => l.trim());
+  // (a repository that is not private shows notices to everyone: the verdict only, the rest in the sealed artifact)
+  if (String(process.env.APP_REPO_VISIBILITY ?? '').toLowerCase() !== 'private') {
+    R.notice('app run の報告', `${md.some((l) => /^# app: PASS/.test(l)) ? 'PASS' : 'FAIL'}（中身は封じた成果物に: 手元で node lab.mjs app ci watch ${process.env.GITHUB_RUN_ID ?? '<番号>'}）`);
+    return last;
+  }
   const bad = md.filter((l) => /✘|⚠|失敗|FAIL|理由|次:|E /.test(l));
   R.notice('app run の報告（頭）', md.slice(0, 30).join(' / ').slice(0, 3800));
   if (bad.length) R.notice('app run の報告（失敗と注意）', bad.slice(0, 40).join(' / ').slice(0, 3800));
