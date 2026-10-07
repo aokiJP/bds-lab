@@ -138,7 +138,8 @@ fs.writeFileSync(path.join(bin, 'tesseract'), `#!/bin/sh
 ${CLOCK}
 [ "$1" = "--version" ] && { echo "tesseract 5"; exit 0; }
 ms >> "$D/ocr.log"
-case "$(cut -d' ' -f2 "$1")" in
+# (LC_ALL=C: the fake PNG starts with byte 0x89, not UTF-8 — BSD cut (macOS) in a UTF-8 locale stops on it: Illegal byte sequence)
+case "$(LC_ALL=C cut -d' ' -f2 "$1")" in
   title) printf '${TSV([['Get', 1, 600], ['started', 1, 690], ['More', 2, 600], ['options', 2, 690]])}\\n' ;;
   welcome) printf '${TSV([['WELCOME', 1, 600], ['Maybe', 2, 1100], ['later', 2, 1190]])}\\n' ;;
   *) printf '${TSV([['Loading', 1, 600], ['resources', 1, 700]])}\\n' ;;
