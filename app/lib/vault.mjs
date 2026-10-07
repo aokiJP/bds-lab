@@ -21,7 +21,10 @@ const has = (bin) => spawnSync(bin, ['--version'], { stdio: 'ignore' }).status =
 // create mode (exit 1) and keeps the holes by itself. COPYFILE_DISABLE: bsdtar on macOS adds no ._ files for xattrs.
 // The stream is a plain tar either way (each reads the other's), so what was sealed before still opens.
 let gnu;
-const tarOwn = () => ((gnu ??= /GNU tar/.test(spawnSync('tar', ['--version'], { encoding: 'utf8' }).stdout ?? '')) ? ['--sparse'] : []);
+const tarOwn = () => {
+  gnu ??= /GNU tar/.test(spawnSync('tar', ['--version'], { encoding: 'utf8' }).stdout ?? '');
+  return gnu ? ['--sparse'] : [];
+};
 const tarEnv = () => cleanEnv(process.env, process.platform === 'darwin' ? { COPYFILE_DISABLE: '1' } : {});
 
 /** the key and its id from the environment, or null (pure but for crypto) */

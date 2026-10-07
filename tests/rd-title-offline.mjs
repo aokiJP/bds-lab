@@ -14,7 +14,9 @@ const G = await imp('app/redroid/game.mjs');
 const { Adb } = await imp('app/lib/android.mjs');
 
 let pass = 0, fail = 0;
-const t = async (name, fn) => { try { await fn(); pass++; console.log(`ok   ${name}`); } catch (e) { fail++; console.log(`FAIL ${name}\n     ${String(e.message).split('\n').join('\n     ')}\n     ${e.stack?.split('\n')[1] ?? ''}`); } };
+// (a launch that fails: its whole result and the fake device's notes, so a run elsewhere — another OS — shows where it went)
+let lastLaunch = null;
+const t = async (name, fn) => { lastLaunch = null; try { await fn(); pass++; console.log(`ok   ${name}`); } catch (e) { fail++; console.log(`FAIL ${name}\n     ${String(e.message).split('\n').join('\n     ')}\n     ${e.stack?.split('\n')[1] ?? ''}${lastLaunch ? `\n     launch: ${JSON.stringify(lastLaunch).slice(0, 1500)}` : ''}`); } };
 const eq = (a, b, m = '') => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${m} want ${JSON.stringify(b)} got ${JSON.stringify(a)}`); };
 const ok = (c, m) => { if (!c) throw new Error(m); };
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-title-'));
@@ -154,6 +156,8 @@ async function start(times, { kept, env = {}, timeoutMs = 20_000 } = {}) {
   Object.assign(process.env, env);
   try {
     const m = await G.launch(adb, { timeoutMs, paceFile });
+    const note = (f) => { try { return fs.readFileSync(path.join(dev, f), 'utf8').slice(-300); } catch { return null; } };
+    lastLaunch = { m, t0: note('t0'), logcat: note('logcat.log'), ocr: note('ocr.log'), probe: adb.run(['exec-out', 'screencap', '-p']).stdout?.toString().slice(0, 60) };
     const reads = fs.existsSync(path.join(dev, 'ocr.log')) ? fs.readFileSync(path.join(dev, 'ocr.log'), 'utf8').trim().split('\n').filter(Boolean).map(Number) : [];
     return { m, reads };
   } finally { for (const k of Object.keys(env)) if (k in old) process.env[k] = old[k]; else delete process.env[k]; }

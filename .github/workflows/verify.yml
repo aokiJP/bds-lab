@@ -104,13 +104,16 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with: { node-version: 22 }
       - if: steps.has.outputs.yes == 'true'
+        id: py
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with: { python-version: '3.12' }
+      # (the venv in end/.lab links to this exact Python: another 3.12.x on the next runner made a restored venv that could not
+      # run, and every plugin's server crashed. The lab now remakes such a venv itself; the key keeps it from being restored)
       - if: steps.has.outputs.yes == 'true'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: end/.lab
-          key: end-${{ runner.os }}-${{ hashFiles('end/flavor.mjs') }}
+          key: end-${{ runner.os }}-py${{ steps.py.outputs.python-version }}-${{ hashFiles('end/flavor.mjs') }}
       - if: steps.has.outputs.yes == 'true'
         run: node lab.mjs server
       - name: test and pack every plugin

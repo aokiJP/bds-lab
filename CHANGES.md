@@ -42,6 +42,9 @@
 - `app token`: `APP_LOGIN_HEADLESS=1` を OS によらず「画面なし」に（macOS では画面があると見てブラウザを開いて待っていた）。
 - redroid: 裏で古いフォルダを消す `rm --one-file-system`・`mv -T` は GNU だけだった（macOS では残った）。並べて走る試験が同じ端末のロックを取り合っていた（Linux でも起こりうる）→ 試験ごとのロック（REDROID_LOCK）。
 - 試験: 偽の Android SDK は手元の CPU（arm64 の Mac では arm64-v8a）に合わせる。偽の adb は `date +%N` の無い date でも動く。redroid の「端末を動かす」確認と型の検査が要る確認は、それができる場所（Linux・docker / TypeScript あり）でだけ。
+- Endstone: 前の版の Python を指す venv（OS や toolcache の更新、別の 3.12.x のランナーから戻した CI のキャッシュ）を見分けず、作り直しも失敗して、全プラグインのサーバーが起動で落ちた（`server` は空の版で OK と言っていた）。venv は毎回動くか確かめ、動かなければ消して作り直す。`server` は版が読めなければ OK と言わない。CI のキャッシュの鍵に Python の版。
+- macOS で型の検査: docker の無い macOS でも、手元の TypeScript があれば型を検査する（今までは「build tools unavailable」で検査しなかった）。
+- 試験: cli-offline と offline は同じ `.lab-kind` を読み書きするので並べない。rd-title は落ちたとき launch の結果を全部出す。
 - verify: コミットのメッセージに `[full ci]` で、push でも macOS・Endstone・LeviLamina まで走る。プラグイン・mod は 1 つ落ちても全部を試してまとめて言う。
 
 ### 合わせたところ（v1.23.0 との統合）

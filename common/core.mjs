@@ -1889,8 +1889,9 @@ async function build({ types = true, jsTypes = false } = {}) {
       if (api.length > 12 || rest.length > 3) hints.push(`… ${Math.max(0, api.length - 12) + Math.max(0, rest.length - 3)} more type notes${api.length > 12 ? ` (${api.length - 12} of them uses of an API this version lacks: node lab.mjs brief lists them)` : ''}`);
     }
   } catch (e) {
-    // no network: build from the TypeScript already on this machine, so the addon still loads; the real check comes with verify
-    const ts = src && /network|blocked|unreachable|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|E403|403|LAB_BDS_ZIP|npm i/i.test(String(e.message)) ? B.localTs(CACHE) : null;
+    // no network, or no server to build with here (macOS without docker): build from the TypeScript already on this machine,
+    // so the addon still loads and is type checked; the real check comes with verify
+    const ts = src && /network|blocked|unreachable|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|E403|403|LAB_BDS_ZIP|npm i|docker` is not working|docker is not working|no BDS build/i.test(String(e.message)) ? B.localTs(CACHE) : null;
     if (ts) {
       const carry = B.carryLoad(CARRY, CACHE);
       const r = B.offlineBuild({ ts, addon: ADDON, bp: BP, realTypes: !!carry });

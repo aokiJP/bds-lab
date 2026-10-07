@@ -140,11 +140,14 @@ function ensureVenv(L) {
   // a venv belongs to the runtime that made it (host python vs the lab container's): after a LAB_RUNTIME switch it may not run
   // there (its python links to the other side's interpreter, or runs but is another Python version than its lib/pythonX.Y).
   // The stamp only says when to check; a venv that still works here is kept (a rebuild needs PyPI), a broken one is rebuilt
+  // Checked every time, not only after a runtime switch: the Python it links to can go while the folder stays (an OS or
+  // toolcache update, a restored CI cache from a runner with another 3.x.y) — its python is then a dangling link, which
+  // existsSync calls missing, and a venv made again on top of the broken one fails
   const stamp = path.join(venv(L), '.lab-runtime'), want = L.RT.kind === 'docker' ? 'docker:' + L.RT.image : 'native';
-  if (exists(venv(L)) && (!exists(stamp) || fs.readFileSync(stamp, 'utf8') !== want)) {
+  if (exists(venv(L))) {
     const works = L.RT.run(vbin(L, 'python'), ['-c', WIN ? '1' : "import sys,os;assert os.path.isdir(os.path.join(sys.prefix,'lib','python%d.%d'%sys.version_info[:2]))"]).status === 0;
-    if (works) fs.writeFileSync(stamp, want);
-    else { L.out(`setup: the Python venv does not run on this runtime (${want}): rebuilding it`); fs.rmSync(venv(L), { recursive: true, force: true }); }
+    if (works) { if (!exists(stamp) || fs.readFileSync(stamp, 'utf8') !== want) fs.writeFileSync(stamp, want); }
+    else { L.out(`setup: the Python venv does not run here (${want}; its Python is gone or another one): making it again`); fs.rmSync(venv(L), { recursive: true, force: true }); }
   }
   if (exists(vbin(L, 'python')) && exists(vbin(L, 'endstone'))) { if (!exists(stamp)) fs.writeFileSync(stamp, want); return; }
   let py = findPython(L) ?? portablePython(L) ?? L.die('Endstone needs Python 3.10+ (3.11+ recommended): install it (Linux: apt install python3 python3-venv; Windows: python.org; macOS: runs in the lab container, rebuild it: docker rmi ' + L.RT.image + ') or set LAB_PYTHON');
@@ -677,8 +680,11 @@ watch off
         pip(L, ['install', '--upgrade', want ? `endstone==${want}` : ENDSTONE]);
         fs.rmSync(L.BDS, { recursive: true, force: true });
         await L.setup();
-      } else await L.setup();
-      L.out(`OK Endstone ${endstoneVersion(L)} | BDS ${L.bdsVersion()} | Python ${pyOut(L, 'import platform;print(platform.python_version())')} (${L.rel(venv(L))})`);
+      } else { await L.setup(); ensureVenv(L); }   // (setup stops early once the server is here: the venv is checked anyway)
+      // (never an OK with blanks: a venv whose Python cannot run says nothing for either)
+      const ev = endstoneVersion(L), pv = pyOut(L, 'import platform;print(platform.python_version())');
+      if (!ev || !pv) L.die(`the lab venv (${L.rel(venv(L))}) does not answer (Endstone ${ev || '?'}, Python ${pv || '?'}): node lab.mjs server --update`);
+      L.out(`OK Endstone ${ev} | BDS ${L.bdsVersion()} | Python ${pv} (${L.rel(venv(L))})`);
       return true;
     },
     bds: (L, a) => L.F.commands.server(L, a),

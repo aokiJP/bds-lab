@@ -10,7 +10,8 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 // tests that write into the lab folder itself (units, .lab-current, runs/): never side by side with another
-export const SERIAL = new Set(['tests/make-offline.mjs', 'tests/guards-offline.mjs', 'tests/ci-offline.mjs', 'tests/import-offline.mjs', 'tests/colony-offline.mjs', 'tests/app-offline.mjs', 'tests/app-browser.mjs', 'tests/device-offline.mjs', 'tests/host-offline.mjs', 'tests/dev-bds.mjs']);
+// (cli-offline: it and offline.mjs both read and write the lab's remembered lab, .lab-kind — side by side, one saw the other's)
+export const SERIAL = new Set(['tests/make-offline.mjs', 'tests/guards-offline.mjs', 'tests/cli-offline.mjs', 'tests/ci-offline.mjs', 'tests/import-offline.mjs', 'tests/colony-offline.mjs', 'tests/app-offline.mjs', 'tests/app-browser.mjs', 'tests/device-offline.mjs', 'tests/host-offline.mjs', 'tests/dev-bds.mjs']);
 // tests that take long by design (the app lab drives a fake device through every step): their own time limit
 export const LONG = { 'tests/app-offline.mjs': 3600000, 'tests/offline.mjs': 1800000, 'tests/env-offline.mjs': 1800000 };
 export const defaultJobs = () => {

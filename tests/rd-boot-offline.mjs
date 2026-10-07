@@ -57,6 +57,9 @@ const lines = () => fs.readFileSync(log, 'utf8').split('\n').filter(Boolean);
 const R = await import(pathToFileURL(path.join(TOP, 'app', 'redroid', 'redroid.mjs')).href);
 const W = await import(pathToFileURL(path.join(TOP, 'app', 'redroid', 'wait.mjs')).href);
 
+// ---- rmFlags: --one-file-system (a run folder's removal never crosses into a mount) on Linux; BSD's rm has no such option ----
+ok(W.rmFlags('linux') === '-rf --one-file-system' && W.rmFlags('darwin') === '-rf' && W.rmFlags() === W.rmFlags(process.platform), 'rmFlags: --one-file-system on Linux only (BSD rm lacks it)', `${W.rmFlags('linux')} | ${W.rmFlags('darwin')}`);
+
 // ---- bootArgs: unchanged by default; REDROID_PROFILE=fast smaller and slower; REDROID_SIZE / REDROID_FPS still win ----
 const BEFORE = ['androidboot.redroid_gpu_mode=guest', 'androidboot.redroid_width=1560', 'androidboot.redroid_height=720', 'androidboot.redroid_dpi=280',
   'androidboot.redroid_fps=20', 'androidboot.use_memfd=1', 'ro.setupwizard.mode=DISABLED', 'debug.sf.nobootanimation=1', 'ro.hw_timeout_multiplier=5', 'service.adb.root=1',
