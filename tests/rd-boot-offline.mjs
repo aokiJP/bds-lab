@@ -117,7 +117,9 @@ try { await R.up({ name: 'bdslab-redroid-t', port: 5699, timeoutMs: 4000, sliceM
 const end = Date.now(); process.off('SIGTERM', onTerm);
 shells = lines().filter((l) => / shell /.test(l));
 const geN = shells.map((l) => Number(/-ge (\d+) /.exec(l)?.[1]));
-ok(geN.filter((x) => x === 5).length >= 3 && geN.every((x) => x >= 1 && x <= 5) && end - t >= 3500, `up: boot waited for in 1 s slices (the last ones cut to the time left) until the time is out (${shells.length} slices, ${end - t} ms)`, shells.join('\n'));
+// (whole slices first, then ones cut to the time left, never growing: how many whole ones fit depends on the machine's
+// speed — a slower one, macOS on CI, pays more per adb call: 5,5,3 there, 5,5,5,5,4,1 here)
+ok(geN.length >= 3 && geN[0] === 5 && geN.every((x, i) => x >= 1 && x <= 5 && (i === 0 || x <= geN[i - 1])) && end - t >= 3500, `up: boot waited for in 1 s slices (the last ones cut to the time left) until the time is out (${shells.length} slices, ${end - t} ms)`, shells.join('\n'));
 ok(termAt != null && termAt - t < 2600 && end - termAt > 1000, `up: SIGTERM handled between slices, not after the whole wait (${termAt == null ? 'never' : termAt - t} ms of ${end - t})`);
 
 // never boots: an error within the timeout, with what was reached and the container's log
