@@ -188,6 +188,9 @@ await t('guard: a run folder with an APK, a .so, a renamed zip or a token is ref
 
 // ---- end to end: node lab.mjs app run against the fakes ----
 const FAKE = path.join(TOP, 'tests', 'fake', 'app');
+// the fake SDK's system image: the one the code asks for on this machine (android.mjs sysImage: arm64-v8a on an arm64
+// host such as an Apple Silicon Mac, x86_64 elsewhere)
+const HOST_ABI = process.arch === 'arm64' ? 'arm64-v8a' : 'x86_64';
 for (const f of ['adb', 'apkeep', 'gh', 'gpdl', 'tesseract', 'avdmanager']) fs.chmodSync(path.join(FAKE, f), 0o755);
 // (the device's relay: a stand-in file pushed by the fake adb; the real one is built in its own test)
 const RELAY_STUB = path.join(tmp, 'lab-relay-stub'); fs.writeFileSync(RELAY_STUB, 'stub');
@@ -196,7 +199,7 @@ function e2e(name, extraEnv = {}, args = []) {
   const state = path.join(tmp, `${name}.json`);
   fs.writeFileSync(state, JSON.stringify({ phase: 'home' }));
   const sdk = path.join(tmp, `sdk-${name}`);
-  fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', 'x86_64'), { recursive: true });
+  fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', HOST_ABI), { recursive: true });
   const env = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, APP_APK_DIR: apkDir, GITHUB_STEP_SUMMARY: path.join(tmp, `${name}-summary.md`), APP_STABLE_MS: '100', APP_ADBKEY_DIR: path.join(tmp, 'adbkey-e2e'), APP_RELAY_BIN: RELAY_STUB, APP_PAD_BIN: PAD_STUB, APP_PAD_WAIT_MS: '50', ...extraEnv };
   delete env.GOOGLE_AAS_TOKEN; delete env.GOOGLE_EMAIL;
   if (!('GITHUB_ACTIONS' in extraEnv)) delete env.GITHUB_ACTIONS;   // (the tests run in Actions too: notices only when asked)
@@ -212,7 +215,7 @@ function e2eStart(name, extraEnv = {}, args = []) {
   const state = path.join(tmp, `${name}.json`);
   fs.writeFileSync(state, JSON.stringify({ phase: 'home' }));
   const sdk = path.join(tmp, `sdk-${name}`);
-  fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', 'x86_64'), { recursive: true });
+  fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', HOST_ABI), { recursive: true });
   const env = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, APP_APK_DIR: apkDir, APP_STABLE_MS: '100', APP_ADBKEY_DIR: path.join(tmp, 'adbkey-e2e'), APP_PAD_WAIT_MS: '50', ...extraEnv };
   delete env.GITHUB_STEP_SUMMARY;
   if (!('GITHUB_ACTIONS' in extraEnv)) delete env.GITHUB_ACTIONS;
@@ -375,7 +378,7 @@ await t('app hold: the device kept up, the live issue made, commands from the ru
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const state = path.join(tmp, 'hold.json'); fs.writeFileSync(state, JSON.stringify({ phase: 'title', launched: true }));
   // (the addon of the run: one the test makes by `pull`; the run on the device against the fake BDS, with the fake APKs)
-  const sdk = path.join(tmp, 'sdk-hold'); fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', 'x86_64'), { recursive: true });
+  const sdk = path.join(tmp, 'sdk-hold'); fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', HOST_ABI), { recursive: true });
   const env = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_ADBKEY_DIR: path.join(tmp, 'adbkey-hold'), GITHUB_API_URL: `http://127.0.0.1:${server.address().port}`, GITHUB_REPOSITORY: 'o/r', GITHUB_RUN_ID: '123', GITHUB_TOKEN: 'tok', LIVE_USER: 'me', APP_LIVE_POLL_MS: '50', APP_TESSERACT: path.join(FAKE, 'tesseract'),
     ADDON: 'livetest', APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, APP_APK_DIR: apkDir, APP_STABLE_MS: '100', APP_RELAY_BIN: RELAY_STUB, APP_PAD_BIN: PAD_STUB, APP_PAD_WAIT_MS: '50' };
   delete env.GITHUB_ACTIONS; delete env.GITHUB_OUTPUT; delete env.GITHUB_STEP_SUMMARY; delete env.GOOGLE_AAS_TOKEN; delete env.GOOGLE_EMAIL;
@@ -1214,8 +1217,8 @@ await t('warm: the snapshot is used only when it was made from the same APK, emu
 await t('prepare → run: the device made once (fresh AVD, game installed, started to its title, snapshot, clean stop, sealed); the next run starts from it and joins, timed', async () => {
   const state = path.join(tmp, 'warm.json'), sdk = path.join(tmp, 'sdk-warm'), avds = path.join(tmp, 'avd-warm'), vault = path.join(tmp, 'vault-warm');
   fs.writeFileSync(state, JSON.stringify({ phase: 'home' })); fs.writeFileSync(state + '.power', 'off');
-  fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', 'x86_64'), { recursive: true });
-  fs.writeFileSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', 'x86_64', 'source.properties'), 'Pkg.Revision=14\n');
+  fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', HOST_ABI), { recursive: true });
+  fs.writeFileSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', HOST_ABI, 'source.properties'), 'Pkg.Revision=14\n');
   fs.mkdirSync(path.join(sdk, 'emulator'), { recursive: true }); fs.writeFileSync(path.join(sdk, 'emulator', 'source.properties'), 'Pkg.Revision=36.1.9\n');
   const env = { ...process.env, FAKE_APP_STATE: state, FAKE_EMU_POWER: '1', APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_AVDMANAGER: path.join(FAKE, 'avdmanager'), APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'),
     ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, ANDROID_AVD_HOME: avds, APP_APK_DIR: apkDir, APP_STABLE_MS: '100', APP_TITLE_POLL_MS: '50', APP_ADBKEY_DIR: path.join(tmp, 'adbkey-e2e'),
@@ -1294,8 +1297,8 @@ await t('license: the package facts (who installed it), Play\'s page and its but
 const prepEnv = (name) => {
   const state = path.join(tmp, `${name}.json`), sdk = path.join(tmp, `sdk-${name}`), avds = path.join(tmp, `avd-${name}`), vault = path.join(tmp, `vault-${name}`);
   fs.writeFileSync(state, JSON.stringify({ phase: 'home' })); fs.writeFileSync(state + '.power', 'off');
-  fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', 'x86_64'), { recursive: true });
-  fs.writeFileSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', 'x86_64', 'source.properties'), 'Pkg.Revision=14\n');
+  fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', HOST_ABI), { recursive: true });
+  fs.writeFileSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', HOST_ABI, 'source.properties'), 'Pkg.Revision=14\n');
   fs.mkdirSync(path.join(sdk, 'emulator'), { recursive: true }); fs.writeFileSync(path.join(sdk, 'emulator', 'source.properties'), 'Pkg.Revision=36.1.9\n');
   const envFile = path.join(tmp, `${name}.env`); fs.writeFileSync(envFile, `GOOGLE_EMAIL="${FAKE_EMAIL}"\nGOOGLE_AAS_TOKEN="${FAKE_TOKEN}"\n`, { mode: 0o600 });
   const env = { ...process.env, FAKE_APP_STATE: state, FAKE_EMU_POWER: '1', APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_AVDMANAGER: path.join(FAKE, 'avdmanager'), APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'),
@@ -1575,7 +1578,7 @@ await t('prepare --account: the device base (Play Store and account in, no game)
   } finally { P.cleanup(); }
 });
 await t('keys: Play\'s current build (no download) → the cache names; no cache key without a secret, no cache at all for a public repository', () => {
-  const sdk = path.join(tmp, 'sdk-keys'); fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', 'x86_64'), { recursive: true });
+  const sdk = path.join(tmp, 'sdk-keys'); fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', HOST_ABI), { recursive: true });
   const outF = path.join(tmp, 'keys-out.txt');
   const run = (extra) => { fs.writeFileSync(outF, ''); const r = spawnSync(process.execPath, [path.join(TOP, 'lab.mjs'), 'app', 'keys', '--account'], { cwd: TOP, encoding: 'utf8', env: { ...process.env, APP_EMULATOR: path.join(FAKE, 'adb'), APP_ADB: path.join(FAKE, 'adb'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, GPDL_BIN: path.join(FAKE, 'gpdl'), GOOGLE_EMAIL: 'someone@example.com', GOOGLE_AAS_TOKEN: 'aas_et/' + 'k'.repeat(40), GITHUB_ACTIONS: 'true', GITHUB_OUTPUT: outF, ...extra } }); return { status: r.status, text: r.stdout + r.stderr, out: Object.fromEntries(fs.readFileSync(outF, 'utf8').trim().split('\n').filter(Boolean).map((l) => l.split(/=(.*)/s).slice(0, 2))) }; };
   const a = run({ APP_REPO_VISIBILITY: 'private', FAKE_GPDL_VERSION: '982605203 1.26.52.3' });
@@ -1703,7 +1706,7 @@ await t('run: the device\'s own inputs — mouse (press, hover, wheel), a game c
 });
 await t('app ui --sizes/--cutouts: every screen again on a 4:3 tablet and under a notch, the shape put back after each', () => {
   const state = path.join(tmp, 'ui-shapes.json'); fs.writeFileSync(state, JSON.stringify({ phase: 'home' }));
-  const sdk = path.join(tmp, 'sdk-ui'); fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', 'x86_64'), { recursive: true });
+  const sdk = path.join(tmp, 'sdk-ui'); fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', HOST_ABI), { recursive: true });
   const env = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, APP_APK_DIR: apkDir, APP_STABLE_MS: '100', APP_TITLE_CALM_MS: '100', APP_ADBKEY_DIR: path.join(tmp, 'adbkey-e2e'), APP_TESSERACT: path.join(FAKE, 'tesseract'), APP_UI_CUTOUTS: 'tall', FAKE_MAGENTA: '1', FAKE_OCR_RAWKEY: '1' };
   delete env.GOOGLE_AAS_TOKEN; delete env.GOOGLE_EMAIL; delete env.GITHUB_ACTIONS; delete env.GITHUB_STEP_SUMMARY;
   const r = spawnSync(process.execPath, [path.join(TOP, 'lab.mjs'), 'app', 'ui', '-a', 'jsonui_demo', '--no-fetch', '--screens', 'chest', '--sizes', '1024x768'], { cwd: TOP, env, encoding: 'utf8', timeout: 600_000 });
@@ -1724,7 +1727,7 @@ await t('app ui --all: every screen as a section on the device (keys, forms by j
   fs.writeFileSync(clog, '[2026-10-03 09:00:00:000 INFO] [Packs] loaded\n[2026-10-03 09:00:01:000 ERROR] [UI] server_form.json | demo_form | binding #nope not found\n');
   const run = (extra, args) => {
     const state = path.join(tmp, `ui-${args.length}.json`); fs.writeFileSync(state, JSON.stringify({ phase: 'home' }));
-    const sdk = path.join(tmp, 'sdk-ui'); fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', 'x86_64'), { recursive: true });
+    const sdk = path.join(tmp, 'sdk-ui'); fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', HOST_ABI), { recursive: true });
     const env = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, APP_APK_DIR: apkDir, APP_STABLE_MS: '100', APP_TITLE_CALM_MS: '100', APP_ADBKEY_DIR: path.join(tmp, 'adbkey-e2e'), APP_TESSERACT: path.join(FAKE, 'tesseract'), FAKE_CONTENT_LOG: clog, ...extra };
     delete env.GOOGLE_AAS_TOKEN; delete env.GOOGLE_EMAIL; delete env.GITHUB_ACTIONS; delete env.GITHUB_STEP_SUMMARY;
     const r = spawnSync(process.execPath, [path.join(TOP, 'lab.mjs'), 'app', 'ui', '-a', 'jsonui_demo', '--no-fetch', ...args], { cwd: TOP, env, encoding: 'utf8', timeout: 600_000 });

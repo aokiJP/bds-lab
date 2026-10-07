@@ -17,6 +17,12 @@ import { AppError, cleanEnv } from './apk.mjs';
 const MAGIC = Buffer.from('BDSLABV1'), HEAD = MAGIC.length + 1 + 8 + 12, TAG = 16;
 const COMP = { 1: { name: 'zstd', c: ['zstd', ['-T0', '-3', '-q', '-c']], d: ['zstd', ['-d', '-q', '-c']] }, 2: { name: 'gzip', c: ['gzip', ['-1', '-c']], d: ['gzip', ['-d', '-c']] } };
 const has = (bin) => spawnSync(bin, ['--version'], { stdio: 'ignore' }).status === 0;
+// tar's own flags: GNU tar (Linux) needs --sparse to keep the holes of a device image; bsdtar (macOS) has no --sparse in
+// create mode (exit 1) and keeps the holes by itself. COPYFILE_DISABLE: bsdtar on macOS adds no ._ files for xattrs.
+// The stream is a plain tar either way (each reads the other's), so what was sealed before still opens.
+let gnu;
+const tarOwn = () => ((gnu ??= /GNU tar/.test(spawnSync('tar', ['--version'], { encoding: 'utf8' }).stdout ?? '')) ? ['--sparse'] : []);
+const tarEnv = () => cleanEnv(process.env, process.platform === 'darwin' ? { COPYFILE_DISABLE: '1' } : {});
 
 /** the key and its id from the environment, or null (pure but for crypto) */
 export function vaultKey(env = process.env) {
@@ -46,7 +52,7 @@ export async function seal({ base, entries, outFile, key, tarArgs = [] }) {
   const tmp = `${outFile}.part`;
   const out = fs.createWriteStream(tmp);
   out.write(Buffer.concat([MAGIC, Buffer.from([comp]), Buffer.from(key.id, 'hex'), iv]));
-  const tar = collect(spawn('tar', ['--sparse', ...tarArgs, '-C', base, '-cf', '-', ...entries], { stdio: ['ignore', 'pipe', 'pipe'], env: cleanEnv() }));
+  const tar = collect(spawn('tar', [...tarOwn(), ...tarArgs, '-C', base, '-cf', '-', ...entries], { stdio: ['ignore', 'pipe', 'pipe'], env: tarEnv() }));
   const z = collect(spawn(COMP[comp].c[0], COMP[comp].c[1], { stdio: ['pipe', 'pipe', 'pipe'], env: cleanEnv() }));
   const cipher = crypto.createCipheriv('aes-256-gcm', key.key, iv);
   try {
@@ -72,7 +78,7 @@ export async function open({ inFile, dest, key, log = () => {}, tarArgs = [] }) 
   const tmp = fs.mkdtempSync(path.join(path.dirname(path.resolve(dest)), '.vault-'));
   const decipher = crypto.createDecipheriv('aes-256-gcm', key.key, iv); decipher.setAuthTag(tag);
   const z = collect(spawn(comp.d[0], comp.d[1], { stdio: ['pipe', 'pipe', 'pipe'], env: cleanEnv() }));
-  const tar = collect(spawn('tar', ['--sparse', ...tarArgs, '-C', tmp, '-xf', '-'], { stdio: ['pipe', 'ignore', 'pipe'], env: cleanEnv() }));
+  const tar = collect(spawn('tar', [...tarOwn(), ...tarArgs, '-C', tmp, '-xf', '-'], { stdio: ['pipe', 'ignore', 'pipe'], env: tarEnv() }));
   try {
     await Promise.all([pipeline(fs.createReadStream(inFile, { start: HEAD, end: size - TAG - 1 }), decipher, z.stdin), pipeline(z.stdout, tar.stdin), waitExit(z, comp.name), waitExit(tar, 'tar')]);
   } catch (e) {
