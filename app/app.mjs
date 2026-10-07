@@ -195,7 +195,8 @@ async function tokenCmd(args) {
   let email = o.opts['--email'] || process.env.APP_TOKEN_EMAIL || cur.email || '';
   // the address and password written down in .env / .env.local (or asked here once) are typed into Google's page for the person
   const S = await import('../common/secrets.mjs');
-  const headless = o.flags.has('--headless') || (!canShowWindow() && process.env.APP_LOGIN_HEADLESS !== '0');
+  // APP_LOGIN_HEADLESS=1: no window, on any OS (macOS and Windows always have a screen); =0: a window even without DISPLAY
+  const headless = o.flags.has('--headless') || process.env.APP_LOGIN_HEADLESS === '1' || (!canShowWindow() && process.env.APP_LOGIN_HEADLESS !== '0');
   let password = S.readSecret(TOP, 'GOOGLE_PASSWORD');
   email ||= S.readSecret(TOP, 'GOOGLE_EMAIL');
   if (!o.flags.has('--manual') && S.canAsk() && !(email && password)) {
