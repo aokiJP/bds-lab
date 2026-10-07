@@ -33,6 +33,7 @@
 ### GitHub Actions の本物のランナーで見つけて直したもの（手元では通っていた）
 - `ts try` の「最後の式の値」: TypeScript をラボの道具フォルダと NODE_PATH でしか探さず、`npm i -g typescript` だけの場所（新しいラボ・CI）では値が出なかった。node の global のフォルダとラボの隣も探す。
 - `host run`: 送るために作る一時リポジトリで、git の自動の gc / maintenance が裏で .git に書き続け、消すときに ENOTEMPTY で落ちた。その一時リポジトリでは自動の gc を止め、消すときは少し待ってやり直す。
+- BDS を入れる途中を、並べて走る別のラボのプロセスが「入っている」と見て、VERSION の無いまま読んで落ちた（ネットワークのある CI で時々 scratch-offline）。BDS は隣のフォルダに展開してから丸ごと置き換え、「入っている」はサーバーと VERSION の両方で見る（同時に 4 つ入れても全部通る。前のコードは 3 つで 1 つ落ちた）。
 - tests/rd-local-offline: root でない場所（CI）では open が `sudo -E` つきになる（正しい）のに、試験が root の形だけを見ていた。
 
 ### 合わせたところ（v1.23.0 との統合）

@@ -289,8 +289,10 @@ async function ensureBds(o = {}) { return F.ensureServer ? F.ensureServer(L(), o
 async function ensureVanillaBds({ version, preview = false } = {}) {
   // a version-matrix run (test --bds) pins its own server in its own cache and leaves vendor/ alone
   const pinned = process.env.LAB_BDS_VERSION, noVendor = !!process.env.LAB_NO_VENDOR;
-  if (pinned && !version) { if (exists(EXE) && bdsVersion() === pinned) return; version = pinned; preview = (knownBds()?.[WIN ? 'windows' : 'linux']?.preview_versions ?? []).includes(pinned); }
-  if (exists(EXE) && !version) return;
+  // (installed = the server and its VERSION, both: a BDS still being unpacked by another lab process is not one)
+  const installed = () => exists(EXE) && exists(path.join(BDS, 'VERSION'));
+  if (pinned && !version) { if (installed() && bdsVersion() === pinned) return; version = pinned; preview = (knownBds()?.[WIN ? 'windows' : 'linux']?.preview_versions ?? []).includes(pinned); }
+  if (installed() && !version) return;
   if (!['linux', 'win32'].includes(RT.serverOS)) die('BDS runs on Linux/Windows: on macOS the lab runs it in a Linux container (unset LAB_RUNTIME, install Docker Desktop / OrbStack / colima)');
   let buf, ver;
   // LAB_BDS_ZIP: a zip on disk or its URL (a mirror, an internal file server): the way in when the official CDN is blocked
@@ -324,13 +326,19 @@ async function ensureVanillaBds({ version, preview = false } = {}) {
       fs.writeFileSync(VENDOR_VER, ver + '\n');
     }
   }
-  fs.rmSync(BDS, { recursive: true, force: true });
+  // unpacked beside it, then moved in as a whole: another lab process (tests side by side) never sees a server without its
+  // VERSION. One that finished first while this one unpacked wins (its server is the same build); this copy goes
+  const tmp = `${BDS}.new-${process.pid}`, exe = path.join(tmp, path.relative(BDS, EXE));
+  fs.rmSync(tmp, { recursive: true, force: true });
+  unzip(buf, tmp);
+  if (!exists(exe)) { fs.rmSync(tmp, { recursive: true, force: true }); die(`the BDS zip has no ${path.basename(EXE)} (wrong OS build?)`); }
+  if (!WIN) fs.chmodSync(exe, 0o755);
+  ver ??= /\b(1\.\d+\.\d+\.\d+)\b/.exec(fs.readFileSync(path.join(tmp, 'release-notes.txt'), 'utf8'))?.[1] ?? FALLBACK;
+  fs.writeFileSync(path.join(tmp, 'VERSION'), ver);
+  if (!version && !pinned && installed()) { fs.rmSync(tmp, { recursive: true, force: true }); return; }
   fs.rmSync(path.join(CACHE, 'run'), { recursive: true, force: true });   // instances link the old files
-  unzip(buf, BDS);
-  if (!exists(EXE)) die(`the BDS zip has no ${path.basename(EXE)} (wrong OS build?)`);
-  if (!WIN) fs.chmodSync(EXE, 0o755);
-  ver ??= /\b(1\.\d+\.\d+\.\d+)\b/.exec(fs.readFileSync(path.join(BDS, 'release-notes.txt'), 'utf8'))?.[1] ?? FALLBACK;
-  fs.writeFileSync(path.join(BDS, 'VERSION'), ver);
+  fs.rmSync(BDS, { recursive: true, force: true });
+  try { fs.renameSync(tmp, BDS); } catch (e) { fs.rmSync(tmp, { recursive: true, force: true }); if (!installed()) throw e; }
   for (const d of ['world', 'types', 'beta.json', 'samples']) { const p = path.join(CACHE, d); try { if (fs.lstatSync(p).isSymbolicLink()) continue; } catch { continue; } fs.rmSync(p, { recursive: true, force: true }); }   // tied to the BDS version (a shared link stays)
 }
 let NO_SERVER = false;
