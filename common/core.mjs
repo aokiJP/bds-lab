@@ -336,10 +336,13 @@ async function ensureVanillaBds({ version, preview = false } = {}) {
   ver ??= /\b(1\.\d+\.\d+\.\d+)\b/.exec(fs.readFileSync(path.join(tmp, 'release-notes.txt'), 'utf8'))?.[1] ?? FALLBACK;
   fs.writeFileSync(path.join(tmp, 'VERSION'), ver);
   if (!version && !pinned && installed()) { fs.rmSync(tmp, { recursive: true, force: true }); return; }
+  const before = exists(path.join(BDS, 'VERSION')) ? fs.readFileSync(path.join(BDS, 'VERSION'), 'utf8').split('\n')[0].trim() : null;
   fs.rmSync(path.join(CACHE, 'run'), { recursive: true, force: true });   // instances link the old files
   fs.rmSync(BDS, { recursive: true, force: true });
   try { fs.renameSync(tmp, BDS); } catch (e) { fs.rmSync(tmp, { recursive: true, force: true }); if (!installed()) throw e; }
-  for (const d of ['world', 'types', 'beta.json', 'samples']) { const p = path.join(CACHE, d); try { if (fs.lstatSync(p).isSymbolicLink()) continue; } catch { continue; } fs.rmSync(p, { recursive: true, force: true }); }   // tied to the BDS version (a shared link stays)
+  // (what is tied to the BDS version goes only when the version changed: a first install or the same build again keeps what
+  // other lab processes made meanwhile — they read it while this runs)
+  if (before && before !== ver) for (const d of ['world', 'types', 'beta.json', 'samples']) { const p = path.join(CACHE, d); try { if (fs.lstatSync(p).isSymbolicLink()) continue; } catch { continue; } fs.rmSync(p, { recursive: true, force: true }); }   // tied to the BDS version (a shared link stays)
 }
 let NO_SERVER = false;
 const CARRY = path.join(TOP, 'carry', `${F.name}-types.json.gz`);   // types saved by verify, travelling with the folder
@@ -2701,14 +2704,17 @@ function vanillaRp() {
   const dir = path.join(CACHE, 'samples'), git = (...a) => spawnSync('git', a, { cwd: dir, maxBuffer: 64e6 }), root = path.join(dir, 'resource_pack');
   if (!exists(path.join(root, 'ui'))) { git('config', 'gc.auto', '0'); git('sparse-checkout', 'set', '--no-cone', ...['entity', 'models', 'animations', 'attachables', 'ui'].map((d) => 'resource_pack/' + d)); git('checkout', '-q', 'HEAD'); }
   return { root, git, bin: (r) => { const x = git('show', 'HEAD:resource_pack/' + r); return x.status === 0 ? x.stdout : null; },
-    textures: () => new Set(git('ls-tree', '-r', '--name-only', 'HEAD', 'resource_pack/textures').stdout.toString().split('\n').filter(Boolean).map((f) => f.slice(14).replace(/\.(png|tga|jpg|jpeg)$/i, '').toLowerCase())) };
+    // (null when git cannot read it: the cache can be removed under it — a new BDS clears it, another lab process may be installing)
+    textures: () => { const x = git('ls-tree', '-r', '--name-only', 'HEAD', 'resource_pack/textures'); return x.status === 0 && x.stdout ? new Set(x.stdout.toString().split('\n').filter(Boolean).map((f) => f.slice(14).replace(/\.(png|tga|jpg|jpeg)$/i, '').toLowerCase())) : null; } };
 }
 // rp/ui: every @reference, namespace, _ui_defs entry and texture path resolved against this pack + vanilla (lib/jsonui.mjs)
 async function lintUiPack(warns) {
   if (!exists(path.join(RP, 'ui'))) return;
   const J = await import('./jsonui.mjs');
-  const v = vanillaRp();
-  const van = v ? J.vanillaUiIndex(path.join(v.root, 'ui'), v.textures()) : null;
+  let v = vanillaRp();
+  const tex = v?.textures() ?? null;
+  if (!tex) v = null;
+  const van = v ? J.vanillaUiIndex(path.join(v.root, 'ui'), tex) : null;
   if (!v) warns.push('rp/ui: vanilla UI not checked (needs git + github.com): only this pack\'s own names resolved');
   const w = J.lintUi(RP, van);
   warns.push(...w.slice(0, 25));
