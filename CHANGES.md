@@ -37,6 +37,13 @@
 - BDS を入れると、版に結びついたキャッシュ（world・types・samples）を消していた。同じ版を入れ直したときや初めて入れたときも消し、並べて走る別の試験がちょうど読んでいる samples の git が失敗して、`check` の rp/ui の検査が落ちた（CI の skills-offline）。消すのは版が変わったときだけにし、検査は読めなければ「vanilla UI は確かめていません」の W 行にする（落ちない）。
 - tests/rd-local-offline: root でない場所（CI）では open が `sudo -E` つきになる（正しい）のに、試験が root の形だけを見ていた。
 
+### macOS で全部を通す（GitHub の macos-latest で初めて全部を回して見つかったもの。fanout: 司令塔 Opus・子 3 体 = Opus 2・Sonnet 1）
+- app の暗号化キャッシュ（vault）: macOS の tar（bsdtar）は作るときの `--sparse` で落ちていた。GNU tar のときだけ付け、macOS では `._` ファイルを入れない（COPYFILE_DISABLE）。形式は同じなので前に封じたものも開ける。
+- `app token`: `APP_LOGIN_HEADLESS=1` を OS によらず「画面なし」に（macOS では画面があると見てブラウザを開いて待っていた）。
+- redroid: 裏で古いフォルダを消す `rm --one-file-system`・`mv -T` は GNU だけだった（macOS では残った）。並べて走る試験が同じ端末のロックを取り合っていた（Linux でも起こりうる）→ 試験ごとのロック（REDROID_LOCK）。
+- 試験: 偽の Android SDK は手元の CPU（arm64 の Mac では arm64-v8a）に合わせる。偽の adb は `date +%N` の無い date でも動く。redroid の「端末を動かす」確認と型の検査が要る確認は、それができる場所（Linux・docker / TypeScript あり）でだけ。
+- verify: コミットのメッセージに `[full ci]` で、push でも macOS・Endstone・LeviLamina まで走る。プラグイン・mod は 1 つ落ちても全部を試してまとめて言う。
+
 ### 合わせたところ（v1.23.0 との統合）
 - `app run` の始まり: v1.23.0 の自分の端末（`--device <名前>`）と、redroid debug が端末を並行に用意する道（`APP_DEVICE_READY_FILE`）の両方を残した。本物の端末のときは `APP_DEVICE_READY_FILE` を読まない（redroid だけのもの）。
 - AGENTS.md: v1.23.0 の「Other」の行（colony harvest・host）に fanout の規則を足した。.gitignore: 借りたアドオン（`bds/addons/borrowed_*/`）と fanout の計画・作業フォルダの両方。
