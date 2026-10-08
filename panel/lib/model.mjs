@@ -42,6 +42,8 @@ export const KNOWN_SECRETS = {
   GOOGLE_EMAIL: 'Minecraft を買った Google アカウント（APK を取る）',
   GOOGLE_AAS_TOKEN: 'その AAS トークン（node lab.mjs app token）',
   APP_CACHE_KEY: 'キャッシュと公開リポジトリのライブを封じる鍵',
+  ANTHROPIC_API_KEY: 'AI がアドオンを作る（ai-make）の Claude の API キー',
+  OPENAI_API_KEY: 'かわりに OpenAI 互換の API キー（ai-make）',
 };
 /** a repository's settings → what can be done there: [{ key, label, ok, need }] (need: what is missing, in words) */
 export function capabilities({ secrets, workflows = [], visibility = 'public', host = false, vars = null }) {
@@ -59,6 +61,7 @@ export function capabilities({ secrets, workflows = [], visibility = 'public', h
     c('hostrun', '貸し手の Actions で走らせる（hostrun: パソコンなしで）', (app || has('LAB_HOST_TOKEN')) && wf('hostrun.yml'), [!app && !has('LAB_HOST_TOKEN') && 'ラボの App（「準備」: 貸し手がホストに入れる）か LAB_HOST_TOKEN', !wf('hostrun.yml') && 'hostrun.yml'].filter(Boolean).join('・') + ' が要ります'),
     c('app', '本物のアプリで確かめる（app）', has('GOOGLE_EMAIL') && has('GOOGLE_AAS_TOKEN') && wf('app.yml'), 'GOOGLE_EMAIL・GOOGLE_AAS_TOKEN が要ります（node lab.mjs app secrets）'),
     c('signin', 'ゲームを Microsoft でサインイン（フレンドのワールド）', has('MS_EMAIL'), 'MS_EMAIL（と MS_PASSWORD）が要ります'),
+    c('make', 'アイデアから AI がアドオンを作る（ai-make）', (has('ANTHROPIC_API_KEY') || has('OPENAI_API_KEY')) && wf('ai-make.yml'), !wf('ai-make.yml') ? 'ai-make.yml がありません' : 'ANTHROPIC_API_KEY（か OPENAI_API_KEY）が要ります'),
     c('vault', visibility === 'public' ? '公開リポジトリのライブを封じる・キャッシュ' : '端末のキャッシュ（暗号化）', has('APP_CACHE_KEY') || has('GOOGLE_AAS_TOKEN'), 'APP_CACHE_KEY か GOOGLE_AAS_TOKEN が要ります'),
   ];
 }

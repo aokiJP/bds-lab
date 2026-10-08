@@ -56,7 +56,7 @@ const G = {
   // (the organization's lab: its own secrets, variables, Pages, issues; the App made from its manifest)
   corp: { secrets: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID']), vars: {}, pages: null, pagesPut: [], issues: [], comments: {}, labels: [], locks: [], manifests: [], conversions: [] },
   joinIssues: [], members: [['author1', 'admin'], ['helper1', 'write'], ['admin2', 'admin']], invites: [], membersPut: [], accepted: [],
-  dispatched: [], secretsPut: [], filesPut: [], posted: [], secretNames: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID', 'GOOGLE_EMAIL']), vars: { LAB_NOTIFY: 'failures' }, varsPut: [],
+  dispatched: [], secretsPut: [], filesPut: [], posted: [], secretNames: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID', 'GOOGLE_EMAIL', 'ANTHROPIC_API_KEY']), vars: { LAB_NOTIFY: 'failures' }, varsPut: [],
   artifacts: [{ id: 31, name: 'bds-addons', size_in_bytes: 1_234_567, expired: false, created_at: iso(now - 3_000_000), workflow_run: { id: 100, head_branch: 'main' } },
     { id: 30, name: 'old-addons', size_in_bytes: 99, expired: true, created_at: iso(now - 90 * 86_400_000), workflow_run: { id: 90, head_branch: 'main' } }],
   comments: [{ id: 900, body: 'lab-live@101 待っています（60 分まで。端末: スナップショットから起動しました）', created_at: iso(now - 60_000), user: { login: 'github-actions[bot]' } },
@@ -128,7 +128,9 @@ async function api(route) {
   const tw = /^\/actions\/workflows\/(\d+)\/(enable|disable)$/.exec(rest);
   if (SIDES[slug] && tw && req.method() === 'PUT') { if (!perm.push) return send(403, { message: 'Resource not accessible' }); SIDES[slug].toggled.push(`${tw[2]} ${tw[1]}`); SIDES[slug].wfs.find((w) => String(w.id) === tw[1]).state = tw[2] === 'enable' ? 'active' : 'disabled_manually'; return send(204, null); }
   if (SIDES[slug] && rest.startsWith('/actions/workflows')) return send(200, { workflows: SIDES[slug].wfs });
-  if (rest === '/actions/workflows') return send(200, { workflows: ['app', 'notify', 'secrets', 'verify', 'hostrun'].map((n, i) => ({ id: i + 1, name: n, path: `.github/workflows/${n}.yml`, state: 'active' })) });
+  // (who changed the policy file: its commits)
+  if (rest.startsWith('/commits') && /path=/.test(u.search)) return send(200, [{ html_url: `https://github.com/${slug}/commit/abc`, commit: { message: 'panel: 役割（ポリシー）を変える', author: { date: iso(now), name: 'author1' } }, author: { login: 'author1' } }]);
+  if (rest === '/actions/workflows') return send(200, { workflows: ['app', 'notify', 'secrets', 'verify', 'hostrun', 'ai-make'].map((n, i) => ({ id: i + 1, name: n, path: `.github/workflows/${n}.yml`, state: 'active' })) });
   if (rest === '/actions/artifacts') return send(200, { artifacts: slug === LAB ? G.artifacts : [] });
   const am = /^\/actions\/runs\/(\d+)\/artifacts/.exec(rest); if (am) return send(200, { artifacts: slug === LAB ? G.artifacts.filter((a) => String(a.workflow_run.id) === am[1]) : [] });
   const vm = /^\/actions\/variables(?:\/([A-Z_]+))?$/.exec(rest);
@@ -314,12 +316,24 @@ try {
   check(/フォークからの招待が 2 件/.test(todo) && /180 日以上そのままの秘密: GOOGLE_EMAIL/.test(todo) && /LAB_HOSTS にないフォーク: newlender\/bds-lab/.test(todo) && todo.indexOf('招待') < todo.indexOf('LAB_HOSTS にない'), 'いまやること: each thing to do, the worst first', todo);
   check((await page.evaluate(() => JSON.stringify(localStorage))).includes('tok-author'), 'remembered in this browser (asked to)');
   check(await waitText(/ワークフローの調子/) && await page.locator('[data-health=".github/workflows/verify.yml"]', { hasText: '1 回続けて失敗' }).count() === 1, 'each workflow\'s health: verify failing in a row', await text());
+  // someone new: the guide's next step, and 「やりたいこと」 from their own words (Ctrl+K, hiragana) to the tab
+  check(await page.locator('#guide').count() === 1 && /はじめてのガイド（\d\/7）/.test(await page.locator('#guide').innerText()) && /次: /.test(await page.locator('#guide').innerText()), 'the beginner\'s guide: done of 7, the next step', await page.locator('#guide').innerText().catch(() => ''));
+  await page.keyboard.press('Control+k');
+  await page.waitForSelector('#palette input');
+  await page.keyboard.type('ひみつ');
+  await page.waitForSelector('#palette [data-intent="secrets"]', { timeout: 3000 }).catch(() => {});
+  check(await page.locator('#palette [data-intent="secrets"]').count() === 1 && /ことばの意味/.test(await page.locator('#palette').innerText()), '「やりたいこと」: hiragana found the secrets, and the word explained', await page.locator('#palette').innerText());
+  await page.keyboard.press('Enter');
+  check((await page.locator('nav.tabs button.on').innerText()) === '秘密' && await page.locator('#palette').count() === 0, 'Enter: to the tab, the box closed', '');
+  check(await page.locator('details.help[open]').count() === 1 && /秘密でできること/.test(await page.locator('details.help').innerText()), 'a tab seen the first time: what it is for, open', '');
+  await tab('概要');
   await page.keyboard.press('2');
   check((await page.locator('nav.tabs button.on').innerText()) === '進み具合', 'a key for a tab (2: the runs)', await page.locator('nav.tabs button.on').innerText());
   await tab('進み具合');
   await waitText(/verify/);
   check(await waitText(/いま: 端末をそのまま調べる（hold）/), 'a run still going shows its progress by itself (the step it is on)', await text());
   await page.locator('.card', { hasText: 'verify' }).locator('button', { hasText: '詳しく' }).click();
+  check(await waitText(/考えられる原因と直し方/) && /試験が落ちました（panel-offline\.mjs）/.test(await page.locator('.diagnose').innerText()), 'a failed run: why in words, what to do', await page.locator('.diagnose').innerText().catch(() => ''));
   check(await waitText(/FAIL gate: tests\/panel-offline\.mjs/) && /❌ offline — 2\/2/.test(await text()), 'a failed run: its jobs, steps and the annotation that says why', await text());
   await tab('実行');
   await page.locator('li', { hasText: 'スマホで端末を操作' }).locator('button', { hasText: '開く' }).click();
@@ -410,6 +424,14 @@ try {
   await page.waitForTimeout(800);
   const ha = G.dispatched.filter((x) => x.workflow === 'hostrun.yml').pop();
   check(ha && JSON.stringify(ha.body.inputs) === JSON.stringify({ host: 'auto', job: 'gate', unit: '', wait: 'true' }), 'started on whichever lender may take it (hostrun: auto)', JSON.stringify(G.dispatched));
+  // an idea in words: AI makes the addon (ai-make.yml), asked first — the API's tokens are spent
+  await tab('実行');
+  await page.locator('ul.targets input[value="lab"]').check();
+  await page.fill('#make textarea', 'ルビーの剣。右クリックで雷');
+  await page.locator('#make button', { hasText: '作ってもらう' }).click();
+  await page.waitForTimeout(800);
+  const mk = G.dispatched.find((x) => x.workflow === 'ai-make.yml');
+  check(mk && mk.body.inputs.request === 'ルビーの剣。右クリックで雷' && mk.body.inputs.unit === '', 'an idea in words started ai-make.yml', JSON.stringify(G.dispatched.map((x) => x.workflow)));
   await page.waitForTimeout(2600);
 
   // what the runs left: sent to Discord by notify (its files go along)
@@ -457,6 +479,11 @@ try {
   await page.locator('[data-join="stranger"] button', { hasText: '招く' }).click();
   await page.waitForTimeout(800);
   check(G.membersPut.includes('stranger=push') && G.joinIssues[0].state === 'closed', 'a request to join answered: invited, closed', JSON.stringify({ put: G.membersPut, st: G.joinIssues[0].state }));
+  // a company's look: who changed the policy, and an access review (as CSV)
+  check(/変更の記録/.test(await page.locator('#policy').innerText()) && /author1/.test(await page.locator('#policyhistory').innerText()), 'the policy\'s change record', await page.locator('#policy').innerText());
+  await page.locator('#review button', { hasText: '棚卸しを作る' }).click();
+  await page.waitForSelector('#reviewtable');
+  check(/実行の記録が見えない/.test(await page.locator('[data-review="helper1"]').innerText()) && await page.locator('#review a[download]').count() === 1, 'the access review: the one with no run marked, CSV to take', await page.locator('#review').innerText());
   // the owner: each administrator's lending in the members; the forks that lend, an invitation from one taken here, that fork
   // brought up to the lab from here — and one whose say is not taken yet: said so, nothing done
   await page.waitForSelector('[data-lending="admin2"]', { timeout: 8000 });

@@ -5,6 +5,7 @@ import { h, toast, act, link } from './dom.mjs';
 import * as MB from '../lib/members.mjs';
 import * as P from '../lib/policy.mjs';
 import * as M from '../lib/model.mjs';
+import * as G from '../lib/guide.mjs';
 
 /** ctx: { api, lab: { slug, repo, role }, me, policy, role, may(action), guarded(action, detail, fn, done), reload(),
  *  lending() (the owner's: the lab's lending forks → { list }, for each administrator's mark) } */
@@ -57,6 +58,7 @@ export function membersTab(body, ctx) {
     } }, '招く')) : null,
     list));
   body.append(policyCard(ctx, admin));
+  if (admin) body.append(reviewCard(ctx));
   load();
 }
 
@@ -72,7 +74,11 @@ function policyCard(ctx, admin) {
     h('td', {}, (ask[a] = h('input', { type: 'checkbox', checked: g.confirm.includes(a), disabled: !admin, 'aria-label': `確かめる: ${a}` })))));
   const lendBox = h('input', { type: 'checkbox', checked: g.adminsLend, disabled: !admin, 'aria-label': '管理者はいつも貸す' });
   const idle = h('input', { type: 'number', min: 0, max: 1440, value: g.idleMinutes, disabled: !admin }), audit = h('select', { disabled: !admin }, ['auto', 'issue', 'off'].map((v) => h('option', { value: v, selected: v === g.audit ? 'selected' : null }, { auto: 'auto（非公開なら残す）', issue: '残す', off: '残さない' }[v])));
-  return h('div', { class: 'card' }, h('h2', {}, '役割（パネルでできること）'),
+  // (who changed the policy and when: the file's own commits — a company's change record)
+  const history = h('div', { class: 'muted' });
+  ctx.api.commits?.(ctx.lab.slug, { path: P.POLICY_FILE, per: 8 }).then((cs) => history.replaceChildren(...((cs ?? []).length ? [h('h3', {}, '変更の記録'), h('ul', { class: 'plain', id: 'policyhistory' }, cs.map((c) => h('li', {},
+    `${String(c.commit?.author?.date ?? '').slice(0, 10)} · ${c.author?.login ?? c.commit?.author?.name ?? '?'} · `, link(c.html_url, String(c.commit?.message ?? '').split('\n')[0].slice(0, 80)))))] : []))).catch(() => {});
+  return h('div', { class: 'card', id: 'policy' }, h('h2', {}, '役割（パネルでできること）'), history,
     h('p', { class: 'muted' }, `${P.POLICY_FILE} に書きます。GitHub の役割ごとに、パネルで許す操作を選びます（GitHub が許さないことはここで選んでもできません。管理者はいつも全部）。${ctx.policyErrors?.length ? ' いまのファイルは正しくありません: 保存すると直ります。' : ''}`),
     // (a ready-made grid in one tap; nothing is written until 「役割を保存」)
     admin ? h('div', { class: 'row' }, h('span', { class: 'muted' }, 'ひな形:'), Object.entries(MB.POLICY_PRESETS).map(([id, p]) => h('button', { 'data-preset': id, onclick: () => {
@@ -88,4 +94,22 @@ function policyCard(ctx, admin) {
       return ctx.guarded('members', { file: P.POLICY_FILE }, () => MB.savePolicy(ctx.api, ctx.lab.slug, grid), '役割を保存しました（既定の枝に）').then((r) => { if (r !== undefined) ctx.reload(); });
     } }, '役割を保存')) : h('p', { class: 'muted' }, '変えられるのは管理者だけです'),
     link(`https://github.com/${ctx.lab.slug}/blob/${ctx.lab.repo?.default_branch ?? 'main'}/${P.POLICY_FILE}`, 'GitHub でファイルを見る'));
+}
+
+/** アクセスの棚卸し: who has access and what to look at — each person's role, their last run, the administrators who do not lend
+ *  (adminsLend), invitations left waiting — made on asking (it reads the lab's people and newest 100 runs), as CSV too */
+function reviewCard(ctx) {
+  const out = h('div', {});
+  const make = () => act(async () => {
+    const [m, runs, lending] = await Promise.all([MB.readMembers(ctx.api, ctx.lab.slug, ctx.lab.repo), ctx.api.runs(ctx.lab.slug, { per: 100 }).catch(() => []), ctx.lending ? ctx.lending().catch(() => null) : null]);
+    const r = G.accessReview({ members: m.members, invitations: m.invitations, runs, owner: m.owner, lending: (lending?.list ?? []).filter((x) => x.always.ok).map((x) => x.owner), adminsLend: P.adminsLend(ctx.policy) });
+    const url = URL.createObjectURL(new Blob([G.accessCsv(r.rows)], { type: 'text/csv;charset=utf-8' }));
+    out.replaceChildren(h('p', { class: r.flagged ? 'warn' : 'ok' }, r.flagged ? `見ておくこと ${r.flagged} 件` : '✅ 気になるところはありません'),
+      h('table', { id: 'reviewtable' }, h('thead', {}, h('tr', {}, ['ログイン', '種類', '役割', '最後の実行', '注意'].map((t) => h('th', {}, t)))),
+        h('tbody', {}, r.rows.map((x) => h('tr', { 'data-review': x.login }, h('td', {}, x.login), h('td', {}, x.kind), h('td', {}, MB.PERMISSION_WORDS[x.role]?.split('（')[0] ?? x.role), h('td', {}, x.last ?? '—'), h('td', { class: x.flags.length ? 'warn' : '' }, x.flags.join(' / ') || '—'))))),
+      h('div', { class: 'row' }, h('a', { class: 'btn', href: url, download: `bds-lab-access-${ctx.lab.slug.replace('/', '_')}-${new Date().toISOString().slice(0, 10)}.csv` }, '⬇ CSV で書き出す')));
+  });
+  return h('div', { class: 'card', id: 'review' }, h('h2', {}, '🔍 アクセスの棚卸し'),
+    h('p', { class: 'muted' }, '誰がどの役割で入れるか、最後にいつ動かしたか、気をつけること（長く動きのない人・貸していない管理者・受けられていない招待）を一覧にします。定期的な見直し（会社の監査）にそのまま使えます。'),
+    h('div', { class: 'row' }, h('button', { class: 'primary', onclick: make }, '棚卸しを作る')), out);
 }

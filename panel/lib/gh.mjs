@@ -70,6 +70,8 @@ export function gh({ token, base = 'https://api.github.com', fetchImpl = (...a) 
     disableWorkflow: (r, id) => call('PUT', `/repos/${r}/actions/workflows/${encodeURIComponent(id)}/disable`),
     /** a fork's branch brought up to its parent's (GitHub's 「Sync fork」) */
     syncFork: (r, branch) => call('POST', `/repos/${r}/merge-upstream`, { branch }),
+    /** the commits that changed a file, the newest first (who changed the policy and when) */
+    commits: (r, { path, per = 10 } = {}) => call('GET', `/repos/${r}/commits?per_page=${per}${path ? `&path=${encodeURIComponent(path)}` : ''}`),
     /** the repository's forks, the newest first (up to 100) */
     forks: (r) => call('GET', `/repos/${r}/forks?sort=newest&per_page=100`),
     /** someone made a collaborator (invited; on an organization's repository with that role, on a person's with write) */

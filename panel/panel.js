@@ -26,6 +26,8 @@ import * as DBG from './lib/debug.mjs';
 import { lendStart, lendFork } from './ui/lend.mjs';
 import { HOST_FILES } from './lib/hosttemplate.mjs';
 import * as MB from './lib/members.mjs';
+import * as GD from './lib/guide.mjs';
+import { helpLine, guideCard, palette, glossaryCard } from './ui/guide.mjs';
 
 // ---- the browser's storage (one that refuses it — a private window may — still works for the tab) ----
 const storage = (name) => { try { const s = window[name]; s.setItem('bdslab.probe', '1'); s.removeItem('bdslab.probe'); return s; } catch { return memoryStorage(); } };
@@ -133,6 +135,7 @@ function renderWho() {
   if (st.me) kids.push(h('img', { src: st.me.avatar_url, alt: '' }));
   if (list.length > 1) kids.push(h('select', { id: 'acct', 'aria-label': 'アカウントを切り替える', onchange: (e) => switchTo(e.target.value) }, list.map((a) => h('option', { value: a.login, selected: a.login === st.login ? 'selected' : null }, `${a.login}${a.remember ? '' : '（このタブだけ）'}`))));
   else if (st.me) kids.push(st.me.login);
+  if (st.me && st.as?.length) kids.push(h('button', { id: 'find', title: 'やりたいこと（Ctrl/⌘+K）', 'aria-label': 'やりたいこと', onclick: () => PAL.open() }, '🔎'));
   kids.push(h('button', { title: 'アカウントを加える', 'aria-label': 'アカウントを加える', onclick: () => renderSignIn('', { adding: true }) }, '＋'));
   if (st.login) kids.push(h('button', { onclick: () => signOut() }, '出る'));
   // (an error on this page or GitHub not answering: shown at once, a tap to what happened)
@@ -290,7 +293,7 @@ function render() {
   renderWho();
   const tabs = TABS.filter(([k]) => (k === 'audit' ? may('audit.read') : canLab() || ['overview', 'hosts', 'settings'].includes(k)));
   if (!tabs.some(([k]) => k === st.tab)) st.tab = tabs[0][0];
-  const body = h('div', { id: 'tabbody' });
+  const body = h('div', { id: 'tabbody' }, helpLine(st.tab, LOCAL));
   main().replaceChildren(h('nav', { class: 'tabs' }, tabs.map(([k, label], i) => h('button', { class: st.tab === k ? 'on' : '', 'data-tab': k, title: i < 10 ? `キー ${(i + 1) % 10}` : null, onclick: () => go(k) }, label))), body);
   ({ overview, runs, start, files, discord, secrets, live, hosts, members, setup, audit, settings: settingsTab })[st.tab](body);
 }
@@ -391,14 +394,21 @@ setInterval(() => { if (document.visibilityState === 'visible') checkVersion(); 
 
 // ---- keys (outside a text box): 1–9, 0 the tabs shown, / search the runs, r read again, ? which keys ----
 const shownTabs = () => [...document.querySelectorAll('nav.tabs button')].map((b) => b.dataset.tab);
-const KEYS_HELP = '1〜9・0: タブ　/: 実行を探す　r: 読み直す　?: この知らせ';
+const KEYS_HELP = 'Ctrl/⌘+K か ?: やりたいこと　1〜9・0: タブ　/: 実行を探す　r: 読み直す';
+// 「やりたいこと」 (ui/guide.mjs): what someone wants in their own words → the tab for it (and the part of it: an anchor)
+const PAL = palette({ tabs: () => shownTabs(), may: (a) => (st.lab ? may(a) : false), go: (tab, anchor, id) => {
+  if (id === 'guide') LOCAL.removeItem(`bdslab.panel.guide.hidden.${st.lab?.slug}`);
+  go(tab);
+  if (anchor) setTimeout(() => $(anchor)?.scrollIntoView({ block: 'start' }), 50);
+} });
 window.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && String(e.key).toLowerCase() === 'k' && st.me && st.as?.length) { e.preventDefault(); PAL.open(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing || !st.lab || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? '') || document.activeElement?.isContentEditable) return;
   const k = M.shortcut(e.key, shownTabs()); if (!k) return;
   e.preventDefault();
   if (k.tab) go(k.tab);
   else if (k.reload) render();
-  else if (k.help) toast(KEYS_HELP);
+  else if (k.help) PAL.open();
   else if (k.search) { if (st.tab !== 'runs') go('runs'); document.querySelector('input[type=search]')?.focus(); }
 });
 
@@ -416,6 +426,7 @@ function overview(body) {
     st.policyErrors.length ? h('div', { class: 'bad' }, `${P.POLICY_FILE} が正しくありません: パネルは何も許しません（直すまで）`, h('ul', {}, st.policyErrors.map((e) => h('li', {}, e)))) : null,
     h('div', { id: 'version' }),
     !CONFIG.authUrl && st.lab?.role === 'admin' ? h('p', { class: 'warn' }, '「GitHub でサインイン」はまだ使えません: ', h('button', { onclick: () => go('setup') }, '「準備」で整える'), '（App・サインインのサービス・Pages）') : null));
+  body.append(guideSlot());
   if (st.lab && canLab()) body.append(todoCard());
   checkVersion().then((v) => $('version')?.replaceChildren(...(v.state === 'newer' ? [h('p', { class: 'warn' }, v.say, ' ', h('button', { onclick: () => location.reload() }, '読み直す'))] : v.state === 'deploying' || v.state === 'failed' ? [h('p', { class: v.state === 'failed' ? 'bad' : 'muted' }, v.say)] : [])));
   if (st.lab && st.lab.caps) {
@@ -443,6 +454,23 @@ function overview(body) {
     h('ul', { class: 'plain' }, others.map((e) => h('li', { class: 'row' }, h('span', { class: 'grow' }, e.login, ' ', h('span', { class: 'muted' }, `${A.cfg(e.login).lab}・ホスト ${A.cfg(e.login).hosts.length}`)), h('button', { onclick: () => switchTo(e.login) }, '切り替える'))))));
 }
 
+/** this person's role for the guide (lib/guide.mjs guideSteps) */
+const guideRole = () => (isOwner() ? 'owner' : st.lab?.role === 'admin' ? 'admin' : canLab() ? 'writer' : (st.as ?? []).includes('lender') ? 'lender' : 'stranger');
+/** the beginner's guide, filled once what its steps need is read (the lab's runs, LAB_HOSTS) */
+function guideSlot() {
+  const slot = h('div', {});
+  act(async () => {
+    const role = guideRole(), lab = st.lab && canLab();
+    const [rs, lh] = await Promise.all([lab ? st.api.runs(st.lab.slug, { per: 1 }).catch(() => []) : [], lab ? st.api.variable(st.lab.slug, 'LAB_HOSTS').catch(() => null) : null]);
+    const caps = capsOf(), mine = st.hosts.filter((x) => x.role === 'lender');
+    const facts = { pages: Boolean(CONFIG.version), app: Boolean(CONFIG.appSlug), auth: Boolean(CONFIG.authUrl), discord: caps.notify?.ok === true || caps.discord?.ok === true,
+      ran: (rs ?? []).length > 0, lenders: Boolean(M.labHostsWith(lh)) || st.hosts.some((x) => st.lab && M.canBorrow(x, st.lab.slug)), lending: st.adminLend?.required ? st.adminLend.ok : mine.length > 0,
+      watched: Boolean(LOCAL.getItem('bdslab.panel.help.runs')), fork: mine.some((x) => M.forkOf(x.repo)) };
+    const card = guideCard({ role, facts, go, storage: LOCAL, labSlug: st.lab?.slug ?? settings().lab });
+    if (card) slot.replaceChildren(card);
+  });
+  return slot;
+}
 /** 「いまやること」: what needs doing now across the lab, the worst first, each a tap away (M.todos) — read for this person's
  *  role: the owner's forks and invitations, an administrator's secrets, a lender's last days */
 function todoCard() {
@@ -527,10 +555,18 @@ async function detail(slug, r, box, show) {
     const parts = [h('div', { class: 'bar' + (p.state === 'failure' ? ' bad' : '') }, h('i', { style: { width: `${p.pct}%` } })), h('div', { class: 'muted' }, `${p.done}/${p.total} 段 · ${M.fmtMs(p.ms)}${p.now ? ` · いま: ${p.now}` : ''}`)];
     for (const j of p.jobs) parts.push(h('div', {}, `${M.STATE_ICON[j.state] ?? '•'} ${j.name} — ${j.done}/${j.total}${j.now ? `（${j.now}）` : ''}`));
     // (a failed job's own words: its check run's annotations)
+    const said = [];
     for (const j of jobs.filter((x) => x.conclusion === 'failure').slice(0, 3)) {
       const id = String(j.check_run_url ?? '').split('/').pop();
       const an = id ? await st.api.annotations(slug, id).catch(() => []) : [];
+      said.push(...an);
       if (an.length) parts.push(h('pre', {}, an.slice(0, 8).map((a) => `${a.annotation_level}: ${a.title ? a.title + ' — ' : ''}${a.message}`).join('\n')));
+    }
+    // (why, in words, and the fix a tap away: lib/guide.mjs diagnose)
+    if (r.status === 'completed' && !['success', 'skipped', 'neutral'].includes(r.conclusion)) {
+      const why = GD.diagnose({ run: r, jobs, annotations: said, secrets: slug === st.lab?.slug ? st.lab.secrets : null, known: Object.keys(M.KNOWN_SECRETS) });
+      if (why.length) parts.push(h('div', { class: 'diagnose' }, h('h3', {}, '🩺 考えられる原因と直し方'), h('ul', { class: 'plain' }, why.map((x) => h('li', {}, h('strong', {}, x.title), h('div', { class: 'muted' }, x.fix),
+        x.prefill ? h('button', { onclick: () => { st.prefill = x.prefill; go('secrets'); } }, `「秘密」で ${x.prefill} を登録`) : x.tab && x.tab !== 'runs' ? h('button', { onclick: () => go(x.tab) }, '開く') : null)))));
     }
     if (arts.length) parts.push(artifactList(slug, r.id, arts, r.html_url));
     box.replaceChildren(...parts);
@@ -569,6 +605,7 @@ function start(body) {
     hosts.length ? null : h('p', { class: 'muted' }, '貸し手のホストは「貸し借り」で加えると、ここで選べます（その人の Actions の分で走ります）。'));
   body.append(where);
   if (st.target === 'auto') return body.append(autoForm(caps), h('div', { id: 'dform' }));
+  if (st.target === 'lab') { const mk = makeCard(caps); if (mk) body.append(mk); }
   if (st.target !== 'lab') return body.append(hostForm(hosts.find((x) => x.slug === st.target), caps), h('div', { id: 'dform' }));
   body.append(h('div', { class: 'card' }, h('h2', {}, 'すぐ始める'), h('ul', { class: 'plain' }, M.PRESETS.filter((p) => hasWf(p.workflow)).map((p) => {
     const c = p.needs ? caps[p.needs] : null, ok = !c || c.ok !== false;
@@ -601,6 +638,25 @@ function hostForm(x, caps) {
     ready ? null : h('div', { class: 'warn' }, c.need, ' ', h('button', { onclick: () => { st.prefill = 'LAB_HOST_TOKEN'; go('secrets'); } }, '「秘密」で登録する')),
     h('label', { for: 'hjob' }, '仕事'), job, unitRow, h('label', {}, wait, ' 結果を待つ（この実行の結果・Discord の知らせ・成果物になる。待たなければ結果は「進み具合」のホストで）'),
     h('div', { class: 'row' }, btn));
+}
+/** 「アイデアからアドオンを作る」: an idea in words → ai-make.yml (AI makes the addon, plays it on a real server with real
+ *  clients, ships a Release and tells Discord) — the API's tokens are the lab's (ANTHROPIC_API_KEY or OPENAI_API_KEY), asked first */
+function makeCard(caps) {
+  if (!hasWf('ai-make.yml')) return null;
+  const c = caps.make, idea = h('textarea', { id: 'idea', 'aria-label': 'どんなアドオン', placeholder: '例: ルビーの剣。右クリックで雷が落ちる。村人が 5 エメラルドで売ってくれる' });
+  const unit = h('input', { type: 'text', id: 'makeunit', 'aria-label': '変えるユニット', placeholder: 'bds/rubyshop（今あるものを変えるときだけ）' });
+  return h('div', { class: 'card', id: 'make' }, h('h2', {}, '💡 アイデアからアドオンを作る（AI）'),
+    h('p', { class: 'muted' }, 'やりたいことを日本語で書くだけで、AI がアドオンを作り、本物のサーバーとプレイヤーで遊んで確かめてから、.mcaddon をリリースと Discord に届けます（ai-make.yml・2 時間まで）。'),
+    c?.ok === false ? h('div', { class: 'warn' }, c.need, ' ', h('button', { onclick: () => { st.prefill = 'ANTHROPIC_API_KEY'; go('secrets'); } }, '「秘密」で登録する')) : null,
+    h('label', { for: 'idea' }, 'どんなアドオン？'), idea, h('details', {}, h('summary', {}, '今あるユニットを変える'), unit),
+    h('div', { class: 'row' }, h('button', { class: 'primary', ...gate('dispatch'), disabled: c?.ok === false || !may('dispatch'), onclick: async () => {
+      const request = idea.value.trim(), u = unit.value.trim();
+      if (!request && !u) return toast('どんなアドオンか書いてください', true);
+      if (u && !/^(bds|end|ll)\/[a-z0-9_]+$/.test(u)) return toast('ユニットは bds/<名前> の形で', true);
+      if (!confirm('AI の API の料金（ラボの ANTHROPIC_API_KEY / OPENAI_API_KEY の分）を使います。始めますか')) return;
+      const ok = await guarded('dispatch', { workflow: 'ai-make.yml' }, () => st.api.dispatch(st.lab.slug, 'ai-make.yml', st.lab.repo.default_branch, { request, unit: u }), 'AI が作り始めました（「進み具合」で見られます。できたら Discord とリリースに届きます）');
+      if (ok !== undefined) { idea.value = ''; st.runsFrom = st.lab.slug; setTimeout(() => go('runs'), 2500); }
+    } }, '✨ 作ってもらう')));
 }
 /** a job on whichever lender may take it now (hostrun's host: auto — LAB_HOSTS, the App's token on each fork) */
 function autoForm(caps) {
@@ -923,7 +979,7 @@ function settingsTab(body) {
   });
   body.append(h('div', { class: 'card' }, h('h2', {}, 'この端末'), h('label', {}, on, ' 実行が終わったら知らせる（パネルを開いている間。タブの題に動いている数）'),
     h('p', { class: 'muted' }, 'スマホではブラウザのメニューの「ホーム画面に追加」で、アプリのように開けます。'), h('p', { class: 'muted' }, `キー: ${KEYS_HELP}`)));
-  body.append(debugCard());
+  body.append(debugCard(), glossaryCard());
 }
 /** 「デバッグ」: this page's version, its errors and the last GitHub calls; a report to paste (tokens taken out) */
 function debugCard() {
