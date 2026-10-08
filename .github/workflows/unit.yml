@@ -1,7 +1,7 @@
 name: unit
 # One unit of this lab from the management panel's 「アドオン」 — no computer of yours in between: make a new one (bds new), take
 # a person's addon in (import: the pack the panel put on a branch of its own, lab-incoming/<name> — never in the default
-# branch's history — taken from there and the branch deleted once it is a unit), test it (test / sim) or finish it (go: its
+# branch's history — taken from there, the branch deleted at the end), test it (test / sim) or finish it (go: its
 # .mcaddon is this run's artifact unit-<name>, and notify tells Discord). new and import commit the unit to the branch it ran
 # on (a push made with this run's own token starts no other workflow — GitHub's rule — so test it from the panel next). The
 # inputs reach the lab only as environment variables, checked there (common/unitci.mjs: names a-z0-9_, files under incoming/
@@ -81,13 +81,12 @@ jobs:
           FILE: ${{ inputs.file }}
           WORDS: ${{ inputs.words }}
         run: node lab.mjs unitci
-      # (new and import: the unit kept on the branch it ran on — and the pack's own branch deleted)
+      # (new and import: the unit kept on the branch it ran on)
       - name: keep the unit
         if: (inputs.job == 'new' || inputs.job == 'import') && steps.unitci.outputs.ok == 'true' && steps.unitci.outputs.unit != ''
         env:
           JOB: ${{ inputs.job }}
           MADE: ${{ steps.unitci.outputs.unit }}
-          FILE: ${{ inputs.file }}
         run: |
           git config user.name "bds-lab panel"
           git config user.email "bds-lab-panel@users.noreply.github.com"
@@ -97,7 +96,15 @@ jobs:
             git push -q origin "HEAD:$GITHUB_REF_NAME" || { git pull -q --rebase origin "$GITHUB_REF_NAME" && git push -q origin "HEAD:$GITHUB_REF_NAME"; }
             echo "kept bds/addons/$MADE on $GITHUB_REF_NAME" >> "$GITHUB_STEP_SUMMARY"
           fi
-          if [ "$JOB" = import ]; then git push -q origin --delete "lab-incoming/${FILE#incoming/}" || echo "::warning title=unit import::取り込み用の枝 lab-incoming/${FILE#incoming/} を消せませんでした（GitHub で消してください）"; fi
+      # (import: the pack's own branch deleted whatever happened — a new try from the panel puts the pack on a new one)
+      - name: the pack's branch away
+        if: always() && inputs.job == 'import'
+        env:
+          FILE: ${{ inputs.file }}
+        run: |
+          name="${FILE#incoming/}"
+          if [[ "$FILE" != incoming/* || ! "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$ || "$name" == *..* ]]; then exit 0; fi
+          git push -q origin --delete "lab-incoming/$name" || echo "::warning title=unit import::取り込み用の枝 lab-incoming/$name を消せませんでした（GitHub で消してください）"
       - if: always() && inputs.job == 'go'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

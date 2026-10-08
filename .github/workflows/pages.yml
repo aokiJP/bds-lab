@@ -7,6 +7,7 @@ name: pages
 # default branch deploys; run it again after those variables change (the panel's 「準備」 does).
 on:
   push:
+    branches-ignore: ['lab-incoming/**']
     paths: ['panel/**', 'common/panel-config.mjs', '.github/workflows/pages.yml']
   workflow_dispatch:
 permissions: { contents: read, pages: write, id-token: write }

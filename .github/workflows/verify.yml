@@ -6,7 +6,8 @@ name: verify
 # (hashFiles is not allowed in a job's `if`: there it made the whole file invalid and no job ever ran; it is a step now)
 on:
   push:
-    branches: ['**']
+    # (a pack the panel's 「アドオン」 takes in waits on a branch of its own, lab-incoming/<name>, for unit.yml: nothing to verify)
+    branches: ['**', '!lab-incoming/**']
     # the autopilot's memory alone (auto/: a ledger row after each task, failed ones too, every hour) is no code to verify: each such
     # push used to start the whole verify run
     paths-ignore: ['auto/**']
