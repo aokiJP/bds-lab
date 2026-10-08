@@ -257,6 +257,35 @@ await t('panel check: a changed file → the checks it needs (ESLint, the offlin
   eq(PN.failLines('ok a\nFAIL b\n  why\nok c').slice(0, 2), ['FAIL b', '  why']);
 });
 
+await t('administrators always lend (adminsLend): the rules that lend always, an administrator\'s lending as the lab sees it, the lab\'s lending forks, LAB_HOSTS kept, auto runs, what needs doing now (pure)', async () => {
+  const P = await imp('panel/lib/policy.mjs'), MB = await imp('panel/lib/members.mjs');
+  const A = M.alwaysRules('Asia/Tokyo', 'me');
+  ok(M.alwaysLends(A).ok && A.minutesPerMonth === M.ALWAYS_MINUTES && A.jobs.length === M.HOST_JOBS.length && !('until' in A), JSON.stringify(A));
+  const not = M.alwaysLends({ ...A, minutesPerMonth: 600, jobs: ['gate'], hours: '09:00-18:00', until: '2027-01-01' });
+  ok(!not.ok && not.why.length === 4 && /600/.test(not.why[0]) && /upkeep/.test(not.why[1]) && /09:00-18:00/.test(not.why[2]) && /2027-01-01/.test(not.why[3]), JSON.stringify(not));
+  ok(!M.alwaysLends(null).ok && /ありません/.test(M.alwaysLends(null).why[0]) && !M.alwaysLends({ jobs: ['make'] }).ok, 'no rules or wrong ones: not lending');
+  const LAB = 'o/lab', fork = { full_name: 'ad/lab', owner: { login: 'ad' }, permissions: { admin: true }, fork: true, parent: { full_name: LAB }, visibility: 'public' };
+  eq(M.adminLend({ required: false }), { required: false, ok: true, fork: null, why: [] }, 'not an administrator (or the owner, or no adminsLend): nothing asked');
+  ok(!M.adminLend({ required: true }).ok && /フォークがまだ/.test(M.adminLend({ required: true }).why[0]), 'no fork: not yet');
+  const good = M.adminLend({ required: true, fork, check: M.forkHostCheck(fork, 'ad', LAB), rules: A, hostYmlOk: true });
+  ok(good.ok && good.fork === 'ad/lab', JSON.stringify(good));
+  const behind = M.adminLend({ required: true, fork, check: M.forkHostCheck(fork, 'ad', LAB), rules: { ...A, until: '2027-01-01' }, hostYmlOk: false });
+  ok(!behind.ok && behind.why.some((w) => /host\.yml/.test(w)) && behind.why.some((w) => /最後の日/.test(w)), JSON.stringify(behind));
+  // (the policy's switch: off by default, carried through the grid and back)
+  const g = MB.gridOf(P.checkPolicy({ version: 1, adminsLend: true }).policy);
+  ok(g.adminsLend === true && MB.policyOf(g).json.adminsLend === true && !('adminsLend' in MB.policyOf(MB.gridOf(P.DEFAULT_POLICY)).json) && MB.applyPreset(g, 'owner').adminsLend === true, 'adminsLend kept through the grid, a preset and back');
+  ok(JSON.parse(fs.readFileSync(path.join(TOP, '.github/bds-lab-panel.json'), 'utf8')).adminsLend === true, 'this lab: its administrators always lend');
+  const lf = M.lendingForks([{ fork: { full_name: 'z/lab', owner: { login: 'z' } }, json: { ...A, minutesPerMonth: 300 } }, { fork: { full_name: 'ad/lab', owner: { login: 'ad' } }, json: A }, { fork: { full_name: 'n/lab', owner: { login: 'n' } }, json: null }], ['AD']);
+  eq(lf.map((x) => [x.slug, x.admin, x.always.ok]), [['ad/lab', true, true], ['z/lab', false, false]], 'the administrators\' first; a fork that does not lend: not listed');
+  eq([M.labHostsWith('a/b, c/d  a/b', ['e/f', 'C/D']), M.labHostsWith('a/b c/d', [], ['A/B']), M.labHostsWith(null, ['bad', 'x/y'])], ['a/b c/d e/f', 'c/d', 'x/y']);
+  eq(M.hostRunInputs({ host: 'auto', job: 'gate' }).inputs, { host: 'auto', job: 'gate', unit: '', wait: 'true' });
+  ok(/ユニット/.test(M.hostRunInputs({ host: 'auto', job: 'sim', unit: '' }).error) && /走らせられる仕事ではありません/.test(M.hostRunInputs({ host: 'auto', job: 'make' }).error), 'auto: any lent job, a unit when it takes one');
+  const td = M.todos({ policyErrors: ['x'], idleAdmins: ['ad'], invites: 2, unlisted: ['z/lab'], stale: ['OLD'], health: [{ name: 'verify', streak: 3 }, { name: 'go', streak: 1 }], ending: [{ slug: 'l/h', until: '2026-10-10', days: 2 }], version: { state: 'newer', say: '新しい版' } });
+  eq(td.map((x) => [x.level, x.tab]), [['bad', 'members'], ['bad', 'runs'], ['warn', 'hosts'], ['warn', 'hosts'], ['warn', 'secrets'], ['warn', 'hosts'], ['info', 'hosts'], ['info', null]], JSON.stringify(td));
+  ok(/verify が 3 回続けて/.test(td[1].text) && /招待が 2 件/.test(td[3].text) && /あと 2 日/.test(td[5].text), JSON.stringify(td));
+  eq(M.todos({}), [], 'nothing to do: nothing said');
+});
+
 await t('the secret sealed as libsodium seals it (crypto_box_seal; vectors from libsodium) and its parts against Node\'s own X25519 and BLAKE2b', () => {
   // (made with libsodium-wrappers 0.7.15: seed keypair from 32 bytes of i+1, ephemeral secret 32 bytes of 100+i; sha256 of the box)
   const V = [['', '1b1b58dd50ea14b60da17b790cd02754d970c9bab864ebb3c0f3016fe51d3f57', '138d5a94edadcd0cb3573cbbad620463cd344c38f5017230d1a0d5eb53a52b7b'],

@@ -63,6 +63,15 @@ export function gh({ token, base = 'https://api.github.com', fetchImpl = (...a) 
     disableWorkflow: (r, id) => call('PUT', `/repos/${r}/actions/workflows/${encodeURIComponent(id)}/disable`),
     /** a fork's branch brought up to its parent's (GitHub's 「Sync fork」) */
     syncFork: (r, branch) => call('POST', `/repos/${r}/merge-upstream`, { branch }),
+    /** the repository's forks, the newest first (up to 100) */
+    forks: (r) => call('GET', `/repos/${r}/forks?sort=newest&per_page=100`),
+    /** someone made a collaborator (invited; on an organization's repository with that role, on a person's with write) */
+    addCollaborator: (r, login, permission = 'push') => call('PUT', `/repos/${r}/collaborators/${encodeURIComponent(login)}`, { permission }),
+    /** the invitations to repositories this person has not taken yet, and one taken */
+    myInvitations: () => call('GET', '/user/repository_invitations?per_page=100'),
+    acceptInvitation: (id) => call('PATCH', `/user/repository_invitations/${encodeURIComponent(id)}`),
+    /** a GitHub App as GitHub shows it to anyone: { slug, permissions, … } */
+    app: (slug) => call('GET', `/apps/${encodeURIComponent(slug)}`),
     /** the secrets' names (never their values: GitHub gives none) → [names], null when this token may not look */
     async secretNames(r) { try { return ((await call('GET', `/repos/${r}/actions/secrets?per_page=100`)).secrets ?? []).map((s) => s.name); } catch (e) { if (e.status === 403 || e.status === 404) return null; throw e; } },
     secrets: async (r) => (await call('GET', `/repos/${r}/actions/secrets?per_page=100`)).secrets ?? [],

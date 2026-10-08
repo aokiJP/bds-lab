@@ -28,7 +28,8 @@ async function fakeGitHub(init = {}) {
   const sk = crypto.randomBytes(32), pk = SEAL.x25519Public(sk);
   const st = { secrets: new Map(), vars: new Map(Object.entries(init.vars ?? {})), pages: init.pages ?? null, pagesStatus: init.pagesStatus ?? 200, installs: init.installs ?? [], instRepos: init.instRepos ?? {},
     runs: [{ id: 1, status: 'completed', conclusion: 'success', event: 'workflow_dispatch', created_at: '2026-01-01T00:00:00Z' }], deployConclusion: init.deployConclusion ?? 'success', notice: init.notice ?? AUTH_URL,
-    health: init.health ?? { ok: true, clientId: 'Iv1.app', origins: ['https://o.github.io'], version: 1 }, seen: [], failSecret: init.failSecret ?? null, log: init.log ?? [], intruders: init.intruders ?? false };
+    health: init.health ?? { ok: true, clientId: 'Iv1.app', origins: ['https://o.github.io'], version: 1 }, seen: [], failSecret: init.failSecret ?? null, log: init.log ?? [], intruders: init.intruders ?? false,
+    appPerms: init.appPerms ?? { actions: 'write', contents: 'write', secrets: 'write', actions_variables: 'write', issues: 'write', workflows: 'write', pages: 'write', pull_requests: 'read', metadata: 'read', members: 'read' } };
   const send = (res, code, j) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(j === null || j === undefined ? '' : JSON.stringify(j)); };
   const srv = http.createServer((req, res) => {
     let b = ''; req.setEncoding('utf8'); req.on('data', (d) => { b += d; });
@@ -37,6 +38,8 @@ async function fakeGitHub(init = {}) {
       st.seen.push({ m, u, auth: req.headers.authorization ?? null, body: b });
       let x;
       if (u === '/auth/health') return send(res, st.health === 500 ? 500 : 200, st.health);
+      // (the App as GitHub shows it to anyone: one made before administration was asked for)
+      if (u === '/apps/lab-o') return send(res, 200, { slug: 'lab-o', permissions: st.appPerms });
       if ((x = /^\/app-manifests\/([\w-]+)\/conversions$/.exec(u)) && m === 'POST') { st.log.push('convert'); return send(res, 201, { id: 4242, slug: 'lab-o', node_id: 'N', client_id: 'Iv1.app', client_secret: CLIENT_SECRET, webhook_secret: null, pem: PEM, html_url: 'https://github.com/apps/lab-o', owner: { login: 'o' }, code: x[1] }); }
       if (u === '/repos/o/lab/actions/secrets/public-key') return send(res, 200, { key_id: 'KID', key: SEAL.toB64(pk) });
       if ((x = /^\/repos\/o\/lab\/actions\/secrets\/(\w+)$/.exec(u)) && m === 'PUT') { if (x[1] === st.failSecret) return send(res, 403, { message: 'Resource not accessible by integration' }); st.secrets.set(x[1], body); return send(res, 201, null); }
@@ -90,12 +93,16 @@ const byKey = (cs) => Object.fromEntries(cs.map((c) => [c.key, c]));
 const QUICK = { sleep: async () => {}, every: 1, timeoutMs: 50 };
 
 await t('the App\'s manifest: no webhook, no events, public (a lender puts it on their own account), its way back to the panel and its sign-in to the service; the permissions the panel and the workflows use and no more (pure)', () => {
-  eq(S.APP_PERMISSIONS, { actions: 'write', contents: 'write', secrets: 'write', actions_variables: 'write', issues: 'write', workflows: 'write', pages: 'write', pull_requests: 'read', metadata: 'read', members: 'read' }, 'members: read, an organization\'s teams for the policy');
+  eq(S.APP_PERMISSIONS, { administration: 'write', actions: 'write', contents: 'write', secrets: 'write', actions_variables: 'write', issues: 'write', workflows: 'write', pages: 'write', pull_requests: 'read', metadata: 'read', members: 'read' }, 'members: read, an organization\'s teams for the policy; administration: a lending fork\'s whole say given to the lab\'s owner');
+  // (an App made before asks its owner to add what is new: what GitHub's App lacks, write covering read)
+  eq(S.appMissing({ actions: 'write', contents: 'write', secrets: 'write', actions_variables: 'write', issues: 'write', workflows: 'write', pages: 'write', pull_requests: 'write', metadata: 'read', members: 'read' }), [['administration', 'write']]);
+  eq(S.appMissing({ ...S.APP_PERMISSIONS }), []); eq(S.appMissing(null).length, Object.keys(S.APP_PERMISSIONS).length);
   ok(Object.isFrozen(S.APP_PERMISSIONS), 'one constant, not changed by anyone');
   const m = S.appManifest({ owner: 'aokiJP', repo: 'bds-lab', panelUrl: 'https://aokijp.github.io/bds-lab/#runs', authUrl: 'https://bds-lab-auth.aoki.workers.dev/' });
   eq(m, { name: 'bds-lab-aokiJP', url: 'https://aokijp.github.io/bds-lab/', hook_attributes: { active: false }, redirect_url: 'https://aokijp.github.io/bds-lab/#setup', callback_urls: ['https://bds-lab-auth.aoki.workers.dev/callback'], setup_url: 'https://aokijp.github.io/bds-lab/#setup',
     public: true, default_permissions: S.APP_PERMISSIONS, default_events: [], request_oauth_on_install: false });
-  for (const k of ['administration', 'organization_administration', 'emails', 'checks']) ok(!(k in m.default_permissions), `no ${k}`);
+  for (const k of ['organization_administration', 'emails', 'checks']) ok(!(k in m.default_permissions), `no ${k}`);
+  ok(m.default_permissions.administration === 'write', 'administration: the repositories it is put on (a lending fork, the lab), nothing of the account');
   eq(m.default_permissions.members, 'read', 'teams read, never written');
   eq(S.appManifest({ owner: 'o', repo: 'lab', panelUrl: 'https://o.github.io/lab/' }).callback_urls, [], 'no service yet: no callback (the check \'callback\' says to set it)');
   eq(S.appManifest({ owner: 'o', repo: 'lab', panelUrl: 'https://o.github.io/lab/', authUrl: 'http://plain.example' }).callback_urls, [], 'only an https service');
@@ -204,6 +211,10 @@ await t('checks, the App made: it is there; installed (only an App\'s sign-in ca
     ok(/Only select repositories」でホストのリポジトリだけ/.test(tok['host:lender/host'].need) && /contents・actions・workflows だけ（hostrun）/.test(tok['host:lender/host'].need), `the lender told to give it the host alone: ${tok['host:lender/host'].need}`);
     ok(tok.workflows.ok === true && tok.workflows.need === '', 'APP_ID and APP_PRIVATE_KEY: no personal token for hostrun or secrets');
     ok(tok.callback.ok === null && /https:\/\/auth\.test\/callback/.test(tok.callback.need) && tok.callback.fix.link === 'https://github.com/settings/apps/lab-o', JSON.stringify(tok.callback));
+    // (an App made before administration was asked for: what to add, and where on GitHub)
+    ok(tok['app-perms'].ok === false && /administration: write/.test(tok['app-perms'].need) && tok['app-perms'].fix.link === 'https://github.com/settings/apps/lab-o/permissions', JSON.stringify(tok['app-perms']));
+    f.st.appPerms = { ...S.APP_PERMISSIONS };
+    eq(byKey(await S.checks({ ...base, signedInWithApp: false }))['app-perms'].ok, true, 'all there: ok');
     const app = byKey(await S.checks({ ...base, signedInWithApp: true }));
     eq([app.installed.ok, app['host:lender/host'].ok, app['host:friend/host2'].ok, app.callback.ok], [true, true, false, true], 'this App\'s installations only; any case');
     ok(/Only select repositories/.test(app['host:friend/host2'].need), app['host:friend/host2'].need);
