@@ -2,14 +2,17 @@
 // the lab there: common/unitci.mjs checks them by these same rules), a person's pack put in the repository for it to take in,
 // and a unit's files changed through the contents API. The contract with unit.yml (workflow_dispatch inputs):
 //   job      new | test | go | sim | import
-//   unit     the unit's name (bds/addons/<unit>, UNIT); import: optional — the name to give it (else the pack's own)
+//   unit     the unit's name (bds/addons/<unit>, UNIT; new and import: one the list shows — unitNameProblem); import: the name
+//            to give it — the panel always sends one (the person's, else unitFromFile: unitci makes the same when none comes)
 //   title    new: what players see (empty: the name)
 //   request  new: what the addon does (into TASK.md)
-//   file     import: the pack in the repository, incoming/<name> (.mcaddon .mcpack .zip — put there by putIncoming)
+//   file     import: the pack, incoming/<name> (.mcaddon .mcpack .zip; <name> its own — incomingStamp) on a branch of its own,
+//            lab-incoming/<name> (incomingBranch), never on the default branch — put there by putIncoming; unit.yml takes it
+//            from that branch and deletes the branch once the unit is made
 //   words    import: what the person asked
 // new and import commit the unit to the default branch; go uploads dist/*.mcaddon as the artifact unit-<name>.
 // Pure but for the calls to GitHub at the end (through lib/gh.mjs). No DOM, no node:.
-import { UNIT } from './units.mjs';
+import { UNIT, isUnitName } from './units.mjs';
 
 export const WORKFLOW = 'unit.yml';
 export const JOBS = ['new', 'test', 'go', 'sim', 'import'];
@@ -34,11 +37,19 @@ export function textProblem(v, { max, line = false, what = '文' }) {
   if (/^\s*(--|[A-Za-z_][\w-]*=)/.test(s)) return `${what}は -- や「名前=」で始められません`;
   return '';
 }
+/** what is wrong with the name of a unit to make or take in (pure) → words; '' when nothing is. The lab's rule (UNIT) and the
+ *  list's (isUnitName: a zz_ one is a parked unit — never shown, so never made); taking: no _ at its end either (the lab's
+ *  import drops one there: the unit made would not be the one asked for) */
+export function unitNameProblem(name, { taking = false } = {}) {
+  const n = String(name ?? '');
+  if (!UNIT.test(n)) return UNIT_SAY;
+  if (!isUnitName(n)) return 'zz_ で始まる名前は「アドオン」に出ません（しまったユニットの印）: ほかの名前に';
+  return taking && n.endsWith('_') ? '取り込むときの名前は _ で終われません（ラボが外します）' : '';
+}
 /** a new unit → { inputs } for unit.yml, or { error } in words (pure) */
 export function newUnitInputs({ unit, title = '', request = '' } = {}) {
   const u = String(unit ?? '').trim(), t = String(title ?? '').trim() || u, q = String(request ?? '').trim();
-  if (!UNIT.test(u)) return { error: UNIT_SAY };
-  const bad = textProblem(t, { max: LIMITS.title, line: true, what: '題' }) || textProblem(q, { max: LIMITS.request, what: '何をするか' });
+  const bad = unitNameProblem(u) || textProblem(t, { max: LIMITS.title, line: true, what: '題' }) || textProblem(q, { max: LIMITS.request, what: '何をするか' });
   return bad ? { error: bad } : { inputs: { job: 'new', unit: u, title: t, request: q } };
 }
 /** test / go / sim of a unit → { inputs } for unit.yml, or { error } (pure) */
@@ -47,10 +58,40 @@ export function runInputs({ job, unit } = {}) {
   const u = String(unit ?? '').trim();
   return UNIT.test(u) ? { inputs: { job, unit: u } } : { error: UNIT_SAY };
 }
-/** a person's pack chosen to take in → { name, path (incoming/<name>), message (the commit's), inputs (unit.yml's) }, or
- *  { error } (pure). Only .mcaddon .mcpack .zip, not empty, up to MAX_BYTES; the name made safe — its folders dropped, only
- *  letters, digits and . _ - (others become _), no dot at the start, no .. — so it can only land in incoming/ */
-export function importPlan({ fileName, size, words = '', unit = '' } = {}) {
+// (what incomingStamp puts at the end of a pack's stem)
+const STAMP = /-\d{8}T\d{4}-[a-z0-9]{4}$/i;
+/** what makes a pack's name in incoming/ its own (pure): -<YYYYMMDD>T<HHMM> (UTC) -<4 letters or digits: nonce>, e.g.
+ *  -20261008T1203-ab12 — two packs of one name, or one sent twice, never land on one another */
+export function incomingStamp(now, nonce) {
+  const d = new Date(now), p = (n, k = 2) => String(n).padStart(k, '0');
+  const t = Number.isFinite(d.getTime()) ? `${p(d.getUTCFullYear() % 10000, 4)}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}` : '00000000T0000';
+  return `-${t}-${String(nonce ?? '').toLowerCase().replace(/[^a-z0-9]/g, '').padEnd(4, '0').slice(0, 4)}`;
+}
+/** 4 random letters or digits (crypto's: the browser's and node's alike) */
+export const randomNonce = () => Array.from(globalThis.crypto.getRandomValues(new Uint8Array(4)), (b) => (b % 36).toString(36)).join('');
+/** the branch a pack waits on for unit.yml (pure): lab-incoming/<its name in incoming/> — from "incoming/<name>" or "<name>";
+ *  null for a name INCOMING refuses */
+export function incomingBranch(file) {
+  const name = String(file ?? '').replace(/^incoming\//, '');
+  return INCOMING.test(`incoming/${name}`) && !name.includes('..') ? `lab-incoming/${name}` : null;
+}
+/** the unit a pack becomes when no name is given (pure; importPlan and unitci's plan alike, so the panel and Actions agree —
+ *  never the pack's own header.name, which the lab would take: "pack.name", 60 letters, "2048 Game"): its file's stem — no
+ *  folder, no .mcaddon .mcpack .zip, no stamp — in lower case, each run of anything but a-z 0-9 one _, none at either end,
+ *  40 at most; addon_ before one that would not start with a letter, would be parked (zz_) or is under 2. Always a name the
+ *  list shows and the lab's import keeps as it is ("2048 Game.mcaddon" → addon_2048_game) */
+export function unitFromFile(file) {
+  const stem = String(file ?? '').split(/[\\/]/).pop().normalize('NFKC').replace(/\.(mcaddon|mcpack|zip)$/i, '').replace(STAMP, '');
+  const fit = (s) => s.slice(0, 40).replace(/_+$/, '');
+  const n = fit(stem.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+/, ''));
+  return /^[a-z]/.test(n) && !n.startsWith('zz_') && n.length >= 2 ? n : fit(`addon_${n}`);
+}
+/** a person's pack chosen to take in → { name (its own: incomingStamp), path (incoming/<name>), branch (lab-incoming/<name>),
+ *  unit, message (the commit's), inputs (unit.yml's) }, or { error } (pure given now and nonce; else the clock's and a random
+ *  one). Only .mcaddon .mcpack .zip, not empty, up to MAX_BYTES; the name made safe — its folders dropped, only letters,
+ *  digits and . _ - (others become _), no dot at the start, no .. — so it can only land in incoming/. unit: the one given,
+ *  else unitFromFile — always there, so the lab never names it from the pack */
+export function importPlan({ fileName, size, words = '', unit = '', now = Date.now(), nonce = randomNonce() } = {}) {
   const base = String(fileName ?? '').split(/[\\/]/).pop().normalize('NFKC'), dot = base.lastIndexOf('.');
   const ext = dot > 0 ? base.slice(dot).toLowerCase() : '';
   if (!IMPORT_TYPES.includes(ext)) return { error: `${IMPORT_TYPES.join('・')} のファイルを選んでください` };
@@ -58,14 +99,14 @@ export function importPlan({ fileName, size, words = '', unit = '' } = {}) {
   if (!Number.isFinite(n) || n <= 0) return { error: '空のファイルです' };
   if (n > MAX_BYTES) return { error: `大きすぎます（${MAX_BYTES / 1024 / 1024} MB まで）` };
   const stem = base.slice(0, dot).replace(/[^A-Za-z0-9._-]+/g, '_').replace(/\.{2,}/g, '.').replace(/^[._-]+/, '').slice(0, 80).replace(/[._-]+$/, '') || 'addon';
-  const name = `${stem}${ext}`, path = `incoming/${name}`, w = String(words ?? '').trim(), u = String(unit ?? '').trim();
-  if (u && !UNIT.test(u)) return { error: UNIT_SAY };
-  const bad = textProblem(w, { max: LIMITS.words, what: 'その人の言葉' });
+  const name = `${stem}${incomingStamp(now, nonce)}${ext}`, path = `incoming/${name}`, w = String(words ?? '').trim(), u = String(unit ?? '').trim();
+  const bad = (u ? unitNameProblem(u, { taking: true }) : '') || textProblem(w, { max: LIMITS.words, what: 'その人の言葉' });
   if (bad) return { error: bad };
   // (cannot fail after the cleaning above: the same check unit.yml makes, said here first)
   if (!INCOMING.test(path) || path.length > LIMITS.file) return { error: 'このファイルの名前は使えません' };
-  // ([skip ci]: a pack waiting in incoming/ is no change of the lab's code — the push starts no verify run; unit.yml is started by hand)
-  return { name, path, message: `panel: 取り込む ${name}（unit.yml が bds/addons に） [skip ci]`, inputs: { job: 'import', file: path, words: w, ...(u ? { unit: u } : {}) } };
+  const as = u || unitFromFile(name);
+  // ([skip ci]: a pack waiting for unit.yml is no change of the lab's code — the push starts no verify run)
+  return { name, path, branch: incomingBranch(name), unit: as, message: `panel: 取り込む ${name}（unit.yml が bds/addons/${as} に） [skip ci]`, inputs: { job: 'import', file: path, unit: as, words: w } };
 }
 /** FileReader's data: URL → its base64 (pure) */
 export function base64Of(dataUrl) { const s = String(dataUrl ?? ''), i = s.indexOf(';base64,'); return i < 0 ? '' : s.slice(i + 8); }
@@ -97,24 +138,36 @@ export function checkEdit(file, text, unit) {
   if (file === 'tests.txt' && !s.trim()) return { ok: false, error: 'tests.txt が空です（試験が 1 つも無くなります）' };
   return { ok: true, error: '' };
 }
+/** a text's line break (pure): its first one — \r\n, \r or \n (none: \n) */
+export const eolOf = (text) => /\r\n|\r|\n/.exec(String(text ?? ''))?.[0] ?? '\n';
+/** a text with every line break made `eol` (pure): a textarea's text (\n alone) back as its file had it */
+export const withEol = (text, eol = '\n') => String(text ?? '').replace(/\r\n|\r|\n/g, eol);
+/** the same text but for how its lines break (pure): a textarea gives a file of \r\n back with \n */
+export const sameText = (a, b) => withEol(a) === withEol(b);
 
 // ---- the calls to GitHub (api: lib/gh.mjs; the person's own sign-in) ----
 const enc = (p) => String(p).split('/').map(encodeURIComponent).join('/');
 const fromB64 = (s) => new TextDecoder().decode(Uint8Array.from(atob(String(s ?? '').replace(/\s/g, '')), (c) => c.charCodeAt(0)));
-/** the pack written to incoming/ on the default branch, its bytes as base64 (the contents API's way); one already there by
- *  that name is replaced (its sha) → GitHub's answer */
-export async function putIncoming(api, slug, { path, message }, content) {
-  if (!INCOMING.test(String(path ?? '')) || String(path).includes('..')) throw new Error('このファイルの名前は使えません');
+/** a pack's branch deleted (best effort: one that cannot be is left for unit.yml or a person) */
+const dropIncoming = (api, slug, branch) => api.call('DELETE', `/repos/${slug}/git/refs/${enc(`heads/${branch}`)}`).catch(() => null);
+/** the pack put on a branch of its own: the default branch's head read (base: its name), lab-incoming/<name> made from it,
+ *  incoming/<name> written there — its bytes as base64, the contents API's way — so the default branch never holds it and
+ *  nothing of it stays in the lab's history once unit.yml deletes the branch. The file refused: the branch deleted again
+ *  → GitHub's answer to the file */
+export async function putIncoming(api, slug, { path, message }, content, base = 'main') {
+  const branch = INCOMING.test(String(path ?? '')) ? incomingBranch(path) : null;
+  if (!branch) throw new Error('このファイルの名前は使えません');
   if (!content) throw new Error('ファイルが読めませんでした');
-  const name = path.slice('incoming/'.length);
-  const here = await api.call('GET', `/repos/${slug}/contents/incoming`).catch((e) => { if (e.status === 404) return []; throw e; });
-  const sha = (Array.isArray(here) ? here : []).find((x) => x?.type === 'file' && x.name === name)?.sha;
-  return api.call('PUT', `/repos/${slug}/contents/${enc(path)}`, { message, content, ...(sha ? { sha } : {}) });
+  const sha = (await api.call('GET', `/repos/${slug}/git/ref/${enc(`heads/${base}`)}`))?.object?.sha;
+  if (!sha) throw new Error(`既定の枝 ${base} の先頭が読めません`);
+  await api.call('POST', `/repos/${slug}/git/refs`, { ref: `refs/heads/${branch}`, sha });
+  try { return await api.call('PUT', `/repos/${slug}/contents/${enc(path)}`, { message, content, branch }); } catch (e) { await dropIncoming(api, slug, branch); throw e; }
 }
-/** a person's pack taken in: put in incoming/, then unit.yml started on it (dispatch(workflow, inputs): GitHub's call) → its path */
-export async function importUnit(api, slug, plan, content, dispatch) {
-  await putIncoming(api, slug, plan, content);
-  await dispatch(WORKFLOW, plan.inputs);
+/** a person's pack taken in: put on its branch (putIncoming; base: the default branch), then unit.yml started with it
+ *  (dispatch(workflow, inputs): GitHub's call, on the default branch) → its path. unit.yml not started: the branch deleted */
+export async function importUnit(api, slug, plan, content, dispatch, base = 'main') {
+  await putIncoming(api, slug, plan, content, base);
+  try { await dispatch(WORKFLOW, plan.inputs); } catch (e) { await dropIncoming(api, slug, incomingBranch(plan.path)); throw e; }
   return plan.path;
 }
 /** a unit's file as the editor takes it → { text, sha }; null when it is not there. One the contents API gives no text of
@@ -125,9 +178,15 @@ export async function readUnitFile(api, slug, path) {
   if (j.encoding !== 'base64') throw new Error(`${path} は大きすぎて、ここでは直せません（1 MB まで）`);
   return { text: fromB64(j.content), sha: j.sha };
 }
-/** a unit's file saved as a commit on the default branch, over the sha it was read at (another's change since then is not
- *  overwritten: said in words) → { sha (the new one), commit (its page) } */
+/** a unit's file saved as a commit on the default branch, over the sha it was read at → { sha (the new one), commit (its
+ *  page) }. Another's change since then — GitHub: 409 "<path> does not match <sha>", 422 "sha" wasn't supplied — is not
+ *  overwritten: said in words. Any other 409 or 422 (a protected default branch answers so too: a ruleset, a pull request
+ *  needed) as GitHub said it */
 export async function saveUnitFile(api, slug, path, text, sha, message) {
   try { const r = await api.putFile(slug, path, text, sha, message); return { sha: r?.content?.sha ?? null, commit: r?.commit?.html_url ?? null }; }
-  catch (e) { if (e.status === 409 || (e.status === 422 && /sha/i.test(String(e.message)))) throw new Error('ほかの人が先に変えました: 「読み直す」で今のものを読んでから、もう一度'); throw e; }
+  catch (e) {
+    if (e.status !== 409 && e.status !== 422) throw e;
+    if (/does not match|"sha" wasn't supplied/i.test(String(e.message))) throw new Error('ほかの人が先に変えました: 「読み直す」で今のものを読んでから、もう一度');
+    throw Object.assign(new Error(`${String(e.message).replace(/\s+/g, ' ').trim()} — 既定の枝が守られているかもしれません（PR が要ります）`), { status: e.status });
+  }
 }
