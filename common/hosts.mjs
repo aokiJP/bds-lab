@@ -8,6 +8,7 @@
 // borrowed addons (someone else's), the app lab's runs; AI jobs and accounts never run on a host.
 //   host [list] · template [<dir>] · add <owner/repo> · run <job> [-a <unit>] [--on <owner/repo>|auto] [--no-wait] [--dry]
 //   results [<request>] · report <owner/repo> [--month YYYY-MM] [--issue [--yes]] · forget <owner/repo> · __job (on the host)
+//   ci (hostrun.yml: started from the management panel, in the lab's own Actions, with the person's LAB_HOST_TOKEN)
 // LAB_GH: another gh (tests). LAB_HOST_POLL_MS: how often a run is looked at (15 s).
 import fs from 'node:fs';
 import os from 'node:os';
@@ -78,6 +79,13 @@ export function pending(ledger) {
 }
 /** a host's minutes in a month (its time zone): the runs settled then */
 export const used = (ledger, host, month, tz = 'UTC') => ledger.filter((r) => r.host === host && r.state === 'done' && monthOf(r.at, tz) === month).reduce((n, r) => n + (Number(r.minutes) || 0), 0);
+/** a host's runs of host.yml as GitHub lists them → the minutes they took in a month of its time zone (each finished run
+ *  rounded up to the minute: the floor of what GitHub billed) — everyone's runs, not only this person's: a lender may lend
+ *  to more than one, and a lab on a fresh runner (hostrun.yml) has no ledger. The panel counts the same (panel/lib/model.mjs) */
+export const monthMinutes = (runs, month, tz = 'UTC') => runs.filter((r) => r.status === 'completed' && monthOf(r.run_started_at ?? r.created_at, tz) === month)
+  .reduce((n, r) => n + Math.max(1, Math.ceil((Date.parse(r.updated_at) - Date.parse(r.run_started_at ?? r.created_at)) / 60_000)), 0);
+/** what GitHub says of a host this month (pure): { month, used, running } — running: a run of host.yml not finished */
+export const githubUse = (runs, now = new Date(), tz = 'UTC') => { const month = monthOf(now, tz); return { month, used: monthMinutes(runs, month, tz), running: runs.some((r) => r.status !== 'completed') }; };
 /** a job's minutes as the last runs of it took (5), else the job's own guess */
 export function estimate(ledger, job) {
   const reqJob = new Map(ledger.filter((r) => r.state === 'dispatched').map((r) => [r.request, r.job]));
@@ -96,11 +104,13 @@ export function canRun(h, job, ledger, now = new Date()) {
   if (h.rulesBad) why.push(`貸し手の .lab-host.json が使えません（${h.rulesBad}）: 直るまで使いません`);
   const r = h.rules;
   if (!r) return { ok: false, why: [...why, '.lab-host.json がありません'], used: 0, limit: 0, remaining: 0 };
-  const tz = r.timezone ?? 'UTC', month = monthOf(now, tz), u = used(ledger, h.slug, month, tz), stopAt = Math.floor(r.minutesPerMonth * STOP_AT), est = estimate(ledger, job);
+  // (the minutes: the more of this person's ledger and GitHub's own count of the host's runs this month — the last look's)
+  const tz = r.timezone ?? 'UTC', month = monthOf(now, tz), g = h.github?.month === month ? h.github : null;
+  const u = Math.max(used(ledger, h.slug, month, tz), Number(g?.used) || 0), stopAt = Math.floor(r.minutesPerMonth * STOP_AT), est = estimate(ledger, job);
   if (r.until && dayOf(now, tz) > r.until) why.push(`期限（${r.until}）を過ぎました`);
   if (!r.jobs.includes(job)) why.push(`${job} は許されていません（許す仕事: ${r.jobs.join(' ')}）`);
   if (!within(r.hours, tz, now)) why.push(`時間帯（${r.hours} ${tz}）の外です`);
-  if (pending(ledger).some((p) => p.host === h.slug)) why.push('別の仕事が走っています（同じホストで同時に 1 つ）');
+  if (pending(ledger).some((p) => p.host === h.slug) || g?.running) why.push('別の仕事が走っています（同じホストで同時に 1 つ）');
   if (u + est > stopAt) why.push(`今月 ${u} 分 + この仕事の見込み ${est} 分が、上限 ${r.minutesPerMonth} 分の 80%（${stopAt} 分）を超えます`);
   return { ok: !why.length, why, used: u, limit: r.minutesPerMonth, stopAt, remaining: Math.max(0, stopAt - u), estimate: est };
 }
@@ -116,7 +126,7 @@ export const readHosts = () => readJson(HOSTS(), { hosts: {} });
 export function hostsSummary(now = new Date()) {
   const H = readHosts(), L = readLedger(), list = Object.entries(H.hosts);
   if (!list.length) return null;
-  return list.map(([s, h]) => { const tz = h.rules?.timezone ?? 'UTC', m = monthOf(now, tz); return `${s} ${used(L, s, m, tz)}/${Math.floor((h.rules?.minutesPerMonth ?? 0) * STOP_AT)} 分（${m}）${h.withdrawn ? ' ✘ 使えません' : h.unseen || h.push === false || h.archived || h.rulesBad ? ' ⏸ 止まっています' : ''}`; }).join(' · ');
+  return list.map(([s, h]) => { const tz = h.rules?.timezone ?? 'UTC', m = monthOf(now, tz); return `${s} ${usedNow(h, s, L, now)}/${Math.floor((h.rules?.minutesPerMonth ?? 0) * STOP_AT)} 分（${m}）${h.withdrawn ? ' ✘ 使えません' : h.unseen || h.push === false || h.archived || h.rulesBad ? ' ⏸ 止まっています' : ''}`; }).join(' · ');
 }
 const saveHosts = (h) => writeJson(HOSTS(), h);
 
@@ -224,8 +234,16 @@ function refresh(H, slug, out) {
   if (bad && bad !== h.rulesBad) out(`W ${slug} の .lab-host.json: ${bad}（直るまで、このホストは使いません）`);
   h.rulesBad = bad;
   h.checked = at;
+  // GitHub's own count of the month (everyone's runs there): a question GitHub does not answer leaves the ledger alone to count
+  if (h.rules) {
+    const tz = h.rules.timezone ?? 'UTC', from = new Date(Date.parse(`${monthOf(new Date(), tz)}-01T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+    const { j } = ghJson(['api', `repos/${slug}/actions/workflows/host.yml/runs?per_page=100&created=${encodeURIComponent(`>=${from}`)}`]);
+    h.github = Array.isArray(j?.workflow_runs) ? { ...githubUse(j.workflow_runs, new Date(), tz), at } : null;
+  }
   return h;
 }
+/** a host's minutes this month: the more of the ledger's and GitHub's (as the last look found it) */
+const usedNow = (h, slug, L, now = new Date()) => { const tz = h.rules?.timezone ?? 'UTC', m = monthOf(now, tz); return Math.max(used(L, slug, m, tz), h.github?.month === m ? Number(h.github.used) || 0 : 0); };
 
 // ---------------------------------------------------------------- commands
 const usage = `usage: node lab.mjs host <command> — GitHub Actions time lent by lenders (docs/guide/host.md)
@@ -236,7 +254,8 @@ const usage = `usage: node lab.mjs host <command> — GitHub Actions time lent b
                                        push the lab (and the unit) → start host.yml → wait → the result → the minutes in the ledger
   host results [<request>]             the result of a run (and the runs left unsettled: picked up where they stopped)
   host report <owner/repo> [--month YYYY-MM] [--issue [--yes]]   the month for the lender (numbers only); --issue writes it there
-  host forget <owner/repo>             stop using it (nothing changes there)`;
+  host forget <owner/repo>             stop using it (nothing changes there)
+  host ci                              (hostrun.yml) the job the management panel asked for, on a host, with LAB_HOST_TOKEN`;
 function opt(args, k, d = null) { const i = args.indexOf(k); if (i < 0) return d; const v = args[i + 1]; args.splice(i, 2); return v ?? d; }
 function flag(args, k) { const i = args.indexOf(k); if (i < 0) return false; args.splice(i, 1); return true; }
 const newRequest = (now = new Date()) => `r${now.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)}-${crypto.randomBytes(2).toString('hex')}`;
@@ -247,7 +266,7 @@ function listCmd(out) {
   const slugs = Object.keys(H.hosts);
   if (!slugs.length) { out('ホストはまだありません: 貸し手が host/template からリポジトリを作り、あなたを招いたら node lab.mjs host add <owner/repo>（docs/guide/host.md）'); return true; }
   for (const s of slugs) {
-    const h = H.hosts[s], r = h.rules, tz = r?.timezone ?? 'UTC', u = used(L, s, monthOf(now, tz), tz);
+    const h = H.hosts[s], r = h.rules, tz = r?.timezone ?? 'UTC', u = usedNow(h, s, L, now);
     out(`${s}${h.withdrawn ? '  ✘ 使えません' : ''}`);
     const paused = [!h.withdrawn && h.unseen ? `今は見えません（${h.unseen.why}）` : null, h.push === false ? '書き込めません' : null, h.archived ? 'アーカイブされています' : null, h.rulesBad ? `.lab-host.json: ${h.rulesBad}` : null].filter(Boolean);
     if (paused.length) out(`  ⏸ ${paused.join(' · ')}（直るまで使いません）`);
@@ -388,6 +407,43 @@ async function runCmd(args, out) {
   showResult({ ...done, host: pick.host }, out);
   return done.ok === true;
 }
+/** host ci (hostrun.yml, in the lab's own Actions): a job on a lender's host started from the management panel — no computer of
+ *  the person's in between. Their own token (secret LAB_HOST_TOKEN → GH_TOKEN) reaches the host; HOST_ON is the host or auto
+ *  (the variable LAB_HOSTS' list), each added as `host add` does (the rules, host.yml as the lab's); the minutes are GitHub's
+ *  count (a fresh runner has no ledger); then `host run`. The result: the run's summary, an annotation for a failure (notify
+ *  tells it to Discord) and HOST_OUT (default hostrun-result/: the artifact, with a go's .mcaddon) */
+async function ciCmd(out) {
+  const E = process.env;
+  if (!E.GITHUB_ACTIONS && !E.LAB_HOST_CI) throw new Error('host ci は hostrun.yml の中で（手元からは node lab.mjs host run）');
+  if (!E.GH_TOKEN) throw new Error('秘密 LAB_HOST_TOKEN がありません: ホストに push でき、ワークフローを始められるあなたのトークン（Classic: repo・workflow / Fine-grained: ホストの Contents・Actions・Workflows を Read and write）を、ラボの Secrets に（管理パネルの「秘密」から）');
+  const job = String(E.HOST_JOB ?? '').trim(), unit = String(E.HOST_UNIT ?? '').trim(), on = String(E.HOST_ON || 'auto').trim(), wait = !/^(false|0|no)$/i.test(String(E.HOST_WAIT ?? ''));
+  const list = on === 'auto' ? String(E.LAB_HOSTS ?? '').split(/[\s,]+/).filter(Boolean) : [on];
+  if (!list.length) throw new Error('ホストがありません: HOST_ON に owner/repo を、または変数 LAB_HOSTS にホストの一覧を（管理パネルの「実行」）');
+  const bad = list.find((s) => !SLUG.test(s));
+  if (bad) throw new Error(`${bad} は owner/repo ではありません`);
+  // (what the run prints is the lab's and the host's words: no line of it is taken as a workflow command)
+  const stop = crypto.randomBytes(8).toString('hex'), log = [];
+  out(`::stop-commands::${stop}`);
+  const say = (l) => { log.push(String(l)); out(l); };
+  let ok = false;
+  try {
+    for (const s of list) { const r = await hostCmd(['add', s], say); if (!r) say(`W ${s}: 使えません（上の理由）`); }
+    ok = await hostCmd(['run', job, ...(unit ? ['-a', unit] : []), '--on', on, ...(wait ? [] : ['--no-wait'])], say);
+  } finally { out(`::${stop}::`); }
+  // the result where the person looks: the run's summary, an annotation when it failed (notify's message carries it)
+  const keep = log.filter((l) => /^(PASS|FAIL|LOST|STOP|ERR|started|ホストに頼めません|W |\s{2}\S)/.test(l)).slice(-25);
+  const md = [`## ${ok ? '✅' : '❌'} ${job}${unit ? ` -a ${unit}` : ''}（ホスト: ${on}${wait ? '' : '、待たない'}）`, '', '```', ...keep, '```', ''].join('\n');
+  if (E.GITHUB_STEP_SUMMARY) { try { fs.appendFileSync(E.GITHUB_STEP_SUMMARY, md); } catch { /* the summary is extra */ } }
+  const esc = (s) => String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+  if (!ok) out(`::error title=${esc(`host ${job}`).replace(/[:,]/g, ' ')}::${esc(keep.filter((l) => !/^started/.test(l)).slice(-8).join('\n') || 'ホストで走らせられませんでした')}`);
+  // the results this run took (result.json, log.txt, a go's .mcaddon) → HOST_OUT, uploaded as the run's artifact
+  const dest = path.resolve(TOP, E.HOST_OUT || 'hostrun-result');
+  for (const d of readLedger().filter((r) => r.state === 'done' && r.result)) {
+    const src = path.isAbsolute(d.result) ? d.result : path.join(TOP, d.result);
+    if (fs.existsSync(src)) fs.cpSync(src, path.join(dest, d.request), { recursive: true });
+  }
+  return ok;
+}
 async function resultsCmd(args, out) {
   for (const d of await settleAll(out, { wait: false })) showResult(d, out);
   const L = readLedger(), want = args[0];
@@ -495,6 +551,7 @@ export async function hostCmd(args, out = console.log) {
     if (sub === 'results') return await resultsCmd(rest, out);
     if (sub === 'report') return await reportCmd(rest, out);
     if (sub === 'forget') return forgetCmd(rest, out);
+    if (sub === 'ci') return await ciCmd(out);
     if (sub === '__job') return await jobCmd(out);
     out(usage); return sub === 'help' || sub === '--help';
   } catch (e) { out(`ERR host ${sub}: ${String(e.message).split('\n')[0]}`); return false; }

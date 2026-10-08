@@ -57,3 +57,5 @@ bds/addons/borrowed_*/
 .fanout/plan.json
 # fanout: レーンの作業フォルダ
 .claude/worktrees/
+# hostrun.yml: the host's results for the run's artifact (made on the runner)
+hostrun-result/

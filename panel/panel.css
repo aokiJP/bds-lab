@@ -43,3 +43,12 @@ img.screen { width: 100%; border-radius: 10px; border: 1px solid var(--line); }
 #toast div.bad { background: var(--bad); color: #fff; }
 .jobs { margin: 6px 0 0 6px; font-size: 13px; }
 a { color: var(--accent); }
+#who select { width: auto; max-width: 46vw; padding: 4px 8px; min-height: 34px; font-size: 13px; }
+#who button { min-height: 34px; padding: 4px 10px; }
+ul.targets label { display: flex; gap: 10px; align-items: flex-start; color: var(--fg); font-size: 15px; margin: 0; cursor: pointer; }
+.grow { min-width: 0; }
+.row > input[type=text], .row > input[type=password] { flex: 1 1 180px; width: auto; }
+input[type=radio] { width: 20px; height: 20px; margin: 0; flex: none; }
+.files { margin-top: 8px; display: grid; gap: 6px; }
+.files .chip { margin: 2px 4px 2px 0; }
+[hidden] { display: none !important; }

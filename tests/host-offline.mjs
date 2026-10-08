@@ -298,6 +298,44 @@ await t('host report: the month in numbers for the lender (no units, no contents
   r = host(['forget', 'friend/host']); ok(r.status === 0 && !JSON.parse(fs.readFileSync(path.join(STATE, 'hosts.json'), 'utf8')).hosts['friend/host'], r.text);
 });
 
+await t('host ci (hostrun.yml, started from the management panel): on a fresh runner with the person\'s LAB_HOST_TOKEN — the host added, GitHub\'s own count of the month (everyone\'s runs) stops it at 80%, the result in the summary, an annotation and HOST_OUT; the host\'s words never read as workflow commands', () => {
+  const fresh = (name) => { const d = path.join(tmp, name); fs.mkdirSync(d, { recursive: true }); return d; };
+  const now = Date.now(), iso = (ms) => new Date(ms).toISOString();
+  const ci = (extra) => host(['ci'], { LAB_HOST_CI: '1', GH_TOKEN: 'ghs_test', HOST_ON: 'lender/host', HOST_JOB: 'sim', HOST_UNIT: 'jsonui_demo', HOST_WAIT: 'true', ...extra });
+  let r = host(['ci'], { LAB_HOST_CI: '1', HOST_ON: 'lender/host', HOST_JOB: 'sim' });
+  ok(r.status === 1 && /LAB_HOST_TOKEN/.test(r.text) && /Secrets/.test(r.text), `no token: what to set, where\n${r.text}`);
+  r = host(['ci'], { GH_TOKEN: 'x', HOST_JOB: 'gate' });
+  ok(r.status === 1 && /hostrun\.yml の中で/.test(r.text), `not in Actions: said\n${r.text}`);
+  r = ci({ LAB_HOST_STATE: fresh('ci0'), HOST_ON: 'auto', LAB_HOSTS: '' });
+  ok(r.status === 1 && /LAB_HOSTS/.test(r.text), r.text);
+  r = ci({ LAB_HOST_STATE: fresh('ci0b'), HOST_ON: 'auto', LAB_HOSTS: 'lender/host,$(id)' });
+  ok(r.status === 1 && /\$\(id\) は owner\/repo ではありません/.test(r.text), r.text);
+  // passes: a fresh runner (no ledger), GitHub counting 10 of the month's minutes
+  setState((x) => { x.ghRuns = { 'lender/host': [{ status: 'completed', conclusion: 'success', run_started_at: iso(now - 60_000), updated_at: iso(now + 9 * 60_000) }] }; });
+  const sum = path.join(tmp, 'summary.md'), outDir = path.join(tmp, 'hostrun-result');
+  r = ci({ LAB_HOST_STATE: fresh('ci1'), GITHUB_STEP_SUMMARY: sum, HOST_OUT: outDir });
+  const stop = /^::stop-commands::([0-9a-f]{16})$/m.exec(r.text)?.[1];
+  ok(r.status === 0 && /^OK lender\/host: 1 か月 100 分/m.test(r.text) && /^lender\/host: sim -a jsonui_demo · .* 今月 10\/80 分/m.test(r.text) && /^PASS r\S+ on lender\/host/m.test(r.text) && !/::error/.test(r.text), r.text);
+  ok(stop && r.text.indexOf(`::stop-commands::${stop}`) < r.text.indexOf('PASS r') && r.text.indexOf('PASS r') < r.text.indexOf(`::${stop}::`), `what the host says is printed between stop-commands and its resume\n${r.text}`);
+  ok(/## ✅ sim -a jsonui_demo（ホスト: lender\/host）/.test(fs.readFileSync(sum, 'utf8')) && /PASS r/.test(fs.readFileSync(sum, 'utf8')), fs.readFileSync(sum, 'utf8'));
+  const got = fs.readdirSync(outDir);
+  ok(got.length === 1 && fs.existsSync(path.join(outDir, got[0], 'result.json')), `the result for the run's artifact: ${got}`);
+  eq(branches('lender/host'), ['main'], 'the work branch gone');
+  // GitHub's count: 79 minutes used (by anyone) — the empty ledger of a fresh runner does not let it through
+  setState((x) => { x.ghRuns['lender/host'] = [{ status: 'completed', conclusion: 'success', run_started_at: iso(now - 60_000), updated_at: iso(now + 78 * 60_000) }]; });
+  r = ci({ LAB_HOST_STATE: fresh('ci2') });
+  ok(r.status === 1 && /今月 79 分 \+ この仕事の見込み 2 分が、上限 100 分の 80%（80 分）を超えます/.test(r.text) && /^::error title=host sim::.*80%25（80 分）/m.test(r.text), `stopped by GitHub's count, the reason as an annotation (escaped)\n${r.text}`);
+  // a run going there now (someone else's): one at a time
+  setState((x) => { x.ghRuns['lender/host'] = [{ status: 'in_progress', run_started_at: iso(now - 60_000), updated_at: iso(now) }]; });
+  r = ci({ LAB_HOST_STATE: fresh('ci3') });
+  ok(r.status === 1 && /別の仕事が走っています/.test(r.text), r.text);
+  // the job failed on the host: this run fails, the host's lines in its annotation
+  setState((x) => { x.ghRuns['lender/host'] = []; });
+  r = ci({ LAB_HOST_STATE: fresh('ci4'), HOST_JOB: 'gate', HOST_UNIT: '', FAKE_RUN_OK: '0' });
+  ok(r.status === 1 && /^FAIL r\S+ on lender\/host/m.test(r.text) && /^::error title=host gate::.*FAIL gate: tests\/x-offline\.mjs/m.test(r.text), r.text);
+  setState((x) => { delete x.ghRuns; });
+});
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${fail ? 'FAIL' : 'OK'} host-offline: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

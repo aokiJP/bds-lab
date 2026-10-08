@@ -5,7 +5,7 @@
 スマホの Discord から CI の端末を画面とボタンで動かせ、リポジトリの秘密も Discord のフォームで登録できる（node も PC も要らない）。**
 
 ### 管理パネル（panel/: 作者と、GitHub Actions の時間を貸し借りする人のための Web）
-- 1 枚の静的なページ（GitHub Pages: `.github/workflows/pages.yml`、手元: `node lab.mjs panel`）。見る人の GitHub のトークン（Fine-grained）で
+- 1 枚の静的なページ（GitHub Pages: `.github/workflows/pages.yml`。リポジトリだけで動く: 手元のサーバー `node lab.mjs panel` はやめた）。見る人の GitHub のトークンで
   GitHub の API とだけ話す（CSP で api.github.com のほかへは通信できない。トークンはそのブラウザの中だけ）。ラボに書き込める人・ホストの持ち主（貸し手）・
   ホストに書き込める人（借り手）のほかは「使えません」で止まり、何も読まない。
 - それぞれの設定のまま: リポジトリの秘密の名前・ワークフロー・公開か非公開か、ホストの `.lab-host.json` から「できること」と「足りないもの」。
@@ -14,7 +14,26 @@
   APP_CACHE_KEY でその場で封じ・開く: ランナーの vault と同じ形）・貸し借り（借り手: 今月の分と残り。貸し手: 条件を変える・今すぐ止める・再開）。
 - Discord: `.github/workflows/notify.yml` + `app notify` が、終わった実行を DM（自分のボット）か LAB_NOTIFY_WEBHOOK に（結果・落ちたジョブと理由・ボタン。
   変数 LAB_NOTIFY: auto / all / failures / off）。端末のボタンの表は `panel/lib/pages.mjs` の 1 つ（Discord もパネルも）。
-- 試験: `tests/panel-offline.mjs`（12 本）、`tests/panel-browser.mjs`（本物の Chromium で 21 の確かめ: 入れない人・作者・借り手・貸し手。CI の verify で）。
+- **いくつものアカウント**（`panel/lib/accounts.mjs`）: 作者・貸し手・借り手のアカウントを 1 つのブラウザに加え（右上の ＋）、上で切り替える。
+  トークンと設定（ラボ・ホストの一覧・読み直す間隔・APP_CACHE_KEY）はアカウントごと。覚えないものはそのタブの間だけ。「出る」はそのアカウントだけを
+  消す。前の版の 1 つのトークンは最初のアカウントに引き継ぐ。貸し手の初めての訪問では、その人のホストを先に探す（「使えません」で止めない）。
+- **どこの Actions で走らせるか**: 「実行」で、このラボの Actions か、貸し手のホスト（その人の Actions の分）かを選ぶ。ホストなら許された仕事・
+  ユニット・結果を待つかを選んで `.github/workflows/hostrun.yml` を始め、ラボのランナーの `node lab.mjs host ci` が `host run` と同じ中身・検査で
+  ホストに送る（秘密 `LAB_HOST_TOKEN`: パネルが足りないと言い、「秘密」で入れられる）。待てばホストの結果が、その実行の結果・まとめ・注釈・成果物
+  （go の .mcaddon も）になり notify が知らせる。ホストから戻る行は `::stop-commands::` の中で出す（workflow の命令として読まれない）。
+  「進み具合」もラボかホストかを選べる。
+- **ホストの分は GitHub の数でも**: `host run`（と host ci）は、ホストの今月の分を自分の台帳と、GitHub が数えた host.yml の実行（誰の分も）の
+  多いほうで見る。何人かが同じホストを借りても、台帳の無いランナーからでも 80% を超えない。走っている実行があれば始めない。
+- **成果物を Discord に**: notify が、終わった実行の成果物から .mcaddon・.mcpack・.mcworld・.mctemplate を 10 MB まで添える（DM と Discord の
+  Webhook。入らないものは名前とサイズ、「成果物」のボタン）。変数 `LAB_NOTIFY_FILES`（auto / off / 型）・`LAB_NOTIFY_MAX_MB`。このリポジトリの
+  コードの実行だけ: フォークの PR の実行のファイルは渡さない。zip は欲しいファイルだけを、上限つきで開く。notify は hostrun・ai-make の後にも走り、
+  手で `run` を入れればその実行を今送る（`app notify --force`）。「管理パネル」のボタンはその実行を開く（`#runs?repo=…&run=…`）。
+- パネルの新しいタブ: 「成果物」（実行ごとの成果物、Discord に送る）・「Discord」（つなぐ秘密をその場で封じて登録・どの実行を知らせるか / 何を添えるか
+  をリポジトリの変数に・試しに送る・いちばん新しい成果物を送る・端末と秘密のフォーム）。Fine-grained トークンが届かないホスト（ほかの人の個人アカウント）
+  には、Classic トークンを使うよう、そのホストのところで言う。
+- 試験: `tests/panel-offline.mjs`（14 本: アカウント・ホストで走らせる入力・アドレス・成果物の選び方と取り方・Discord への添付・フォークの実行）、
+  `tests/panel-browser.mjs`（本物の Chromium で 40 の確かめ: 入れない人・作者・借り手・貸し手・2 つのアカウントの切り替え・貸し手の Actions で走らせる・
+  成果物を Discord に・知らせ方の変数・Discord のリンクから実行を開く。CI の verify で）、`tests/host-offline.mjs`（`host ci` と GitHub の数）。
 - `tests/play-bds.mjs`: `do` が繰り返す命令の行を答えと読まない（CI の本物の BDS で、where・items・face の答えそのものは正しく返っていた）。
 
 ### ゲームを人のように（app.txt と live）

@@ -4,6 +4,9 @@
 //    with the preset's inputs, a secret sealed in the page (GitHub's key opens it; the value is never stored), the live
 //    device driven through the issue — sealed both ways in a public repository once the vault key is set
 //  - a lender: only their host, its minutes this month, lending stopped from the page (.lab-host.json's `until`)
+//  - both in one browser: added with ＋, switched at the top, each with its own settings; the author runs a job on the
+//    lender's Actions (hostrun.yml, after LAB_HOST_TOKEN is set in the page), sends a run's deliverables to Discord, sets
+//    how Discord is told (repository variables), and a link from Discord opens the run it names
 // Every page error and CSP report fails it. node tests/panel-browser.mjs (playwright-core is fetched once by npm;
 // LAB_BROWSER / APP_BROWSER = a Chromium to use, else /opt/pw-browsers/chromium, else Chrome, else Playwright's own)
 import fs from 'node:fs';
@@ -16,7 +19,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imp = (p) => import(pathToFileURL(path.join(TOP, p)).href);
 const { loadPlaywright } = await imp('app/lib/playwright-login.mjs');
-const { panelHandler } = await imp('common/panel.mjs');
 const SEAL = await imp('panel/lib/seal.mjs'), AL = await imp('app/lib/live.mjs'), M = await imp('panel/lib/model.mjs');
 let bad = 0;
 const check = (c, name, info = '') => { console.log(`${c ? '✔' : '✘'} ${name}${c ? '' : `\n    ${String(info).slice(0, 1500)}`}`); if (!c) bad++; };
@@ -33,9 +35,11 @@ const people = {
   'tok-lender': { login: 'lender1', repos: { [HOST]: { admin: true, push: true, pull: true } } },
 };
 const G = {
-  files: { [`${LAB}:.github/workflows/app.yml`]: wf('app.yml'), [`${LAB}:.github/workflows/notify.yml`]: wf('notify.yml'), [`${LAB}:.github/workflows/secrets.yml`]: wf('secrets.yml'),
+  files: { [`${LAB}:.github/workflows/app.yml`]: wf('app.yml'), [`${LAB}:.github/workflows/notify.yml`]: wf('notify.yml'), [`${LAB}:.github/workflows/secrets.yml`]: wf('secrets.yml'), [`${LAB}:.github/workflows/hostrun.yml`]: wf('hostrun.yml'),
     [`${HOST}:.lab-host.json`]: JSON.stringify({ lab: 1, minutesPerMonth: 600, jobs: ['gate', 'test'], hours: '00:00-24:00', timezone: 'UTC', until: '2099-12-31', contact: 'lender1' }, null, 2) },
-  dispatched: [], secretsPut: [], filesPut: [], posted: [],
+  dispatched: [], secretsPut: [], filesPut: [], posted: [], secretNames: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID', 'GOOGLE_EMAIL']), vars: { LAB_NOTIFY: 'failures' }, varsPut: [],
+  artifacts: [{ id: 31, name: 'bds-addons', size_in_bytes: 1_234_567, expired: false, created_at: iso(now - 3_000_000), workflow_run: { id: 100, head_branch: 'main' } },
+    { id: 30, name: 'old-addons', size_in_bytes: 99, expired: true, created_at: iso(now - 90 * 86_400_000), workflow_run: { id: 90, head_branch: 'main' } }],
   comments: [{ id: 900, body: 'lab-live@101 待っています（60 分まで。端末: スナップショットから起動しました）', created_at: iso(now - 60_000), user: { login: 'github-actions[bot]' } },
     { id: 901, body: AL.replyBody(101, 900, '> screen  [1.2 秒]\n--- 画面: com.mojang.minecraftpe', PNG, 60_000, VENV), created_at: iso(now - 50_000), user: { login: 'github-actions[bot]' } },
     // (a look-alike reply from someone else in the public issue: not shown)
@@ -68,10 +72,19 @@ async function api(route) {
     if (req.method() === 'PUT') { if (!perm.push) return send(403, { message: 'no' }); G.filesPut.push({ slug, f, body }); G.files[key] = Buffer.from(body.content, 'base64').toString('utf8'); return send(200, {}); }
     return G.files[key] !== undefined ? send(200, { content: Buffer.from(G.files[key]).toString('base64'), sha: 'sha-' + key.length }) : send(404, { message: 'Not Found' });
   }
-  if (rest === '/actions/secrets') return perm.admin ? send(200, { secrets: ['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID', 'GOOGLE_EMAIL'].map((name) => ({ name, updated_at: iso(now - 86_400_000) })) }) : send(403, { message: 'Resource not accessible' });
+  if (rest === '/actions/secrets') return perm.admin ? send(200, { secrets: [...G.secretNames].map((name) => ({ name, updated_at: iso(now - 86_400_000) })) }) : send(403, { message: 'Resource not accessible' });
   if (rest === '/actions/secrets/public-key') return send(200, { key_id: 'KID1', key: SEAL.toB64(PK) });
-  if (rest.startsWith('/actions/secrets/') && req.method() === 'PUT') { G.secretsPut.push({ name: decodeURIComponent(rest.split('/').pop()), body }); return send(201, null); }
-  if (rest === '/actions/workflows') return send(200, { workflows: ['app', 'notify', 'secrets', 'verify'].map((n, i) => ({ id: i + 1, name: n, path: `.github/workflows/${n}.yml`, state: 'active' })) });
+  if (rest.startsWith('/actions/secrets/') && req.method() === 'PUT') { const name = decodeURIComponent(rest.split('/').pop()); G.secretsPut.push({ name, body }); G.secretNames.add(name); return send(201, null); }
+  if (rest === '/actions/workflows') return send(200, { workflows: ['app', 'notify', 'secrets', 'verify', 'hostrun'].map((n, i) => ({ id: i + 1, name: n, path: `.github/workflows/${n}.yml`, state: 'active' })) });
+  if (rest === '/actions/artifacts') return send(200, { artifacts: slug === LAB ? G.artifacts : [] });
+  const am = /^\/actions\/runs\/(\d+)\/artifacts/.exec(rest); if (am) return send(200, { artifacts: slug === LAB ? G.artifacts.filter((a) => String(a.workflow_run.id) === am[1]) : [] });
+  const vm = /^\/actions\/variables(?:\/([A-Z_]+))?$/.exec(rest);
+  if (vm) {
+    if (!perm.admin) return send(403, { message: 'Resource not accessible by personal access token' });
+    if (req.method() === 'GET') return G.vars[vm[1]] !== undefined ? send(200, { name: vm[1], value: G.vars[vm[1]] }) : send(404, { message: 'Not Found' });
+    if (req.method() === 'PATCH') { if (G.vars[vm[1]] === undefined) return send(404, { message: 'Not Found' }); G.vars[vm[1]] = body.value; G.varsPut.push(`PATCH ${vm[1]}=${body.value}`); return send(204, null); }
+    if (req.method() === 'POST' && !vm[1]) { G.vars[body.name] = body.value; G.varsPut.push(`POST ${body.name}=${body.value}`); return send(201, null); }
+  }
   if (/^\/actions\/workflows\/[^/]+\/dispatches$/.test(rest)) { G.dispatched.push({ workflow: decodeURIComponent(rest.split('/')[3]), body }); return send(204, null); }
   if (/^\/actions\/workflows\/[^/]+\/runs/.test(rest)) { const w = decodeURIComponent(rest.split('/')[3]); return send(200, { workflow_runs: (runs[slug] ?? []).filter((r) => slug === HOST || r.path?.endsWith(`/${w}`)).filter((r) => !u.searchParams.get('status') || r.status === u.searchParams.get('status')) }); }
   if (rest === '/actions/runs') return send(200, { workflow_runs: runs[slug] ?? [] });
@@ -83,8 +96,15 @@ async function api(route) {
   return send(404, { message: `Not Found ${rest}` });
 }
 
-// ---- the page, served as `node lab.mjs panel` serves it ----
-const srv = http.createServer(panelHandler()).listen(0, '127.0.0.1');
+// ---- the page, served as GitHub Pages serves panel/: its files, with the page's own policy as a header too ----
+const ROOT = path.join(TOP, 'panel'), CSP = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8'))[1];
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
+const srv = http.createServer((req, res) => {
+  const rel = decodeURIComponent(new URL(req.url, 'http://x').pathname).replace(/\/$/, '/index.html'), f = path.resolve(ROOT, `.${rel}`);
+  if (!f.startsWith(ROOT + path.sep) || !fs.existsSync(f) || !fs.statSync(f).isFile()) { res.writeHead(404); return res.end(); }
+  res.writeHead(200, { 'content-type': TYPES[path.extname(f)] ?? 'application/octet-stream', 'content-security-policy': CSP, 'cache-control': 'no-store' });
+  fs.createReadStream(f).pipe(res);
+}).listen(0, '127.0.0.1');
 await new Promise((r) => srv.once('listening', r));
 const URL0 = `http://127.0.0.1:${srv.address().port}/`;
 const { pw } = loadPlaywright(path.join(os.tmpdir(), 'bds-lab-panel-browser'), { log: console.log });
@@ -170,10 +190,66 @@ try {
   await page.locator('#tabbody button', { hasText: '加える' }).click();
   check(await waitText(/借り手/) && await waitText(/今月 25 分/) && !/貸す条件（あなたのホスト）/.test(await text()), 'a borrower: the host\'s minutes this month, no form to change its rules', await text());
 
-  // a lender: only their host — its minutes, and lending stopped from the page
-  await page.locator('#who button', { hasText: '出る' }).click();
-  await signIn('tok-lender');
-  await waitText(/貸し手|ホスト/);
+  // where a job runs: the lender's Actions — hostrun.yml needs LAB_HOST_TOKEN, set in the page, then started from it
+  await tab('実行');
+  await page.locator(`ul.targets input[value="${HOST}"]`).check();
+  check(await waitText(/lender1 さんの Actions/) && await waitText(/今月 25 分 \/ 止まる 480 分/) && /LAB_HOST_TOKEN が要ります/.test(await text()) && await page.locator('button', { hasText: 'さんの Actions で始める' }).isDisabled(), 'the lender\'s host as where to run: its minutes; without LAB_HOST_TOKEN it cannot start, and says what is missing', await text());
+  await page.locator('button', { hasText: '「秘密」で登録する' }).click();
+  await page.waitForSelector('#tabbody input');
+  check(await page.locator('#tabbody input').nth(0).inputValue() === 'LAB_HOST_TOKEN', 'the secret\'s name filled in', await page.locator('#tabbody input').nth(0).inputValue());
+  await page.locator('#tabbody input').nth(1).fill('ghp_the_borrowers_own_token');
+  await page.locator('#tabbody button', { hasText: '登録する' }).click();
+  await waitText(/LAB_HOST_TOKEN を登録しました/, 5000).catch(() => {});
+  await page.waitForTimeout(800);
+  check(G.secretsPut.some((x) => x.name === 'LAB_HOST_TOKEN'), 'LAB_HOST_TOKEN sealed and set', JSON.stringify(G.secretsPut.map((x) => x.name)));
+  await tab('実行');
+  await page.locator(`ul.targets input[value="${HOST}"]`).check();
+  await waitText(/いま使えます/);
+  await page.selectOption('#hjob', 'test');
+  await page.fill('#hunit', 'coins');
+  await page.locator('button', { hasText: 'さんの Actions で始める' }).click();
+  await waitText(/を始めました/, 3000).catch(() => {});
+  await page.waitForTimeout(500);
+  const hr = G.dispatched.find((x) => x.workflow === 'hostrun.yml');
+  check(hr && hr.body.ref === 'main' && JSON.stringify(hr.body.inputs) === JSON.stringify({ host: HOST, job: 'test', unit: 'coins', wait: 'true' }), 'started on the lender\'s Actions: hostrun.yml with the host, the job, the unit', JSON.stringify(G.dispatched));
+  await page.waitForTimeout(2600);
+
+  // what the runs left: sent to Discord by notify (its files go along)
+  await tab('成果物');
+  check(await waitText(/bds-addons（1\.2 MB）/) && /old-addons（99 B・期限切れ）/.test(await text()), 'the artifacts by run; an expired one said so', await text());
+  check(await page.locator('.card', { hasText: '実行 90' }).locator('button', { hasText: 'Discord に送る' }).count() === 0, 'nothing to send of an expired one');
+  await page.locator('.card', { hasText: '実行 100' }).locator('button', { hasText: 'Discord に送る' }).click();
+  await page.waitForTimeout(500);
+  const nd = G.dispatched.find((x) => x.workflow === 'notify.yml');
+  check(nd && nd.body.inputs.run === '100' && nd.body.inputs.message === '', 'sent to Discord: notify.yml for that run (its deliverables go with the message)', JSON.stringify(G.dispatched));
+
+  // Discord: what is set, how runs are told (repository variables), a wrong id refused, a test
+  await tab('Discord');
+  check(await waitText(/✅ DM で届きます/) && await waitText(/いま: LAB_NOTIFY=failures・LAB_NOTIFY_FILES=（なし: auto）/), 'Discord: the DM is set up; the variables as they are', await text());
+  await page.selectOption('select[aria-label="LAB_NOTIFY"]', 'all');
+  await page.selectOption('select[aria-label="LAB_NOTIFY_FILES"]', 'off');
+  await page.locator('button', { hasText: '知らせ方を保存' }).click();
+  await page.waitForTimeout(700);
+  check(JSON.stringify(G.varsPut) === JSON.stringify(['PATCH LAB_NOTIFY=all', 'POST LAB_NOTIFY_FILES=off']), 'saved as repository variables (made when missing)', JSON.stringify(G.varsPut));
+  const putBefore = G.secretsPut.length;
+  await page.locator('input[aria-label="DISCORD_USER_ID"]').fill('not-a-number');
+  await page.locator('#tabbody li', { hasText: 'DISCORD_USER_ID' }).locator('button').click();
+  await page.waitForTimeout(300);
+  check(/DISCORD_USER_ID の形が違います/.test(await page.locator('#toast').innerText()) && G.secretsPut.length === putBefore, 'a Discord id that is not one is refused in the page', await page.locator('#toast').innerText());
+  await page.locator('#tabbody li', { hasText: '試しに送る' }).locator('button').click();
+  await page.waitForTimeout(500);
+  check(G.dispatched.some((x) => x.workflow === 'notify.yml' && x.body.inputs.run === '' && /管理パネルから試しに送りました/.test(x.body.inputs.message)), 'a test message through notify', JSON.stringify(G.dispatched));
+
+  // a link from Discord's message: the run it names, opened with its reasons
+  await page.goto('about:blank');
+  await page.goto(`${URL0}#runs?repo=${encodeURIComponent(LAB)}&run=100`);
+  check(await waitText(/FAIL gate: tests\/panel-offline\.mjs/) && (await page.locator('nav.tabs button.on').innerText()) === '進み具合', 'Discord\'s link opens the run it names, its reasons shown', await text());
+
+  // a second account in the same browser: the lender, added with ＋ (their own hosts found on their first visit)
+  await page.locator('#who button', { hasText: '＋' }).click();
+  await page.waitForSelector('#tok');
+  await page.fill('#tok', 'tok-lender'); await page.fill('#lab', LAB); await page.click('#go');
+  await page.waitForSelector('nav.tabs button', { timeout: 10_000 }).catch(() => {});
   const tabs = await page.locator('nav.tabs button').allInnerTexts();
   check(JSON.stringify(tabs) === JSON.stringify(['概要', '貸し借り', '設定']), 'a lender sees the overview, the hosts and the settings only', JSON.stringify(tabs));
   await tab('貸し借り');
@@ -184,6 +260,23 @@ try {
   const put = G.filesPut.at(-1), j = put ? JSON.parse(Buffer.from(put.body.content, 'base64').toString('utf8')) : null;
   check(put && put.slug === HOST && put.f === '.lab-host.json' && j.until === M.dayOf(new Date(now - 86_400_000), 'UTC') && j.minutesPerMonth === 600 && put.body.sha, 'stopped: .lab-host.json\'s until moved to yesterday (the rest kept, with its sha)', JSON.stringify(put?.body));
   check(await waitText(/期限（\d{4}-\d\d-\d\d）を過ぎました/), 'the host now says it is not lending', await text());
+  check(JSON.stringify(await page.locator('#acct option').allInnerTexts()) === JSON.stringify(['author1', 'lender1']) && (await page.locator('#acct').inputValue()) === 'lender1', 'both accounts at the top, the lender in use', await page.locator('#who').innerText());
+
+  // back to the author with a tap: their own settings (the host they borrow, the vault key) as they left them
+  await page.selectOption('#acct', 'author1');
+  await waitText(/管理者/);
+  check(JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()) === JSON.stringify(['概要', '進み具合', '実行', '成果物', 'Discord', '秘密', '端末', '貸し借り', '設定']), 'switched: the author\'s tabs', JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()));
+  check(await waitText(/期限（\d{4}-\d\d-\d\d）を過ぎました/) && /借り手/.test(await text()), 'the host the author borrows (their own list), now stopped by its lender', await text());
+  await tab('設定');
+  check((await page.locator('#tabbody input[type=password]').inputValue()) === VKEY && /lender1/.test(await text()) && /author1\/bds-lab・ホスト 1/.test(await text()), 'the author\'s vault key kept for the author; both accounts listed with their own settings', await text());
+  const lenderCfg = await page.evaluate(() => localStorage.getItem('bdslab.panel.cfg.lender1'));
+  check(lenderCfg && !lenderCfg.includes('panel-browser-key') && lenderCfg.includes('lender1/bds-lab-host'), 'the lender\'s settings are theirs (no vault key of the author\'s)', lenderCfg);
+
+  // 出る: this account forgotten by this browser — the other stays, in use
+  await page.locator('#who button', { hasText: '出る' }).click();
+  await waitText(/貸し借り/);
+  const left = await page.evaluate(() => JSON.stringify({ ...localStorage }));
+  check(!left.includes('tok-author') && !left.includes('panel-browser-key') && left.includes('tok-lender') && (await page.locator('#who').innerText()).includes('lender1') && (await page.locator('#acct').count()) === 0, 'leaving forgets that account only (its token and key)', left);
   check(!errors.length, 'no page error, no CSP report', errors.join('\n'));
 } catch (e) {
   check(false, 'the run went through', e.stack);

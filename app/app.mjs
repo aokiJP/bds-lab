@@ -34,6 +34,7 @@ import * as Live from './lib/live.mjs';
 import * as Dc from './lib/discord.mjs';
 import * as SF from './lib/secretform.mjs';
 import * as RM from './lib/runmsg.mjs';
+import * as RF from './lib/runfiles.mjs';
 import * as SI from './lib/signin.mjs';
 import * as WD from './lib/world.mjs';
 import * as Dev from './lib/device.mjs';
@@ -138,7 +139,8 @@ const HELP = `app: 本物の Minecraft アプリをエミュレータで動か�
         ゲームを人のように: walk look jump sprint sneak attack mine use place slot inventory drop cmd stick release、
         続けて move turn mine|use on|off、サーバーに聞いて where items face lookat goto。画面の動画 clip [秒]。
         app.txt の手順もそのまま（chat、tap text、until text、press、mouse、perf…、steps << で続けて）
-  notify [--run <番号> | --text <文>]   （notify ワークフローの中で）終わった実行を Discord の DM（または LAB_NOTIFY_WEBHOOK）に知らせる
+  notify [--run <番号> [--force] | --text <文>]   （notify ワークフローの中で）終わった実行を Discord の DM（または LAB_NOTIFY_WEBHOOK）に
+        知らせる。成果物（.mcaddon など: 変数 LAB_NOTIFY_FILES）も 10 MB まで添える。--force: LAB_NOTIFY によらず
   hold [--minutes <分>]      （ワークフローの中で）端末を動かしたまま live の命令を待つ。秘密 DISCORD_BOT_TOKEN と DISCORD_USER_ID が
         あれば Discord の DM にも画面とボタン（歩く・見る・壊す・使う・持ち物・A/B・チャット…）: 押すたびにその後の画面が戻る
   checks [--artifact <名前>]  （ワークフローの中で）実行の結果をチェック（check run）として出す。--print で中身の大きさだけ
@@ -2438,38 +2440,46 @@ async function secretsAskCmd(args) {
 
 /** app notify (notify.yml): a finished run (--run <id>) or a test line (--text) told to the person — a DM by their own bot
  *  (DISCORD_BOT_TOKEN + DISCORD_USER_ID), else LAB_NOTIFY_WEBHOOK (common/notify.mjs), else nothing (said, not a failure).
- *  When: the repository variable LAB_NOTIFY (lib/runmsg.mjs) */
+ *  When: the repository variable LAB_NOTIFY (lib/runmsg.mjs); --force: told whatever it says (the panel's 「Discord に送る」).
+ *  With the run's deliverables attached (lib/runfiles.mjs: LAB_NOTIFY_FILES, LAB_NOTIFY_MAX_MB) — only of a run of this
+ *  repository's own code: a fork's pull request runs here too, and its files are not the person's to be handed */
 async function notifyCmd(args) {
-  const o = parse(args, { opts: ['--run', '--text'] });
+  const o = parse(args, { opts: ['--run', '--text'], flags: ['--force'] });
   const dc = Dc.config(), hook = String(process.env.LAB_NOTIFY_WEBHOOK ?? '').trim();
   if (dc.missing && !hook) { out('通知先がありません（DISCORD_BOT_TOKEN + DISCORD_USER_ID、または LAB_NOTIFY_WEBHOOK を Secrets に）: 何も送りません'); return; }
-  let msg;
+  let msg, files = { attach: [] };
   if (o.opts['--run']) {
     const { GITHUB_REPOSITORY: repo } = process.env, base = process.env.GITHUB_API_URL || 'https://api.github.com', id = String(o.opts['--run']).replace(/\D/g, '');
     if (!repo || !process.env.GITHUB_TOKEN || !id) fail('--run はワークフローの中で（GITHUB_REPOSITORY・GITHUB_TOKEN）');
     const run = await ghFetch(`${base}/repos/${repo}/actions/runs/${id}`);
-    if (!RM.shouldNotify(run, process.env.LAB_NOTIFY)) { out(`知らせません（LAB_NOTIFY=${process.env.LAB_NOTIFY || 'auto'}、${run.name} ${run.conclusion}、${run.event}）`); return; }
+    if (!o.flags.has('--force') && !RM.shouldNotify(run, process.env.LAB_NOTIFY)) { out(`知らせません（LAB_NOTIFY=${process.env.LAB_NOTIFY || 'auto'}、${run.name} ${run.conclusion}、${run.event}）`); return; }
     const jobs = (await ghFetch(`${base}/repos/${repo}/actions/runs/${id}/jobs?per_page=100`)).jobs ?? [], annotations = {};
     for (const j of jobs.filter((x) => x.conclusion === 'failure').slice(0, 3)) {
       const cr = String(j.check_run_url ?? '').split('/').pop();
       if (cr) annotations[j.name] = await ghFetch(`${base}/repos/${repo}/check-runs/${cr}/annotations?per_page=20`).catch(() => []);
     }
-    msg = RM.runMessage({ run, jobs, annotations, panel: RM.panelUrl(repo, process.env) });
+    const own = !run.head_repository?.full_name || run.head_repository.full_name.toLowerCase() === repo.toLowerCase();
+    const maxBytes = Math.min(25, Math.max(1, Number(process.env.LAB_NOTIFY_MAX_MB) || 10)) * 1e6;
+    files = await RF.runFiles({ base, repo, run: id, token: process.env.GITHUB_TOKEN, policy: own ? process.env.LAB_NOTIFY_FILES : 'off', maxBytes });
+    if (files.why) out(`W 成果物: ${files.why}`);
+    if (!own) out(`成果物は添えません（${run.head_repository.full_name} の変更から: このリポジトリのコードではありません）`);
+    msg = RM.runMessage({ run, jobs, annotations, panel: RM.panelRunUrl(RM.panelUrl(repo, process.env), repo, id), files });
   } else msg = { content: o.opts['--text'] || 'bds-lab: Discord への通知の試し', buttons: [] };
+  const att = files.attach.map((f) => ({ name: f.name, data: f.data }));
   if (!dc.missing) {
     const b = Dc.bot({ token: dc.token, userId: dc.userId });
-    try { await b.send({ content: msg.content, ...(msg.buttons.length ? { components: [Dc.row(...msg.buttons.map((x) => ({ type: 2, style: 5, label: x.label, url: x.url })))] } : {}) }); }
+    try { await b.send({ content: msg.content, files: att, ...(msg.buttons.length ? { components: [Dc.row(...msg.buttons.map((x) => ({ type: 2, style: 5, label: x.label, url: x.url })))] } : {}) }); }
     catch (e) { fail(`Discord に送れません: ${e.message}`); }
-    out('OK Discord の DM に送りました');
+    out(`OK Discord の DM に送りました${att.length ? `（${att.map((f) => f.name).join('・')}）` : ''}`);
     return;
   }
   const { notify } = await import(pathToFileURL(path.join(TOP, 'common', 'notify.mjs')).href);
   // (the webhook's helper puts its own ✅ / ⚠️ in front: the first line without the run's icon)
   // (and without Discord's **bold**: Slack, ntfy and a plain JSON hook would show the stars)
   const [first, ...rest] = msg.content.replace(/\*\*/g, '').split('\n');
-  const sent = await notify(first.replace(/^\S+\s/, ''), [...rest, ...msg.buttons.map((x) => x.url)], { ok: msg.ok !== false, out });
+  const sent = await notify(first.replace(/^\S+\s/, ''), [...rest, ...msg.buttons.map((x) => x.url)], { ok: msg.ok !== false, out, files: att });
   if (!sent) fail('LAB_NOTIFY_WEBHOOK に送れませんでした');
-  out('OK Webhook に送りました');
+  out(`OK Webhook に送りました${att.length && /discord(app)?\.com\/api\/webhooks/.test(hook) ? `（${att.map((f) => f.name).join('・')}）` : ''}`);
 }
 
 // ---- checks / ci: a run through the GitHub API alone (lib/ghresults.mjs) ----

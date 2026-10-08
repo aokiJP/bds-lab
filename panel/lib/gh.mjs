@@ -52,6 +52,15 @@ export function gh({ token, base = 'https://api.github.com', fetchImpl = (...a) 
     /** a secret set: sealed here with the repository's public key, so only GitHub's Actions can open it */
     async putSecret(r, name, value, opts) { const k = await call('GET', `/repos/${r}/actions/secrets/public-key`); return call('PUT', `/repos/${r}/actions/secrets/${encodeURIComponent(name)}`, secretPayload(value, k, opts)); },
     deleteSecret: (r, name) => call('DELETE', `/repos/${r}/actions/secrets/${encodeURIComponent(name)}`),
+    /** a run's artifacts, or the repository's newest (expired ones too: GitHub keeps their names) */
+    artifacts: async (r, { run, per = 30 } = {}) => (await call('GET', `/repos/${r}/actions/${run ? `runs/${run}/` : ''}artifacts?per_page=${per}`)).artifacts ?? [],
+    /** a repository variable's value: null when it is not set (403: this token may not read variables) */
+    async variable(r, name) { try { return (await call('GET', `/repos/${r}/actions/variables/${encodeURIComponent(name)}`)).value ?? null; } catch (e) { if (e.status === 404) return null; throw e; } },
+    /** a repository variable set (made when it is not there yet) */
+    async setVariable(r, name, value) {
+      try { return await call('PATCH', `/repos/${r}/actions/variables/${encodeURIComponent(name)}`, { name, value }); }
+      catch (e) { if (e.status === 404) return call('POST', `/repos/${r}/actions/variables`, { name, value }); throw e; }
+    },
     issues: (r) => call('GET', `/repos/${r}/issues?state=open&per_page=100`),
     comments: (r, n, since) => call('GET', `/repos/${r}/issues/${n}/comments?per_page=100${since ? `&since=${encodeURIComponent(since)}` : ''}`),
     comment: (r, n, body) => call('POST', `/repos/${r}/issues/${n}/comments`, { body }),

@@ -31,6 +31,7 @@ export const KNOWN_SECRETS = {
   DISCORD_USER_ID: '自分の Discord のユーザー ID（数字）',
   LAB_SECRETS_TOKEN: '秘密を書けるトークン（secrets ワークフローが使う。Secrets: Read and write）',
   LAB_NOTIFY_WEBHOOK: 'Discord / Slack の Webhook URL か ntfy.sh（通知の別の行き先）',
+  LAB_HOST_TOKEN: '貸し手のホストに push でき、ワークフローを始められるあなたのトークン（「実行」でホストの Actions を使う: hostrun）',
   MS_EMAIL: '端末のゲームをサインインさせる Microsoft アカウント',
   MS_PASSWORD: 'そのパスワード（無ければ人の承認を 1 回）',
   GOOGLE_EMAIL: 'Minecraft を買った Google アカウント（APK を取る）',
@@ -48,6 +49,7 @@ export function capabilities({ secrets, workflows = [], visibility = 'public', h
     c('discord', 'Discord の DM で端末を操作（mode hold）', discord && wf('app.yml'), [!has('DISCORD_BOT_TOKEN') && 'DISCORD_BOT_TOKEN', !has('DISCORD_USER_ID') && 'DISCORD_USER_ID', !wf('app.yml') && 'app.yml'].filter(Boolean).join('・') + ' が要ります'),
     c('notify', '進み具合を Discord に知らせる（notify）', (discord || has('LAB_NOTIFY_WEBHOOK')) && wf('notify.yml'), !wf('notify.yml') ? 'notify.yml がありません' : 'DISCORD_BOT_TOKEN + DISCORD_USER_ID か LAB_NOTIFY_WEBHOOK が要ります'),
     c('secretsForm', '秘密を Discord のフォームで登録（secrets）', discord && has('LAB_SECRETS_TOKEN') && wf('secrets.yml'), [!discord && 'Discord の 2 つ', !has('LAB_SECRETS_TOKEN') && 'LAB_SECRETS_TOKEN', !wf('secrets.yml') && 'secrets.yml'].filter(Boolean).join('・') + ' が要ります（このパネルの「秘密」からなら、どれも要りません）'),
+    c('hostrun', '貸し手の Actions で走らせる（hostrun: パソコンなしで）', has('LAB_HOST_TOKEN') && wf('hostrun.yml'), [!has('LAB_HOST_TOKEN') && 'LAB_HOST_TOKEN', !wf('hostrun.yml') && 'hostrun.yml'].filter(Boolean).join('・') + ' が要ります'),
     c('app', '本物のアプリで確かめる（app）', has('GOOGLE_EMAIL') && has('GOOGLE_AAS_TOKEN') && wf('app.yml'), 'GOOGLE_EMAIL・GOOGLE_AAS_TOKEN が要ります（node lab.mjs app secrets）'),
     c('signin', 'ゲームを Microsoft でサインイン（フレンドのワールド）', has('MS_EMAIL'), 'MS_EMAIL（と MS_PASSWORD）が要ります'),
     c('vault', visibility === 'public' ? '公開リポジトリのライブを封じる・キャッシュ' : '端末のキャッシュ（暗号化）', has('APP_CACHE_KEY') || has('GOOGLE_AAS_TOKEN'), 'APP_CACHE_KEY か GOOGLE_AAS_TOKEN が要ります'),
@@ -163,6 +165,38 @@ export function hostNow(rules, used, now = new Date(), running = false) {
   if (used >= stopAt) why.push(`今月 ${used} 分: 上限 ${rules.minutesPerMonth} 分の 80%（${stopAt} 分）に届きました`);
   return { ok: !why.length, why, used, limit: rules.minutesPerMonth, stopAt, remaining: Math.max(0, stopAt - used) };
 }
+// ---- where a job runs: this lab's own Actions, or a lender's (a host) through hostrun.yml ----
+export const HOST_UNIT_JOBS = ['test', 'go', 'sim'];
+export const HOST_JOB_WORDS = { gate: 'ラボの試験（gate）', 'gate-all': '全部の試験', test: 'ユニットの試験（test）', go: 'ユニットを仕上げる（go: .mcaddon も）', sim: 'ユニットをすばやく（sim）', upkeep: '新しい Minecraft に合わせる（upkeep）', 'dev-bds': 'BDS の開発版で' };
+/** the form for a job on a host → { inputs } for hostrun.yml, or { error } (pure): the lender's rules allow the job, a unit
+ *  for test / go / sim (bds/addons/<name>), none for the rest */
+export function hostRunInputs({ host, job, unit = '', wait = true, rules }) {
+  if (!SLUG.test(String(host ?? ''))) return { error: 'ホストを選んでください' };
+  if (!rules) return { error: `${host} の .lab-host.json が読めません` };
+  if (!rules.jobs.includes(job)) return { error: `${job} は ${host} では許されていません（許す仕事: ${rules.jobs.join(' ')}）` };
+  const u = String(unit ?? '').trim();
+  if (HOST_UNIT_JOBS.includes(job) && !/^[a-z0-9_]+$/.test(u)) return { error: `${job} はユニットの名前が要ります（bds/addons/<名前>: 英小文字・数字・_）` };
+  return { inputs: { host, job, unit: HOST_UNIT_JOBS.includes(job) ? u : '', wait: String(wait !== false) } };
+}
+/** the hosts as they stand now → the one to use (pure): usable, the most minutes left; null when none is */
+export const bestHost = (list) => [...list].filter((x) => x.now?.ok).sort((a, b) => b.now.remaining - a.now.remaining || a.slug.localeCompare(b.slug))[0] ?? null;
+
+// ---- the address: #<tab>, or #runs?repo=<owner/repo>&run=<id> (Discord's 「管理パネル」 button opens that run) ----
+export const TAB_KEYS = ['overview', 'runs', 'start', 'files', 'discord', 'secrets', 'live', 'hosts', 'settings'];
+/** location.hash → { tab, repo, run } (pure; anything unknown → nulls) */
+export function parseHash(hash) {
+  const [k, q = ''] = String(hash ?? '').replace(/^#/, '').split('?');
+  const p = new URLSearchParams(q), repo = p.get('repo'), run = p.get('run');
+  return { tab: TAB_KEYS.includes(k) ? k : null, repo: repo && SLUG.test(repo) ? repo : null, run: run && /^\d{1,20}$/.test(run) ? run : null };
+}
+/** an artifact's size in words (pure) */
+export const fmtBytes = (n) => (n < 1e3 ? `${n} B` : n < 1e6 ? `${(n / 1e3).toFixed(0)} KB` : `${(n / 1e6).toFixed(1)} MB`);
+/** a Discord user id (pure): 17〜20 digits */
+export const DISCORD_ID = /^\d{17,20}$/;
+/** the notify workflow's choices, as its variables take them */
+export const NOTIFY_WHEN = { auto: '失敗と、手で始めた実行（既定）', all: 'すべて', failures: '失敗だけ', off: '知らせない' };
+export const NOTIFY_FILES = { auto: 'アドオン・ワールド（.mcaddon .mcpack .mcworld .mctemplate、既定）', off: '添えない' };
+
 /** the lender stops lending now / again until a day (pure): the rules with `until` moved (host.yml and the borrower's lab
  *  both stop after it — no new field, so every host made from the template understands it) */
 export const pauseRules = (j, now = new Date(), tz = 'UTC') => ({ ...j, until: dayOf(new Date(now.getTime() - 86_400_000), tz) });
@@ -173,7 +207,7 @@ export const PRESETS = [
   { id: 'hold', label: '🎮 スマホで端末を操作（Discord に画面とボタン）', workflow: 'app.yml', inputs: { mode: 'hold', hold: '60' }, needs: 'discord' },
   { id: 'run', label: '🧪 アドオンを本物のアプリで確かめる', workflow: 'app.yml', inputs: { mode: 'run' }, needs: 'app' },
   { id: 'secrets', label: '🔑 秘密を Discord のフォームで登録', workflow: 'secrets.yml', inputs: { names: 'MS_EMAIL,MS_PASSWORD' }, needs: 'secretsForm' },
-  { id: 'notify', label: '🔔 Discord に試しに送る', workflow: 'notify.yml', inputs: { message: 'bds-lab: 管理パネルからの試し' }, needs: 'notify' },
+  { id: 'notify', label: '🔔 Discord に試しに送る', workflow: 'notify.yml', inputs: { run: '', message: 'bds-lab: 管理パネルからの試し' }, needs: 'notify' },
   { id: 'verify', label: '✔️ ラボの試験を全部（verify）', workflow: 'verify.yml', inputs: {}, needs: null },
 ];
 /** the lab's repository from where the panel is served (pure): <owner>.github.io/<repo>/ → owner/repo, else null */

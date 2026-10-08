@@ -2,7 +2,8 @@
 // browser does): who may use it, what each repository's settings allow, the workflows' input forms from their real YAML,
 // a run's progress, a host's rules (held equal to common/hosts.mjs) and minutes, the secret sealed as libsodium seals it
 // (vectors made with libsodium itself), the live issue's lines sealed and read the same way as app/lib on the runner, the
-// GitHub client against a fake API, and the local server (`node lab.mjs panel`) that serves only the panel.
+// GitHub client against a fake API, the accounts of one browser (each its own token and settings), where a job runs (the lab or
+// a lender's host: hostrun.yml), and the run's news to Discord with its deliverables (notify).
 // node tests/panel-offline.mjs
 import fs from 'node:fs';
 import http from 'node:http';
@@ -13,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imp = (p) => import(pathToFileURL(path.join(TOP, p)).href);
 const M = await imp('panel/lib/model.mjs'), SEAL = await imp('panel/lib/seal.mjs'), PV = await imp('panel/lib/vault.mjs'), LF = await imp('panel/lib/livefmt.mjs'), G = await imp('panel/lib/gh.mjs');
-const H = await imp('common/hosts.mjs'), AV = await imp('app/lib/vault.mjs'), AL = await imp('app/lib/live.mjs'), PANEL = await imp('common/panel.mjs'), PG = await imp('panel/lib/pages.mjs');
+const H = await imp('common/hosts.mjs'), AV = await imp('app/lib/vault.mjs'), AL = await imp('app/lib/live.mjs'), PG = await imp('panel/lib/pages.mjs');
 let pass = 0, fail = 0;
 const t = async (name, fn) => { try { await fn(); pass++; console.log(`ok   ${name}`); } catch (e) { fail++; console.log(`FAIL ${name}\n     ${e.message}`); } };
 const eq = (a, b, m = '') => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${m} want ${JSON.stringify(b)} got ${JSON.stringify(a)}`); };
@@ -30,8 +31,8 @@ await t('who may use it: write or admin on the lab, or lend (admin) / borrow (wr
 });
 
 await t('what a repository\'s own settings allow: its secrets\' names and workflows; unknown when the token may not list secrets (pure)', () => {
-  const wf = ['app.yml', 'notify.yml', 'secrets.yml', 'verify.yml'].map((f) => ({ path: `.github/workflows/${f}` }));
-  const all = M.capabilities({ secrets: ['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID', 'LAB_SECRETS_TOKEN', 'GOOGLE_EMAIL', 'GOOGLE_AAS_TOKEN', 'MS_EMAIL', 'APP_CACHE_KEY'], workflows: wf, visibility: 'public' });
+  const wf = ['app.yml', 'notify.yml', 'secrets.yml', 'verify.yml', 'hostrun.yml'].map((f) => ({ path: `.github/workflows/${f}` }));
+  const all = M.capabilities({ secrets: ['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID', 'LAB_SECRETS_TOKEN', 'GOOGLE_EMAIL', 'GOOGLE_AAS_TOKEN', 'MS_EMAIL', 'APP_CACHE_KEY', 'LAB_HOST_TOKEN'], workflows: wf, visibility: 'public' });
   ok(all.every((c) => c.ok === true && c.need === ''), JSON.stringify(all));
   const bare = Object.fromEntries(M.capabilities({ secrets: ['DISCORD_BOT_TOKEN'], workflows: wf }).map((c) => [c.key, c]));
   ok(bare.discord.ok === false && /DISCORD_USER_ID/.test(bare.discord.need) && bare.notify.ok === false && /このパネルの「秘密」からなら/.test(bare.secretsForm.need), JSON.stringify(bare));
@@ -91,6 +92,67 @@ await t('hosts: the rules checked exactly as common/hosts.mjs checks them; the m
   const paused = M.pauseRules({ minutesPerMonth: 100, jobs: ['gate'], until: '2027-01-01' }, now, 'UTC');
   eq(paused.until, '2026-10-07'); ok(!M.hostNow(M.checkRules(paused).rules, 0, now).ok, 'paused: not usable'); ok(!H.canRun({ slug: 'a/b', rules: M.checkRules(paused).rules }, 'gate', [], now).ok, 'and the borrower\'s lab agrees');
   eq(M.resumeRules(paused, '2026-12-31').until, '2026-12-31');
+});
+
+await t('accounts: several in one browser, each with its own token and settings; one in use; a remembered one in localStorage, another in this tab only; the old single token moved in (pure)', async () => {
+  const AC = await imp('panel/lib/accounts.mjs');
+  const local = AC.memoryStorage(), session = AC.memoryStorage(), D = { lab: 'aokiJP/bds-lab' };
+  const A = AC.accounts({ local, session, defaults: D });
+  eq([A.list(), A.active()], [[], null]);
+  A.add({ login: 'author1', avatar: 'https://avatars.githubusercontent.com/u/1', token: 'tok-a', remember: true, cfg: { lab: 'author1/bds-lab' } });
+  A.add({ login: 'lender1', avatar: 'javascript:alert(1)', token: 'tok-l', remember: false, cfg: { lab: 'not a slug', hosts: ['lender1/host', 'bad slug', 'lender1/host'] } });
+  eq(A.list().map((e) => [e.login, e.remember, e.avatar]), [['author1', true, 'https://avatars.githubusercontent.com/u/1'], ['lender1', false, '']], 'listed; an avatar address that is not https is dropped');
+  eq(A.active(), 'lender1', 'the one just added is in use');
+  eq([A.token('author1'), A.token('lender1')], ['tok-a', 'tok-l']);
+  eq(A.cfg('lender1'), { lab: 'aokiJP/bds-lab', hosts: ['lender1/host'], refresh: 20, vault: '' }, 'its own settings, cleaned (a wrong lab: the default)');
+  A.setCfg('author1', { hosts: ['lender1/host'], vault: 'k', refresh: 1 });
+  eq(A.cfg('author1'), { lab: 'author1/bds-lab', hosts: ['lender1/host'], refresh: 5, vault: 'k' });
+  eq(A.cfg('lender1').vault, '', 'one account\'s settings are not another\'s');
+  ok(A.use('author1') && A.active() === 'author1' && !A.use('nobody') && A.active() === 'author1', 'switched; an unknown one is not');
+  const dump = (st) => Array.from({ length: st.length }, (_, i) => st.key(i)).map((k) => `${k}=${st.getItem(k)}`).join('\n');
+  ok(dump(local).includes('tok-a') && !dump(local).includes('tok-l') && dump(session).includes('tok-l'), `the remembered one in localStorage, the other in this tab only\n${dump(local)}\n--\n${dump(session)}`);
+  const A2 = AC.accounts({ local, session: AC.memoryStorage(), defaults: D });
+  eq([A2.list().map((e) => e.login), A2.active()], [['author1'], 'author1'], 'a new tab: the tab-only one is gone');
+  A.add({ login: 'author1', token: 'tok-a2', remember: true });
+  eq([A.token('author1'), A.cfg('author1').vault, A.list().length], ['tok-a2', 'k', 2], 'signed in again: the token replaced, the settings kept');
+  eq(A.remove('author1'), 'lender1', 'forgotten: the next one in use');
+  ok(!/tok-a|author1/.test(dump(local)), `its token and settings gone\n${dump(local)}`);
+  // the panel before accounts: one token (this tab: as it was typed; the browser: JSON), the settings without a login
+  const l2 = AC.memoryStorage(), s2 = AC.memoryStorage();
+  l2.setItem('bdslab.panel.lab', JSON.stringify('o/lab')); l2.setItem('bdslab.panel.hosts', JSON.stringify(['o/h'])); l2.setItem('bdslab.panel.vault', JSON.stringify('v'));
+  s2.setItem('bdslab.panel.token', 'github_pat_raw');
+  const A3 = AC.accounts({ local: l2, session: s2 });
+  eq(A3.legacy(), { token: 'github_pat_raw', remember: false, cfg: { lab: 'o/lab', hosts: ['o/h'], refresh: 20, vault: 'v' } });
+  l2.setItem('bdslab.panel.token', JSON.stringify('ghp_kept')); s2.removeItem('bdslab.panel.token');
+  eq([A3.legacy().token, A3.legacy().remember], ['ghp_kept', true]);
+  A3.dropLegacy(); eq([A3.legacy(), l2.getItem('bdslab.panel.vault')], [null, null]);
+  let threw = false; try { A.add({ login: '../x', token: 't' }); } catch { threw = true; }
+  ok(threw, 'a login GitHub would not give is refused');
+});
+
+await t('where a job runs: this lab or a lender\'s host — hostrun.yml\'s inputs from the host\'s own rules, the host with the most minutes left, GitHub\'s count of the month the same here and in the lab; the address of a tab or a run (pure)', () => {
+  const rules = M.checkRules({ minutesPerMonth: 600, jobs: ['gate', 'go'] }).rules;
+  eq(M.hostRunInputs({ host: 'l/h', job: 'go', unit: 'coins', wait: false, rules }), { inputs: { host: 'l/h', job: 'go', unit: 'coins', wait: 'false' } });
+  eq(M.hostRunInputs({ host: 'l/h', job: 'gate', unit: 'ignored', rules }).inputs, { host: 'l/h', job: 'gate', unit: '', wait: 'true' });
+  ok(/許されていません/.test(M.hostRunInputs({ host: 'l/h', job: 'sim', unit: 'x', rules }).error), 'a job the lender did not allow');
+  ok(/ユニット/.test(M.hostRunInputs({ host: 'l/h', job: 'go', unit: '../x', rules }).error), 'a unit\'s name only');
+  ok(/ホスト/.test(M.hostRunInputs({ host: 'nope', job: 'gate', rules }).error) && /読めません/.test(M.hostRunInputs({ host: 'l/h', job: 'gate', rules: null }).error));
+  const hr = M.dispatchInputs(fs.readFileSync(path.join(TOP, '.github', 'workflows', 'hostrun.yml'), 'utf8'));
+  eq(hr.inputs.map((i) => i.name), ['host', 'job', 'unit', 'wait'], 'the panel sends what hostrun.yml takes');
+  eq([hr.inputs[1].options, hr.inputs[3].type], [M.HOST_JOBS, 'boolean'], 'its jobs are the host\'s jobs');
+  eq(M.bestHost([{ slug: 'a/x', now: { ok: true, remaining: 10 } }, { slug: 'b/y', now: { ok: true, remaining: 90 } }, { slug: 'c/z', now: { ok: false, remaining: 500 } }]).slug, 'b/y');
+  eq(M.bestHost([{ slug: 'c/z', now: { ok: false, remaining: 500 } }]), null);
+  const cap = (sec) => M.capabilities({ secrets: sec, workflows: [{ path: '.github/workflows/hostrun.yml' }] }).find((c) => c.key === 'hostrun');
+  ok(cap(['LAB_HOST_TOKEN']).ok === true && cap([]).ok === false && /LAB_HOST_TOKEN/.test(cap([]).need), JSON.stringify(cap([])));
+  const runs = [{ status: 'completed', run_started_at: '2026-10-02T00:00:00Z', updated_at: '2026-10-02T00:10:30Z' }, { status: 'in_progress', run_started_at: '2026-10-08T00:00:00Z', updated_at: '2026-10-08T00:30:00Z' }, { status: 'completed', run_started_at: '2026-09-30T23:00:00Z', updated_at: '2026-09-30T23:30:00Z' }];
+  for (const tz of ['UTC', 'Asia/Tokyo']) eq(M.monthMinutes(runs, '2026-10', tz), H.monthMinutes(runs, '2026-10', tz), tz);
+  eq(H.githubUse(runs, new Date('2026-10-08T03:00:00Z'), 'UTC'), { month: '2026-10', used: 11, running: true });
+  eq(M.parseHash('#runs?repo=aokiJP%2Fbds-lab&run=123'), { tab: 'runs', repo: 'aokiJP/bds-lab', run: '123' });
+  eq(M.parseHash('#discord'), { tab: 'discord', repo: null, run: null });
+  eq(M.parseHash('#runs?repo=..%2Fx%2Fy&run=1;alert(1)'), { tab: 'runs', repo: null, run: null }, 'anything else in the address is nothing');
+  eq(M.parseHash('#<img>'), { tab: null, repo: null, run: null });
+  eq([M.fmtBytes(512), M.fmtBytes(1_234_567)], ['512 B', '1.2 MB']);
+  ok(M.DISCORD_ID.test('123456789012345678') && !M.DISCORD_ID.test('12345') && !M.DISCORD_ID.test('1234567890123456789x'));
 });
 
 await t('the secret sealed as libsodium seals it (crypto_box_seal; vectors from libsodium) and its parts against Node\'s own X25519 and BLAKE2b', () => {
@@ -192,21 +254,7 @@ await t('the page: its CSP allows GitHub\'s API alone and its own scripts; no in
     ok(![...src.matchAll(/https?:\/\/[\w.-]+/g)].map((m) => m[0]).some((u) => !/^https:\/\/(api\.github\.com|github\.com|avatars\.githubusercontent\.com)$/.test(u)), `${f}: no other address`);
   }
   ok(/setAttribute\('style'/.test(js) === false, 'styles through the CSSOM only');
-  eq(PANEL.CSP.replace(/; frame-ancestors 'none'$/, ''), csp, 'the local server sends the same policy');
   eq(M.repoFromLocation({ hostname: 'aokijp.github.io', pathname: '/bds-lab/' }), 'aokijp/bds-lab'); eq(M.repoFromLocation({ hostname: '127.0.0.1', pathname: '/' }), null);
-});
-
-await t('node lab.mjs panel\'s server: the panel\'s files with its CSP; nothing above the folder, no dot-files, no other method', async () => {
-  const srv = http.createServer(PANEL.panelHandler()).listen(0, '127.0.0.1');
-  await new Promise((r) => srv.once('listening', r));
-  const base = `http://127.0.0.1:${srv.address().port}`;
-  const get = async (p, m = 'GET') => { const r = await fetch(base + p, { method: m }); return { status: r.status, type: r.headers.get('content-type'), csp: r.headers.get('content-security-policy'), text: m === 'GET' ? await r.text() : '' }; };
-  const root = await get('/');
-  ok(root.status === 200 && /text\/html/.test(root.type) && /connect-src https:\/\/api\.github\.com/.test(root.csp) && /管理パネル/.test(root.text), JSON.stringify(root).slice(0, 200));
-  ok((await get('/lib/model.mjs')).type.startsWith('text/javascript'), 'modules as JavaScript');
-  for (const p of ['/../lab.mjs', '/%2e%2e/lab.mjs', '/..%2flab.mjs', '/.secret', '/lib/../../lab.mjs', '/nope.js']) eq((await get(p)).status, 404, p);
-  eq((await get('/', 'POST')).status, 405);
-  srv.close();
 });
 
 await t('notify: when a run is told (auto / all / failures / off) and what is said: the result, the failed job and step, its annotation, links (pure)', async () => {
@@ -223,20 +271,67 @@ await t('notify: when a run is told (auto / all / failures / off) and what is sa
   ok(RM.runMessage({ run: { ...run('failure'), name: 'x'.repeat(5000) } }).content.length <= 1900, 'within a message');
 });
 
-await t('app notify: a finished run told as a DM with link buttons (fake GitHub + fake Discord); else to the webhook; nowhere to send: said, not a failure', async () => {
-  const { spawn } = await import('node:child_process');
-  const got = { dm: [], hook: [] };
+await t('the run\'s deliverables for Discord: which files go (LAB_NOTIFY_FILES), within the upload limit, the rest named; read from its artifacts (a fake GitHub whose storage takes no token) — packs inside kept whole', async () => {
+  const RF = await imp('app/lib/runfiles.mjs'), RM = await imp('app/lib/runmsg.mjs'), SH = await imp('common/share.mjs');
+  const f = (name, size) => ({ name, size });
+  eq(RF.patterns('off'), null); eq(RF.pickFiles([f('a.mcaddon', 1)], { pats: null }), { attach: [], tooBig: [] });
+  const p = RF.pickFiles([f('dist/A.mcaddon', 3e6), f('B.mcpack', 2e6), f('log.txt', 10), f('big.mcworld', 9e6), f('again/A.mcaddon', 3e6)], { pats: RF.patterns('auto'), maxBytes: 10e6 });
+  eq([p.attach.map((x) => x.name), p.tooBig.map((x) => x.name)], [['B.mcpack', 'again/A.mcaddon'], ['big.mcworld']], 'the smallest first while within the limit; a name once; not a log');
+  eq([RF.pickFiles([f('a.zip', 1)], { pats: RF.patterns('*.zip, *.mcaddon') }).attach.length, RF.pickFiles([f('a.zip', 1)], { pats: RF.patterns('auto') }).attach.length], [1, 0]);
+  eq(RF.pickFiles(Array.from({ length: 12 }, (_, i) => f(`${i}.mcpack`, 1))).attach.length, 10, 'ten files a message (Discord)');
+  const zip = SH.zip([['Coins.mcaddon', Buffer.from('ADDON')], ['report.txt', Buffer.from('r')], ['packs/Coins_BP.mcpack', SH.zip([['manifest.json', Buffer.from('{}')]], '')]], '');
+  const seen = [];
   const srv = http.createServer((req, res) => {
-    let b = ''; req.on('data', (d) => { b += d; });
+    seen.push(`${req.headers.host.split(':')[0]} ${req.url} ${req.headers.authorization ?? '-'}`);
+    if (req.url === '/gh/repos/o/r/actions/runs/5/artifacts?per_page=100') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ artifacts: [{ id: 1, name: 'bds-addons', size_in_bytes: zip.length, expired: false, archive_download_url: `http://127.0.0.1:${port}/gh/repos/o/r/actions/artifacts/1/zip` }, { id: 2, name: 'old', size_in_bytes: 9, expired: true, archive_download_url: `http://127.0.0.1:${port}/gh/x` }] })); }
+    if (req.url === '/gh/repos/o/r/actions/artifacts/1/zip') { res.writeHead(302, { location: `http://localhost:${port}/storage/1.zip?sig=x` }); return res.end(); }
+    if (req.url === '/storage/1.zip?sig=x') { if (req.headers.authorization) { res.writeHead(403); return res.end('a token where none is asked'); } res.writeHead(200, { 'content-type': 'application/zip' }); return res.end(zip); }
+    res.writeHead(404); res.end();
+  }).listen(0, '127.0.0.1');
+  await new Promise((r) => srv.once('listening', r));
+  const port = srv.address().port, base = `http://127.0.0.1:${port}/gh`;
+  const got = await RF.runFiles({ base, repo: 'o/r', run: 5, token: 'ghs_x', policy: '' });
+  srv.close();
+  eq([got.attach.map((x) => `${x.name}:${x.data.length}`), got.tooBig, got.why], [['Coins.mcaddon:5', `Coins_BP.mcpack:${SH.zip([['manifest.json', Buffer.from('{}')]], '').length}`], [], ''], seen.join('\n'));
+  eq(got.artifacts.map((a) => [a.name, a.expired]), [['bds-addons', false], ['old', true]]);
+  ok(seen.some((l) => /^localhost \/storage\/1\.zip\?sig=x -$/.test(l)), `the storage asked without the token\n${seen.join('\n')}`);
+  eq((await RF.runFiles({ base: 'http://127.0.0.1:1/gh', repo: 'o/r', run: 5, token: 't' })).attach, [], 'GitHub not answering: no files, no failure');
+  // said in the message: what went along, what was too large, a button to the artifacts, the panel opened at the run
+  const run = { status: 'completed', conclusion: 'success', event: 'workflow_dispatch', name: 'hostrun', head_branch: 'main', html_url: 'https://github.com/aokiJP/bds-lab/actions/runs/5', run_started_at: '2026-10-08T00:00:00Z', updated_at: '2026-10-08T00:12:00Z' };
+  const m = RM.runMessage({ run, files: { attach: [{ name: 'Coins.mcaddon', size: 1_200_000 }], tooBig: [{ name: 'World.mcworld', size: 30e6 }], artifacts: got.artifacts }, panel: RM.panelRunUrl(RM.panelUrl('aokiJP/bds-lab'), 'aokiJP/bds-lab', 5) });
+  ok(/📦 Coins\.mcaddon（1\.2 MB）/.test(m.content) && /添えられません（Discord の上限）: World\.mcworld（30\.0 MB）/.test(m.content), m.content);
+  eq(m.buttons.map((b) => b.label), ['GitHub で見る', '成果物（1）', '管理パネル']);
+  eq(m.buttons[1].url, 'https://github.com/aokiJP/bds-lab/actions/runs/5#artifacts');
+  eq(M.parseHash(new URL(m.buttons[2].url).hash), { tab: 'runs', repo: 'aokiJP/bds-lab', run: '5' }, 'the panel\'s button opens that run');
+  eq(RM.panelRunUrl('https://panel.example/#mine', 'o/r', 5), 'https://panel.example/#mine', 'an address with its own hash is left alone');
+});
+
+await t('app notify: a finished run told as a DM with link buttons and its .mcaddon attached (fake GitHub + fake Discord); a fork\'s files never; --force; else to the webhook (a Discord one with the files); nowhere to send: said, not a failure', async () => {
+  const { spawn } = await import('node:child_process');
+  const SH = await imp('common/share.mjs');
+  const got = { dm: [], hook: [] }, zip = SH.zip([['Coins.mcaddon', Buffer.from('ADDON-BYTES')]], '');
+  // (Discord takes files as multipart: the message in payload_json, each file a part)
+  const body = (req, b) => {
+    if (!String(req.headers['content-type']).startsWith('multipart/')) return { json: b ? JSON.parse(b) : null, files: [] };
+    const json = JSON.parse(/name="payload_json"\r\n(?:[^\r\n]+\r\n)*\r\n([^\r\n]*)\r\n/.exec(b)?.[1] ?? 'null');
+    return { json, files: [...b.matchAll(/name="files\[\d+\]"; filename="([^"]+)"\r\n(?:[^\r\n]+\r\n)*\r\n([^\r\n]*)\r\n/g)].map((m) => `${m[1]}=${m[2]}`) };
+  };
+  const arts = (id) => ({ artifacts: [{ id, name: 'bds-addons', size_in_bytes: zip.length, expired: false, archive_download_url: `http://127.0.0.1:${port}/gh/repos/o/r/actions/artifacts/${id}/zip` }] });
+  const srv = http.createServer((req, res) => {
+    let b = ''; req.setEncoding('utf8'); req.on('data', (d) => { b += d; });
     req.on('end', () => {
       const send = (code, j) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(j)); };
+      if (/^\/gh\/repos\/o\/r\/actions\/runs\/(5|6|8)\/artifacts/.test(req.url)) return send(200, arts(req.url.split('/')[7]));
+      if (/^\/gh\/repos\/o\/r\/actions\/artifacts\/\d+\/zip$/.test(req.url)) { res.writeHead(200, { 'content-type': 'application/zip' }); return res.end(zip); }
+      if (req.url === '/gh/repos/o/r/actions/runs/8') return send(200, { id: 8, status: 'completed', conclusion: 'success', event: 'pull_request', name: 'verify', head_branch: 'patch-1', html_url: 'https://github.com/o/r/actions/runs/8', run_started_at: '2026-10-08T00:00:00Z', updated_at: '2026-10-08T00:03:00Z', actor: { login: 'someone' }, head_repository: { full_name: 'someone/r' } });
+      if (/^\/gh\/repos\/o\/r\/actions\/runs\/(6|8)\/jobs/.test(req.url)) return send(200, { jobs: [] });
       if (req.url === '/gh/repos/o/r/actions/runs/5') return send(200, { id: 5, status: 'completed', conclusion: 'failure', event: 'push', name: 'verify', head_branch: 'main', html_url: 'https://github.com/o/r/actions/runs/5', run_started_at: '2026-10-08T00:00:00Z', updated_at: '2026-10-08T00:03:00Z', actor: { login: 'me' } });
       if (req.url === '/gh/repos/o/r/actions/runs/6') return send(200, { id: 6, status: 'completed', conclusion: 'success', event: 'push', name: 'verify', head_branch: 'main', html_url: 'https://github.com/o/r/actions/runs/6', run_started_at: '2026-10-08T00:00:00Z', updated_at: '2026-10-08T00:03:00Z' });
       if (/^\/gh\/repos\/o\/r\/actions\/runs\/5\/jobs/.test(req.url)) return send(200, { jobs: [{ name: 'offline', conclusion: 'failure', check_run_url: 'https://api/x/check-runs/77', steps: [{ name: 'every offline test', conclusion: 'failure' }] }] });
       if (/^\/gh\/repos\/o\/r\/check-runs\/77\/annotations/.test(req.url)) return send(200, [{ annotation_level: 'failure', message: 'FAIL gate: tests/panel-offline.mjs' }]);
       if (req.url === '/dc/users/@me/channels') return send(200, { id: 'dm1' });
-      if (req.url === '/dc/channels/dm1/messages') { got.dm.push({ auth: req.headers.authorization, body: JSON.parse(b) }); return send(200, { id: 'm1' }); }
-      if (req.url === '/hook') { got.hook.push(JSON.parse(b)); return send(204, {}); }
+      if (req.url === '/dc/channels/dm1/messages') { const x = body(req, b); got.dm.push({ auth: req.headers.authorization, body: x.json, files: x.files }); return send(200, { id: 'm1' }); }
+      if (req.url === '/hook' || req.url.startsWith('/discord.com/api/webhooks/')) { const x = body(req, b); got.hook.push({ ...x.json, files: x.files }); return send(204, {}); }
       send(404, { url: req.url });
     });
   }).listen(0, '127.0.0.1');
@@ -248,12 +343,23 @@ await t('app notify: a finished run told as a DM with link buttons (fake GitHub 
   ok(a.code === 0 && /OK Discord の DM に送りました/.test(a.o) && got.dm.length === 1 && got.dm[0].auth === 'Bot bot-tok', a.o);
   const msg = got.dm[0].body;
   ok(/❌ \*\*verify\*\* 落ちました/.test(msg.content) && /・offline: every offline test/.test(msg.content) && /FAIL gate: tests\/panel-offline\.mjs/.test(msg.content) && msg.components[0].components.every((x) => x.type === 2 && x.style === 5 && /^https:\/\//.test(x.url)) && msg.allowed_mentions.parse.length === 0, JSON.stringify(msg));
+  ok(/OK Discord の DM に送りました（Coins\.mcaddon）/.test(a.o) && JSON.stringify(got.dm[0].files) === JSON.stringify(['Coins.mcaddon=ADDON-BYTES']) && /📦 Coins\.mcaddon/.test(msg.content) && msg.attachments?.[0]?.filename === 'Coins.mcaddon', `the run's .mcaddon went along\n${a.o}\n${JSON.stringify(got.dm[0])}`);
+  ok(msg.components[0].components.some((x) => x.label === '成果物（1）') && msg.components[0].components.some((x) => /#runs\?repo=o%2Fr&run=5$/.test(x.url)), JSON.stringify(msg.components));
   const quiet = await run(['--run', '6'], dc);
   ok(quiet.code === 0 && /知らせません（LAB_NOTIFY=auto、verify success、push）/.test(quiet.o) && got.dm.length === 1, quiet.o);
+  const forced = await run(['--run', '6', '--force'], dc);
+  ok(forced.code === 0 && got.dm.length === 2 && /✅ \*\*verify\*\* 通りました/.test(got.dm[1].body.content) && got.dm[1].files.length === 1, `--force (the panel's 「Discord に送る」) tells it anyway\n${forced.o}`);
+  const fork = await run(['--run', '8', '--force'], dc);
+  ok(fork.code === 0 && got.dm.length === 3 && !got.dm[2].files.length && /成果物は添えません（someone\/r の変更から/.test(fork.o) && !/📦/.test(got.dm[2].body.content), `a fork's pull request: told, its files never handed on\n${fork.o}`);
+  const off = await run(['--run', '5'], { ...dc, LAB_NOTIFY_FILES: 'off' });
+  ok(off.code === 0 && !got.dm.at(-1).files.length && /成果物（1）/.test(JSON.stringify(got.dm.at(-1).body.components)), 'LAB_NOTIFY_FILES=off: no file, the button still');
+  const dhook = await run(['--run', '5'], { LAB_NOTIFY_WEBHOOK: `http://127.0.0.1:${port}/discord.com/api/webhooks/1/abc` });
+  ok(dhook.code === 0 && /OK Webhook に送りました（Coins\.mcaddon）/.test(dhook.o) && JSON.stringify(got.hook.at(-1).files) === JSON.stringify(['Coins.mcaddon=ADDON-BYTES']) && got.hook.at(-1).username === 'bds-lab', `a Discord webhook takes the files too\n${dhook.o}`);
   const test = await run(['--text', 'hello from the panel'], dc);
   ok(test.code === 0 && got.dm.at(-1).body.content === 'hello from the panel', test.o);
   const hook = await run(['--run', '5'], { LAB_NOTIFY_WEBHOOK: `http://127.0.0.1:${port}/hook` });
-  ok(hook.code === 0 && /OK Webhook に送りました/.test(hook.o) && got.hook.length === 1 && /verify 落ちました/.test(JSON.stringify(got.hook[0])) && /actions\/runs\/5/.test(JSON.stringify(got.hook[0])), hook.o + JSON.stringify(got.hook));
+  const h0 = got.hook.at(-1);
+  ok(hook.code === 0 && /OK Webhook に送りました$/m.test(hook.o) && got.hook.length === 2 && /verify 落ちました/.test(JSON.stringify(h0)) && /actions\/runs\/5/.test(JSON.stringify(h0)) && !h0.files.length && /Coins\.mcaddon/.test(JSON.stringify(h0)), `another webhook: the files named, not sent\n${hook.o}${JSON.stringify(got.hook)}`);
   const none = await run(['--run', '5'], {});
   ok(none.code === 0 && /通知先がありません/.test(none.o), none.o);
   srv.close();
