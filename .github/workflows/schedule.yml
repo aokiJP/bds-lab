@@ -1,8 +1,9 @@
 name: schedule
 # The lab's own timetable (.github/bds-lab-schedule.json, kept from the management panel's 「予約」): once an hour, the jobs whose
 # time it is are started here (common/schedule.mjs, the same checks as the panel's) — each one a workflow_dispatch of this
-# repository's own workflows on its default branch, under this run's short-lived token. Nothing runs when the file is absent.
-# Started by hand it only says what is due now (--dry): the hour's own run starts them, once.
+# repository's own workflows on its default branch, under this run's short-lived token. With no file, or every job paused, it
+# turns itself off (no hourly run, no minute of Actions on a private lab); 「予約」 turns it on again when it saves a job that is
+# on. Started by hand it only says what is due now (--dry): the hour's own run starts them, once.
 on:
   schedule:
     - cron: '7 * * * *'

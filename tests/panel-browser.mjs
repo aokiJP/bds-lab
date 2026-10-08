@@ -68,7 +68,7 @@ const G = {
   // (the organization's lab: its own secrets, variables, Pages, issues; the App made from its manifest)
   corp: { secrets: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID']), vars: {}, pages: null, pagesPut: [], issues: [], comments: {}, labels: [], locks: [], manifests: [], conversions: [] },
   joinIssues: [], members: [['author1', 'admin'], ['helper1', 'write'], ['admin2', 'admin']], invites: [], membersPut: [], accepted: [],
-  dispatched: [], secretsPut: [], filesPut: [], refsMade: [], posted: [], secretNames: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID', 'GOOGLE_EMAIL', 'ANTHROPIC_API_KEY']), vars: { LAB_NOTIFY: 'failures' }, varsPut: [],
+  dispatched: [], secretsPut: [], filesPut: [], refsMade: [], toggled: [], posted: [], secretNames: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID', 'GOOGLE_EMAIL', 'ANTHROPIC_API_KEY']), vars: { LAB_NOTIFY: 'failures' }, varsPut: [],
   artifacts: [{ id: 31, name: 'bds-addons', size_in_bytes: 1_234_567, expired: false, created_at: iso(now - 3_000_000), workflow_run: { id: 100, head_branch: 'main' } },
     { id: 30, name: 'old-addons', size_in_bytes: 99, expired: true, created_at: iso(now - 90 * 86_400_000), workflow_run: { id: 90, head_branch: 'main' } }],
   comments: [{ id: 900, body: 'lab-live@101 待っています（60 分まで。端末: スナップショットから起動しました）', created_at: iso(now - 60_000), user: { login: 'github-actions[bot]' } },
@@ -141,6 +141,9 @@ async function api(route) {
   const tw = /^\/actions\/workflows\/(\d+)\/(enable|disable)$/.exec(rest);
   if (SIDES[slug] && tw && req.method() === 'PUT') { if (!perm.push) return send(403, { message: 'Resource not accessible' }); SIDES[slug].toggled.push(`${tw[2]} ${tw[1]}`); SIDES[slug].wfs.find((w) => String(w.id) === tw[1]).state = tw[2] === 'enable' ? 'active' : 'disabled_manually'; return send(204, null); }
   if (SIDES[slug] && rest.startsWith('/actions/workflows')) return send(200, { workflows: SIDES[slug].wfs });
+  // (the lab's own workflows turned on or off: the scheduler, by 「予約」)
+  const lw = /^\/actions\/workflows\/([^/]+)\/(enable|disable)$/.exec(rest);
+  if (lw && req.method() === 'PUT') { if (!perm.push) return send(403, { message: 'Resource not accessible' }); G.toggled.push(`${lw[2]} ${decodeURIComponent(lw[1])}`); return send(204, null); }
   // (who changed the policy file: its commits)
   if (rest.startsWith('/commits') && /path=/.test(u.search)) return send(200, [{ html_url: `https://github.com/${slug}/commit/abc`, commit: { message: 'panel: 役割（ポリシー）を変える', author: { date: iso(now), name: 'author1' } }, author: { login: 'author1' } }]);
   if (rest === '/actions/workflows') return send(200, { workflows: ['app', 'notify', 'secrets', 'verify', 'hostrun', 'ai-make', 'unit', 'schedule'].map((n, i) => ({ id: i + 1, name: n, path: `.github/workflows/${n}.yml`, state: 'active' })) });
@@ -563,6 +566,7 @@ try {
   check(sjob && sjob.workflow === 'unit.yml' && sjob.inputs.job === 'test' && sjob.inputs.unit === 'coins' && sjob.every === 'day' && sjob.at === '03:00' && sjob.timezone === 'Asia/Tokyo' && sjob.enabled === true && !sput.body.sha,
     'a job kept in .github/bds-lab-schedule.json: the workflow, its inputs, when, the time zone (a new file: no sha)', JSON.stringify(sj));
   check(await waitText(/毎日 03:00（Asia\/Tokyo）/) && /次: /.test(await text()), 'said in words, with when it runs next', await text());
+  check(G.toggled.includes('enable schedule.yml'), 'a job on: schedule.yml turned on (it rests while there is none)', JSON.stringify(G.toggled));
 
   // 「統計」: the runs as charts (inline SVG, no library), each with its numbers as a table; the period changed in place
   await tab('統計');

@@ -120,7 +120,7 @@ await t('describe and fmtWhen: when, in words; scheduleText: the file in its own
 // ---- `node lab.mjs schedule ci` against a fake GitHub ----
 const TOKEN = 'ghs_SeCrEtScheduleToken1234567890';
 async function fakeGitHub({ defaultBranch = 'trunk', repoStatus = 200, refuse = {} } = {}) {
-  const st = { seen: [], dispatched: [] };
+  const st = { seen: [], dispatched: [], toggled: [] };
   const srv = http.createServer((req, res) => {
     let b = ''; req.setEncoding('utf8'); req.on('data', (d) => { b += d; });
     req.on('end', () => {
@@ -135,6 +135,7 @@ async function fakeGitHub({ defaultBranch = 'trunk', repoStatus = 200, refuse = 
         st.dispatched.push({ wf, body: JSON.parse(b) });
         res.writeHead(204); return res.end();
       }
+      if (req.method === 'PUT' && (x = /^\/repos\/o\/lab\/actions\/workflows\/([^/?]+)\/(enable|disable)$/.exec(req.url))) { st.toggled.push(`${x[2]} ${decodeURIComponent(x[1])}`); res.writeHead(204); return res.end(); }
       send(404, { message: `Not Found ${req.method} ${req.url}` });
     });
   }).listen(0, '127.0.0.1');
@@ -228,6 +229,31 @@ await t('ci: a broken file starts nothing (exit 1, why in words); no file: nothi
   } finally { await f.close(); }
 });
 
+await t('ci with nothing to start (no file, or every job paused): schedule.yml turns itself off — no hourly run, no minute of Actions — and says so; --dry and a job that is on leave it as it is (fake GitHub)', async () => {
+  const f = await fakeGitHub();
+  try {
+    const none = await cli(['ci'], { file: path.join(TMP, 'nowhere2', 'bds-lab-schedule.json'), env: ENV(f.url) });
+    ok(none.r === true && /予約はありません/.test(none.text) && /schedule\.yml を止めました/.test(none.text), none.text);
+    eq(f.st.toggled, ['disable schedule.yml'], 'no file: turned off');
+    const paused = await cli(['ci'], { file: scheduleFile({ jobs: [{ id: 'p', workflow: 'verify.yml', every: 'hour', enabled: false }] }), env: ENV(f.url) });
+    ok(paused.r === true && /予約 1 件、どれも止めています/.test(paused.text) && /止めました/.test(paused.text), paused.text);
+    eq(f.st.toggled.length, 2, 'every job paused: turned off');
+    const dry = await cli(['ci', '--dry'], { file: path.join(TMP, 'nowhere3', 'bds-lab-schedule.json'), env: ENV(f.url) });
+    ok(dry.r === true && !/止めました/.test(dry.text), dry.text);
+    const on = await cli(['ci'], { file: scheduleFile({ jobs: [{ id: 'later', workflow: 'verify.yml', every: 'day', at: '03:00', timezone: 'UTC' }] }), env: ENV(f.url) });
+    ok(on.r === true && !/止めました/.test(on.text), on.text);
+    eq(f.st.toggled.length, 2, '--dry, and a job that is on (not due now): left as it is');
+    ok(!/止めました/.test((await cli(['ci'], { file: path.join(TMP, 'nowhere4', 'bds-lab-schedule.json'), env: { GITHUB_API_URL: f.url } })).text), 'outside Actions (no token): GitHub not asked');
+    eq(f.st.toggled.length, 2);
+  } finally { await f.close(); }
+  // GitHub refusing to turn it off: said, still no failure (nothing was to start)
+  const g = await fakeGitHub();
+  try {
+    const r = await cli(['ci'], { file: path.join(TMP, 'nowhere5', 'bds-lab-schedule.json'), env: ENV(g.url, { GITHUB_TOKEN: 'ghs_wrong' }) });
+    ok(r.r === true && /W schedule: schedule\.yml を止められません（HTTP 401/.test(r.text) && !r.text.includes('ghs_wrong'), r.text);
+  } finally { await g.close(); }
+});
+
 await t('list and check: each job with when, its next three times, on or paused; the file checked (exit 1 when it is not right); usage', async () => {
   const file = scheduleFile({ version: 1, jobs: JOBS });
   const l = await cli(['list'], { file });
@@ -282,6 +308,7 @@ await t('the 「予約」 tab: the jobs with when and their next three times; ad
   const calls = [];
   const api = {
     async file(r, p) { calls.push(['file', r, p]); const f = files[p]; return f ? { text: f.text, sha: f.sha } : null; },
+    async call(method, p) { calls.push(['call', method, p]); return null; },
     async putFile(r, p, text, sha, message) {
       calls.push(['put', r, p, sha, message]);
       if ((files[p]?.sha ?? undefined) !== sha) throw Object.assign(new Error(`GitHub: 409 ${p} does not match ${sha}`), { status: 409 });
@@ -337,6 +364,8 @@ await t('the 「予約」 tab: the jobs with when and their next three times; ad
   eq(guards.at(-1), { action: 'dispatch', detail: { file: S.SCHEDULE_FILE, workflow: 'verify.yml' } });
   eq(written()[1], { id: 'verify-2', workflow: 'verify.yml', inputs: { mode: 'quick', why: 'nightly' }, every: 'week', at: '09:00', weekday: 1, timezone: 'Asia/Tokyo', enabled: true });
   ok(!form() && rows().length === 2 && /予約しました: verify\.yml・毎週 月曜 09:00/.test(last()), last());
+  // (a job on: schedule.yml turned on as well — it rests while there is none — and so no longer said to be off)
+  ok(calls.some((c) => c[0] === 'call' && c[1] === 'PUT' && c[2] === '/repos/o/lab/actions/workflows/schedule.yml/enable') && !/schedule\.yml が GitHub で止まっています/.test(body.textContent), 'schedule.yml turned on');
 
   // pause the first, change the second (its id kept)
   await btn(rows()[0], '止める')[0].click();
@@ -424,6 +453,13 @@ await t('the 「予約」 tab: the jobs with when and their next three times; ad
   await UI.scheduleTab(ro, ctx({ may: () => false, gate: () => ({ disabled: true, title: 'no' }) }));
   ok(/見るだけです/.test(ro.textContent) && btn(ro, '＋ 予約を足す')[0].disabled && btn(ro, '止める')[0].disabled && btn(ro, '消す')[0].disabled, ro.textContent);
   ok(!body.all((e) => /^(https?:)?\/\//.test(e.attrs.href ?? '') && !/^https:\/\/github\.com\//.test(e.attrs.href)).length, 'links to GitHub only');
+
+  // every job paused and schedule.yml off: how it rests (it turns itself off then) — said quietly, not as a warning
+  files[S.SCHEDULE_FILE] = { text: JSON.stringify({ version: 1, jobs: [{ id: 'p', workflow: 'verify.yml', inputs: { why: 'x' }, every: 'day', at: '03:00', timezone: 'UTC', enabled: false }] }), sha: 'sp' };
+  const idle = new E('div');
+  await UI.scheduleTab(idle, ctx());
+  const note = idle.all((e) => e.id === 'schedulerstate')[0];
+  ok(note && note.className === 'muted' && /動かす予約がない間は schedule\.yml も止めています/.test(note.textContent) && !/GitHub で止まっています/.test(idle.textContent), note?.textContent ?? idle.textContent);
 });
 
 // ---- the 「予約」 tab when GitHub says no: its own fake DOM, and a fake api that reads and writes as GitHub does (with the

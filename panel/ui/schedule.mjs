@@ -71,6 +71,8 @@ export function scheduleTab(body, ctx) {
     // (changed elsewhere since it was read: read again, nothing written over; the form closed — its place in the list may have moved)
     if (r === undefined) { if (stale) await reload(); return undefined; }
     Object.assign(st, { sha: r?.content?.sha ?? null, raw: JSON.parse(out.text).jobs, errors: out.errors, broken: false });
+    // (a job on: schedule.yml on too — it turns itself off while there is none, so that an idle lab spends no minute an hour)
+    if (st.raw.some((x) => S.checkJob(x).job?.enabled)) { try { await api.call('PUT', `/repos/${lab.slug}/actions/workflows/${S.SCHEDULER}/enable`); if (sch) sch.state = 'active'; } catch { /* said below when it is still off */ } }
     if (!st.sha) await load(); else draw();
     return r;
   };
@@ -97,7 +99,12 @@ export function scheduleTab(body, ctx) {
     const ids = st.raw.map((x) => (typeof x?.id === 'string' ? x.id.toLowerCase() : null)), twice = new Set(ids.filter((x, k) => x && ids.indexOf(x) !== k));
     // (each job's own errors are shown on its row; the file's here)
     const fileErrors = st.errors.filter((e) => !/^jobs\[\d+\]/.test(e));
+    // (the scheduler's own state: off with a job on — nothing starts — is to be said; off with none on is how it rests)
+    const on = st.raw.some((x) => S.checkJob(x).job?.enabled);
     fill(list,
+      sch && sch.state !== 'active' ? (on ? h('p', { class: 'warn', id: 'schedulerstate' }, `${S.SCHEDULER} が GitHub で止まっています（${sch.state}${sch.state === 'disabled_inactivity' ? ': 公開リポジトリは 60 日動きがないと GitHub が止めます' : ''}）: 有効にするまで、どの予約も始まりません。 `,
+        link(`https://github.com/${lab.slug}/actions/workflows/${S.SCHEDULER}`, 'GitHub で有効にする'))
+        : h('p', { class: 'muted', id: 'schedulerstate' }, `動かす予約がない間は ${S.SCHEDULER} も止めています（Actions の時間を使いません）。予約を足すと、また動きます。`)) : null,
       st.errors.length ? h('div', { class: 'warn', id: 'scheduleerrors' }, `いまの ${S.SCHEDULE_FILE} は正しくありません: 直すまで、どの予約も始まりません。`, fileErrors.length ? h('ul', {}, fileErrors.map((e) => h('li', {}, e))) : null) : null,
       st.raw.length ? h('ul', { class: 'plain', id: 'schedulelist' }, st.raw.map((x, i) => row(x, i, twice))) : st.broken ? null : h('p', { class: 'muted' }, 'まだ予約はありません。「＋ 予約を足す」から。'));
   };
@@ -212,8 +219,6 @@ export function scheduleTab(body, ctx) {
   const sch = wfs.find((w) => w.file === S.SCHEDULER);
   body.append(h('div', { class: 'card', id: 'schedule' }, h('h2', {}, '⏰ 予約'),
     h('p', { class: 'muted' }, `決めた時刻に、ラボのワークフローを自動で始めます。予約は ${S.SCHEDULE_FILE} に書き、毎時の ${S.SCHEDULER} がラボの Actions で、既定の枝に始めます（パソコンも、だれかのトークンも要りません）。時刻は 1 時間ごとで、GitHub が混んでいると数分〜数十分遅れることがあります。`),
-    sch && sch.state !== 'active' ? h('p', { class: 'warn' }, `${S.SCHEDULER} が GitHub で止まっています（${sch.state}${sch.state === 'disabled_inactivity' ? ': 公開リポジトリは 60 日動きがないと GitHub が止めます' : ''}）: 有効にするまで、どの予約も始まりません。 `,
-      link(`https://github.com/${lab.slug}/actions/workflows/${S.SCHEDULER}`, 'GitHub で有効にする')) : null,
     may('dispatch') ? null : h('p', { class: 'muted' }, '見るだけです: 予約を変えるには、役割に「ワークフローを始める」が要ります。'),
     list,
     h('div', { class: 'row' }, h('button', { class: 'primary', ...gate('dispatch'), onclick: () => open(null) }, '＋ 予約を足す'), h('button', { onclick: reload }, '読み直す'),

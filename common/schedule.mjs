@@ -5,6 +5,8 @@
 //                GITHUB_REPOSITORY, GITHUB_TOKEN (permissions: actions: write), GITHUB_API_URL, GITHUB_REF_NAME (the branch
 //                when the repository's own default cannot be read). What started and what was skipped is printed; the token
 //                never. A file that does not check out starts nothing (exit 1); a start GitHub refused is exit 1 too.
+//                No file, or no job on: schedule.yml turns itself off (PUT …/workflows/schedule.yml/disable) — no hourly run,
+//                no minute of Actions, until the panel's 「予約」 saves one on and turns it on again.
 //                --dry: says what it would start, starts nothing (no token needed)
 //   list         each job: when, its next three times, on or paused
 //   check        the file checked (exit 1 when it is not right)
@@ -80,13 +82,23 @@ export async function scheduleCmd(args = [], { out = console.log, env = process.
   }
   if (sub === 'ci') {
     const dry = a.includes('--dry'), r = readSchedule(file);
-    if (!r.found) { none(); return true; }
+    const repo = String(env.GITHUB_REPOSITORY ?? ''), api = String(env.GITHUB_API_URL || 'https://api.github.com').replace(/\/+$/, ''), gh = { api, token };
+    // (nothing to start, hour after hour: schedule.yml turns itself off — on a private lab each hourly run is a minute of
+    // Actions — until 「予約」 saves a job that is on, which turns it on again)
+    if (!r.found || (!r.errors.length && !r.jobs.some((j) => j.enabled))) {
+      if (r.found) say(`予約 ${r.jobs.length} 件、どれも止めています`); else none();
+      if (!dry && SLUG.test(repo) && token) {
+        const d = await rest(fetchImpl, gh, 'PUT', `/repos/${repo}/actions/workflows/${S.SCHEDULER}/disable`);
+        say(d.ok ? `${S.SCHEDULER} を止めました（動かす予約がない間は、毎時の実行もしません。管理パネルの「予約」で足すと、また動きます）`
+          : `W schedule: ${S.SCHEDULER} を止められません（${d.status ? `HTTP ${d.status} ${d.message}` : d.message}）`);
+      }
+      return true;
+    }
     if (r.errors.length) {
       for (const x of r.errors) say(`ERR schedule: ${x}`);
       say(`ERR schedule: ${S.SCHEDULE_FILE} が正しくないので、何も始めません（管理パネルの「予約」か GitHub で直す: node lab.mjs schedule check）`);
       return false;
     }
-    const repo = String(env.GITHUB_REPOSITORY ?? ''), api = String(env.GITHUB_API_URL || 'https://api.github.com').replace(/\/+$/, ''), gh = { api, token };
     if (!dry && (!SLUG.test(repo) || !token)) { say('ERR schedule ci: GITHUB_REPOSITORY と GITHUB_TOKEN が要ります（Actions の中で動きます: schedule.yml。手元で見るなら list か ci --dry）'); return false; }
     const due = r.jobs.filter((j) => j.enabled && S.due(j, at));
     // (the default branch: the repository's own, else the branch this run is on — a scheduled run's is the default)

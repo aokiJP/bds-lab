@@ -12,6 +12,7 @@
 - 📦 **配布**（`lib/releases.mjs`・`ui/releases.mjs`）: リリースのファイル・大きさ・ダウンロードの数・合計、リンクを写す、Discord に知らせる。
 - ⏰ **予約**（`lib/schedule.mjs`・`ui/schedule.mjs`・`common/schedule.mjs`）: 何時間ごと・毎日・毎週（時間帯つき）にワークフローを自動で。
   `.github/bds-lab-schedule.json` に書き、毎時の `schedule.yml` が `node lab.mjs schedule ci` で始める（手で始めると `--dry`）。
+  動かす予約がない間は schedule.yml が自分を止め（毎時の 1 分を使わない）、「予約」で動かす予約を保存すると有効に戻す。
 - 📊 **統計**（`lib/stats.mjs`・`ui/stats.mjs`）: 実行の数・通った割合・時間・曜日×時間・貸し手の分を、自前の SVG のグラフと「数字で見る」表で。
 - 🩺 **健康度と報告書**（`lib/health.mjs`・`ui/health.mjs`）: 「概要」にラボの健康度（0〜100・A〜E と直すと上がる 3 つ）、会社向けの報告書（Markdown）。
 - 🔔 **お知らせ・本物の通知・オフライン**（`lib/inbox.mjs`・`ui/inbox.mjs`・`sw.js`）: 開いていなかった間のことを 🔔 に（アカウントと
