@@ -321,10 +321,11 @@ await t('app notify: a finished run told as a DM with link buttons and its .mcad
     let b = ''; req.setEncoding('utf8'); req.on('data', (d) => { b += d; });
     req.on('end', () => {
       const send = (code, j) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(j)); };
-      if (/^\/gh\/repos\/o\/r\/actions\/runs\/(5|6|8)\/artifacts/.test(req.url)) return send(200, arts(req.url.split('/')[7]));
+      if (/^\/gh\/repos\/o\/r\/actions\/runs\/(5|6|8|9)\/artifacts/.test(req.url)) return send(200, arts(req.url.split('/')[7]));
       if (/^\/gh\/repos\/o\/r\/actions\/artifacts\/\d+\/zip$/.test(req.url)) { res.writeHead(200, { 'content-type': 'application/zip' }); return res.end(zip); }
       if (req.url === '/gh/repos/o/r/actions/runs/8') return send(200, { id: 8, status: 'completed', conclusion: 'success', event: 'pull_request', name: 'verify', head_branch: 'patch-1', html_url: 'https://github.com/o/r/actions/runs/8', run_started_at: '2026-10-08T00:00:00Z', updated_at: '2026-10-08T00:03:00Z', actor: { login: 'someone' }, head_repository: { full_name: 'someone/r' } });
-      if (/^\/gh\/repos\/o\/r\/actions\/runs\/(6|8)\/jobs/.test(req.url)) return send(200, { jobs: [] });
+      if (req.url === '/gh/repos/o/r/actions/runs/9') return send(200, { id: 9, status: 'completed', conclusion: 'success', event: 'workflow_dispatch', name: 'hostrun', path: '.github/workflows/hostrun.yml', head_branch: 'main', html_url: 'https://github.com/o/r/actions/runs/9', run_started_at: '2026-10-08T00:00:00Z', updated_at: '2026-10-08T00:03:00Z', actor: { login: 'me' } });
+      if (/^\/gh\/repos\/o\/r\/actions\/runs\/(6|8|9)\/jobs/.test(req.url)) return send(200, { jobs: [] });
       if (req.url === '/gh/repos/o/r/actions/runs/5') return send(200, { id: 5, status: 'completed', conclusion: 'failure', event: 'push', name: 'verify', head_branch: 'main', html_url: 'https://github.com/o/r/actions/runs/5', run_started_at: '2026-10-08T00:00:00Z', updated_at: '2026-10-08T00:03:00Z', actor: { login: 'me' } });
       if (req.url === '/gh/repos/o/r/actions/runs/6') return send(200, { id: 6, status: 'completed', conclusion: 'success', event: 'push', name: 'verify', head_branch: 'main', html_url: 'https://github.com/o/r/actions/runs/6', run_started_at: '2026-10-08T00:00:00Z', updated_at: '2026-10-08T00:03:00Z' });
       if (/^\/gh\/repos\/o\/r\/actions\/runs\/5\/jobs/.test(req.url)) return send(200, { jobs: [{ name: 'offline', conclusion: 'failure', check_run_url: 'https://api/x/check-runs/77', steps: [{ name: 'every offline test', conclusion: 'failure' }] }] });
@@ -351,6 +352,8 @@ await t('app notify: a finished run told as a DM with link buttons and its .mcad
   ok(forced.code === 0 && got.dm.length === 2 && /✅ \*\*verify\*\* 通りました/.test(got.dm[1].body.content) && got.dm[1].files.length === 1, `--force (the panel's 「Discord に送る」) tells it anyway\n${forced.o}`);
   const fork = await run(['--run', '8', '--force'], dc);
   ok(fork.code === 0 && got.dm.length === 3 && !got.dm[2].files.length && /成果物は添えません（someone\/r の変更から/.test(fork.o) && !/📦/.test(got.dm[2].body.content), `a fork's pull request: told, its files never handed on\n${fork.o}`);
+  const lent = await run(['--run', '9'], dc);
+  ok(lent.code === 0 && !got.dm.at(-1).files.length && /貸し手のランナーで作ったもの/.test(lent.o) && !/📦/.test(got.dm.at(-1).body.content), `a hostrun's files (made on a lender's runner) are never handed on\n${lent.o}`);
   const off = await run(['--run', '5'], { ...dc, LAB_NOTIFY_FILES: 'off' });
   ok(off.code === 0 && !got.dm.at(-1).files.length && /成果物（1）/.test(JSON.stringify(got.dm.at(-1).body.components)), 'LAB_NOTIFY_FILES=off: no file, the button still');
   const dhook = await run(['--run', '5'], { LAB_NOTIFY_WEBHOOK: `http://127.0.0.1:${port}/discord.com/api/webhooks/1/abc` });

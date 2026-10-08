@@ -2459,10 +2459,13 @@ async function notifyCmd(args) {
       if (cr) annotations[j.name] = await ghFetch(`${base}/repos/${repo}/check-runs/${cr}/annotations?per_page=20`).catch(() => []);
     }
     const own = !run.head_repository?.full_name || run.head_repository.full_name.toLowerCase() === repo.toLowerCase();
+    // (a hostrun's files were made on a lender's runner: the lender could have changed them — not handed on as the person's)
+    const lent = /(^|\/)hostrun\.ya?ml$/.test(String(run.path ?? '')) || run.name === 'hostrun';
     const maxBytes = Math.min(25, Math.max(1, Number(process.env.LAB_NOTIFY_MAX_MB) || 10)) * 1e6;
-    files = await RF.runFiles({ base, repo, run: id, token: process.env.GITHUB_TOKEN, policy: own ? process.env.LAB_NOTIFY_FILES : 'off', maxBytes });
+    files = await RF.runFiles({ base, repo, run: id, token: process.env.GITHUB_TOKEN, policy: own && !lent ? process.env.LAB_NOTIFY_FILES : 'off', maxBytes });
     if (files.why) out(`W 成果物: ${files.why}`);
     if (!own) out(`成果物は添えません（${run.head_repository.full_name} の変更から: このリポジトリのコードではありません）`);
+    else if (lent) out('成果物は添えません（貸し手のランナーで作ったもの: 配るものは自分の Actions で作り直してください）');
     msg = RM.runMessage({ run, jobs, annotations, panel: RM.panelRunUrl(RM.panelUrl(repo, process.env), repo, id), files });
   } else msg = { content: o.opts['--text'] || 'bds-lab: Discord への通知の試し', buttons: [] };
   const att = files.attach.map((f) => ({ name: f.name, data: f.data }));

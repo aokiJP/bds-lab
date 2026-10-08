@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "roles": { "admin": ["*"] },
+  "confirm": ["secrets.put", "secrets.delete", "variables", "hostrun", "run.cancel", "lend"],
+  "idleMinutes": 60,
+  "audit": "auto"
+}
