@@ -4,6 +4,19 @@
 **app ラボを「ほぼクライアント」に: 本物のアプリをコントローラーで人のように遊べる（歩く・見回す・跳ぶ・壊す・置く・持ち物・チャット…）。
 スマホの Discord から CI の端末を画面とボタンで動かせ、リポジトリの秘密も Discord のフォームで登録できる（node も PC も要らない）。**
 
+### 管理パネル（panel/: 作者と、GitHub Actions の時間を貸し借りする人のための Web）
+- 1 枚の静的なページ（GitHub Pages: `.github/workflows/pages.yml`、手元: `node lab.mjs panel`）。見る人の GitHub のトークン（Fine-grained）で
+  GitHub の API とだけ話す（CSP で api.github.com のほかへは通信できない。トークンはそのブラウザの中だけ）。ラボに書き込める人・ホストの持ち主（貸し手）・
+  ホストに書き込める人（借り手）のほかは「使えません」で止まり、何も読まない。
+- それぞれの設定のまま: リポジトリの秘密の名前・ワークフロー・公開か非公開か、ホストの `.lab-host.json` から「できること」と「足りないもの」。
+- 概要・進み具合（動いている実行は段ごとに、失敗は注釈まで。止める・やり直す）・実行（ワークフローの入力をその YAML から。すぐ始める型）・秘密（その場で
+  リポジトリの公開鍵で封じて登録: libsodium の sealed box を JavaScript で、libsodium の出力で試験）・端末（Discord と同じボタン。公開リポジトリでは
+  APP_CACHE_KEY でその場で封じ・開く: ランナーの vault と同じ形）・貸し借り（借り手: 今月の分と残り。貸し手: 条件を変える・今すぐ止める・再開）。
+- Discord: `.github/workflows/notify.yml` + `app notify` が、終わった実行を DM（自分のボット）か LAB_NOTIFY_WEBHOOK に（結果・落ちたジョブと理由・ボタン。
+  変数 LAB_NOTIFY: auto / all / failures / off）。端末のボタンの表は `panel/lib/pages.mjs` の 1 つ（Discord もパネルも）。
+- 試験: `tests/panel-offline.mjs`（12 本）、`tests/panel-browser.mjs`（本物の Chromium で 21 の確かめ: 入れない人・作者・借り手・貸し手。CI の verify で）。
+- `tests/play-bds.mjs`: `do` が繰り返す命令の行を答えと読まない（CI の本物の BDS で、where・items・face の答えそのものは正しく返っていた）。
+
 ### ゲームを人のように（app.txt と live）
 - 端末のコントローラー（app/relay/lab-pad.c）にスティックとトリガーと「押したまま」: `LX=` `LY=` `RX=` `RY=`（-100〜100%）・`LT=` `RT=`（0〜100%）を
   置いたままにする、`+A` / `-A` でボタンを押す / はなす、`center` で全部はなす。`lab-pad --dry <ファイル> <語>…` は端末なしで入力イベントを

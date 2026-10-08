@@ -130,6 +130,8 @@ FAIL upkeep (412s) · 次: node lab.mjs bds why -a my_addon
 | `node lab.mjs watch` | **保存したら自動でテスト**。ファイルを保存するたびに本物のサーバーでテストし、✘ の行だけ出します（`--check` 型検査だけ・`--go` 全部・`--live` 起動したままのサーバーに /reload） |
 | `node lab.mjs undo` | **元に戻す**。`make` と `maintain` はアドオンを変える前に自動でチェックポイントを取ります。`undo` で直前に戻り、`undo --list` で一覧、`checkpoint "メモ"` で手動保存。undo 自体も undo できます |
 | Actions → **secrets** | **スマホだけで秘密を登録**。Run workflow で Discord の DM にフォームが届き、書いて送った値がリポジトリの秘密になります（`MS_EMAIL` `MS_PASSWORD` など 5 つまで。要るもの: 秘密 `DISCORD_BOT_TOKEN` `DISCORD_USER_ID` `LAB_SECRETS_TOKEN`。app/README.md「スマホだけで」） |
+| Actions → **notify**（自動） | **実行が終わると Discord に**。結果・落ちたジョブとその理由・実行と管理パネルへのボタン（DM か LAB_NOTIFY_WEBHOOK。変数 LAB_NOTIFY で、どの実行か） |
+| **管理パネル**（pages） | **スマホのブラウザで全部**。進み具合・実行・秘密・端末・貸し借り（自分のトークンで。README「管理パネル」） |
 | Actions → **app**（mode hold） | **スマホの Discord で本物のアプリを操作**。DM に画面と 25 個のボタン（歩く・見回す・壊す・使う・持ち物・チャット…）、押すたびにその後の画面。DM に書いた文は `app live` の命令 |
 | `LAB_NOTIFY_WEBHOOK` | **スマホに通知**。`.env` に Discord / Slack の Webhook か `https://ntfy.sh/<トピック>` を書くと、make・maintain・最新版チェックの結果が届きます（`node lab.mjs notify` で試験） |
 | `--budget` / `LAB_TOKEN_BUDGET` | **トークンの上限**。`make --budget 300000` はそれ以上 AI に聞きません |

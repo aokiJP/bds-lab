@@ -42,8 +42,31 @@ node lab.mjs login ai           # ANTHROPIC_API_KEY / OPENAI_API_KEY を確か�
 | 他の人のアドオンで、最新で動くものを借りて直して学ぶ（配り直さない） | `node lab.mjs colony harvest`（見たことのないものだけ。`colony borrowed`・`colony diff`） |
 | 自分のスマホ・タブレットで JSON UI を確かめる（root あり・なし × USB・Wi-Fi） | `node lab.mjs app device add <名前>` → `app run -a <アドオン> --device <名前>`（[app/README.md](app/README.md)） |
 | 知り合いが貸してくれる GitHub Actions の時間で試験を回す | `node lab.mjs host add <owner/repo>` → `host run gate`（[docs/guide/host.md](docs/guide/host.md)） |
+| スマホのブラウザで進み具合を見る・実行する・秘密を入れる・端末を動かす・貸す条件を変える | 管理パネル（下の「管理パネル」。手元なら `node lab.mjs panel`） |
 
 どれも最後の行に「次にやること」を 1 つだけ出します。AI も人も、それをそのまま打てば進みます。
+
+## 管理パネル（ブラウザ・スマホ: 作者と、Actions の時間を貸し借りする人のための）
+
+`panel/` の 1 枚のページです。GitHub Pages（`.github/workflows/pages.yml`。一度だけ Settings → Pages → Source を
+「GitHub Actions」に）に置けば `https://<owner>.github.io/<リポジトリ>/` で、手元なら `node lab.mjs panel` で開きます。
+
+- **入れる人**: 自分の GitHub のトークン（Fine-grained。対象: ラボのリポジトリと、貸し借りのホスト）で入ります。GitHub が
+  そのトークンに許していることだけが見え、できます。ラボに書き込める人（作者・collaborator）と、ホストの持ち主（貸し手）・
+  ホストに書き込める人（借り手）のほかは「使えません」で止まり、何も読みません。ページはどこにも保存せず、GitHub の API の
+  ほかには通信できません（CSP）。トークンはそのブラウザの中だけに置きます。
+- **それぞれの設定のまま**: 見るのはそれぞれのリポジトリの秘密の名前・ワークフロー・公開か非公開か、ホストの `.lab-host.json`。
+  それに合わせて「できること」と「足りないもの」を出します（例: Discord の 2 つの秘密があれば、端末を Discord で操作できる）。
+- **できること**: 概要（役割・できること・最近の実行）／進み具合（動いている実行は段ごとに、失敗はその理由の注釈まで。止める・
+  やり直す）／実行（ワークフローの入力をその YAML から作って始める。「スマホで端末を操作」「秘密を Discord のフォームで」
+  「Discord に試しに送る」などはすぐ）／秘密（その場でリポジトリの公開鍵で封じて登録・消す。値は表示も保存もしない）／
+  端末（mode hold の端末を Discord と同じボタンで。公開リポジトリでは設定の APP_CACHE_KEY で命令も返事も封じる）／
+  貸し借り（借り手: ホストの今月の分と残り・最近の結果。貸し手: 1 か月の分・仕事・時間帯・最後の日を変える、今すぐ止める・再開）
+- **Discord**: 実行が終わると `.github/workflows/notify.yml` が DM（自分のボット: `DISCORD_BOT_TOKEN` + `DISCORD_USER_ID`）か
+  `LAB_NOTIFY_WEBHOOK` に知らせます（結果・落ちたジョブとその理由・実行とパネルへのボタン。どの実行かはリポジトリの変数
+  `LAB_NOTIFY`: 既定 auto = 失敗と、手で始めた実行。all / failures / off）。端末の操作は [app/README.md](app/README.md)「スマホだけで」。
+
+詳しくは [panel/README.md](panel/README.md)。
 
 ## いまの状態を 1 回で見る・空きを作る
 

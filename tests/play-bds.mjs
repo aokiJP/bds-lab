@@ -22,8 +22,10 @@ const r = spawnSync(process.execPath, [path.join(TOP, 'lab.mjs'), 'bds', 'run', 
   P.faceJs({ yaw: 90, pitch: 10 }), 'wait 600', P.STATE_JS,
   'give A minecraft:diamond 3', 'wait 300', P.ITEMS_JS, P.STATE_JS,
 ], { cwd: TOP, encoding: 'utf8', timeout: 600_000, env: { ...process.env, FORCE_COLOR: '0', LAB_NOTRACE: '1' } });
+// (the lab echoes each command before its output — "> js …" — and the js itself holds the word: only the answers count,
+//  read as the verbs read them: lib/play.mjs serverSaid, line by line)
 const text = `${r.stdout}${r.stderr}`, lines = text.split('\n');
-const all = (word) => lines.map((l) => new RegExp(`${word} (.*)$`).exec(l)?.[1]).filter(Boolean).map((x) => { try { return JSON.parse(x); } catch { return x; } });
+const all = (word) => lines.map((l) => P.serverSaid([l], word)).filter((x) => x !== null);
 const states = all('LAB_STATE'), faces = all('LAB_FACE'), items = all('LAB_ITEMS');
 ok(r.status === 0, `bds run: exit ${r.status}`, text);
 ok(states.length === 3 && states.every((s) => s && s.name === 'A'), `three states of A read back: ${JSON.stringify(states)}`, text);
@@ -39,7 +41,7 @@ if (s0) {
   const at = { x: s0.x + 10, y: s0.y + 1.62, z: s0.z };
   const r2 = spawnSync(process.execPath, [path.join(TOP, 'lab.mjs'), 'bds', 'run', '-a', 'jsonui_demo', '@A join', P.faceJs({ at }), 'wait 600', P.STATE_JS],
     { cwd: TOP, encoding: 'utf8', timeout: 600_000, env: { ...process.env, FORCE_COLOR: '0', LAB_NOTRACE: '1' } });
-  const t2 = `${r2.stdout}${r2.stderr}`, st = t2.split('\n').map((l) => /LAB_STATE (.*)$/.exec(l)?.[1]).filter(Boolean).map((x) => JSON.parse(x)).at(-1);
+  const t2 = `${r2.stdout}${r2.stderr}`, st = t2.split('\n').map((l) => P.serverSaid([l], 'LAB_STATE')).filter((x) => x !== null).at(-1);
   ok(st && near(st.yaw, P.yawTo(st, at), 3) && near(st.yaw, -90, 3) && Math.abs(st.pitch) <= 3 && P.compassOf(st.yaw) === '東', `lookat east: the server's yaw ${st?.yaw} = the lab's ${st ? P.yawTo(st, at) : '?'}`, t2);
 }
 console.log(fails ? `FAIL play-bds (${fails})` : 'PASS play-bds');

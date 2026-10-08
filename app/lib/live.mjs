@@ -12,6 +12,9 @@
 import { vaultKey, sealText, openText } from './vault.mjs';
 import { GAME_VERBS, GAME_HELP } from './play.mjs';
 import { button, row, modal, modalValues } from './discord.mjs';
+// (the pages of buttons: one table for the Discord DM and the web panel)
+import { PAGES } from '../../panel/lib/pages.mjs';
+export { PAGES };
 export const ISSUE_TITLE = 'app live: 実機をそのまま調べる（ラボが使います）';
 export const HELP = [
   'screen                      いまの画面（返事に画像）・前の窓・描画の速さ・画面の文字（OCR）',
@@ -205,29 +208,6 @@ export function api({ base = 'https://api.github.com', repo, token, fetchImpl = 
 // Pages of 5 rows of 5 (Discord's most a message): play (moving, the camera, the hands), menu (the menus' controller, the
 // hotbar), tools (the server, the world, the view). A press is a live command (" && " between several), its button's id
 // "lab:<page>:<command>"; "#chat" / "#cmd" open a form, "#page:<name>" shows another page (no device step: at once)
-export const PAGES = {
-  play: [
-    [['⬆️ 前へ', 'walk forward 1', 1], ['⬅️ 左へ', 'walk left 1', 1], ['⬇️ 後ろへ', 'walk back 1', 1], ['➡️ 右へ', 'walk right 1', 1], ['🦘 ジャンプ', 'jump', 1]],
-    [['↩️ 左を見る', 'look left 300'], ['↪️ 右を見る', 'look right 300'], ['🔼 上を見る', 'look up 250'], ['🔽 下を見る', 'look down 250'], ['🏃 走る', 'sprint 2', 1]],
-    [['⛏️ 壊す', 'mine 1.5', 3], ['⚔️ 殴る', 'attack', 3], ['✋ 使う・置く', 'use', 3], ['🎒 持ち物', 'inventory', 3], ['🔁 次の物', 'slot next', 3]],
-    [['⏩ 進み続ける', 'move forward', 1], ['⏹️ 止まる', 'release', 4], ['🧎 しゃがむ', 'sneak'], ['📍 どこ', 'where'], ['🎥 5 秒', 'clip 5']],
-    [['💬 チャット', '#chat', 1], ['⌨️ 命令', '#cmd', 1], ['📷 画面', 'screen'], ['🎮 メニュー', '#page:menu'], ['🧰 道具', '#page:tools']],
-  ],
-  menu: [
-    [['Ⓐ 決定', 'pad A', 1], ['Ⓑ 戻る', 'pad B', 4], ['Ⓧ', 'pad X'], ['Ⓨ', 'pad Y'], ['☰ ポーズ', 'pause']],
-    [['▲', 'pad UP', 1], ['▼', 'pad DOWN', 1], ['◀', 'pad LEFT', 1], ['▶', 'pad RIGHT', 1], ['⎋ 閉じる', 'key ESCAPE']],
-    [['1', 'slot 1'], ['2', 'slot 2'], ['3', 'slot 3'], ['4', 'slot 4'], ['5', 'slot 5']],
-    [['6', 'slot 6'], ['7', 'slot 7'], ['8', 'slot 8'], ['9', 'slot 9'], ['🗑️ 落とす', 'drop']],
-    [['⏪ LB', 'pad LB'], ['⏩ RB', 'pad RB'], ['📷 画面', 'screen'], ['🕹️ 遊ぶ', '#page:play', 3], ['🧰 道具', '#page:tools']],
-  ],
-  tools: [
-    [['🖧 サーバーを立てる', 'bds up', 1], ['🔗 参加', 'relay && step join', 1], ['🚪 タイトルまで', 'title 5'], ['🔄 視点', 'perspective'], ['🧭 北を向く', 'face north']],
-    [['🌞 昼に', 'bds do time set day'], ['☀️ 晴れに', 'bds do weather clear'], ['🛠️ クリエ', 'bds do gamemode creative @a'], ['⚔️ サバイバル', 'bds do gamemode survival @a'], ['❤️ 回復', 'bds do effect @a instant_health 1 10']],
-    [['📍 どこ', 'where'], ['🎒 持ち物の一覧', 'items'], ['⚡ 描画の速さ', 'fps'], ['📜 BDS のログ', 'bdslog 20'], ['🎥 10 秒', 'clip 10']],
-    [['▶️ ゲーム起動', 'launch'], ['🆗 ダイアログ', 'answer'], ['🧪 app.txt', 'run'], ['⏹️ 全部はなす', 'release', 4], ['❓ 使い方', 'help']],
-    [['💬 チャット', '#chat', 1], ['⌨️ 命令', '#cmd', 1], ['📷 画面', 'screen'], ['🕹️ 遊ぶ', '#page:play', 3], ['🎮 メニュー', '#page:menu']],
-  ],
-};
 export const PANEL = PAGES.play;
 /** a page's rows for a message (pure); disabled: shown greyed (the session has ended) */
 export const panel = (page = 'play', disabled = false) => (PAGES[page] ?? PAGES.play).map((r) => row(...r.map(([label, cmd, style = 2]) => button(label, `lab:${PAGES[page] ? page : 'play'}:${cmd}`, style, disabled))));

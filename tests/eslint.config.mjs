@@ -10,7 +10,7 @@ const node = Object.fromEntries(['process', 'Buffer', 'console', 'setTimeout', '
   'CompressionStream', 'DecompressionStream', 'File'].map((k) => [k, 'readonly']));
 const browser = Object.fromEntries(['window', 'document', 'location', 'localStorage', 'sessionStorage', 'history', 'getComputedStyle', 'requestAnimationFrame',
   'HTMLElement', 'Image', 'EventSource', 'alert', 'confirm', 'prompt', 'innerWidth', 'innerHeight', 'devicePixelRatio', 'matchMedia', 'IntersectionObserver',
-  'ResizeObserver', 'MutationObserver', 'CustomEvent', 'KeyboardEvent', 'MouseEvent', 'DOMParser', 'XMLHttpRequest', 'FileReader', 'ImageData', 'OffscreenCanvas'].map((k) => [k, 'readonly']));
+  'ResizeObserver', 'MutationObserver', 'Node', 'CustomEvent', 'KeyboardEvent', 'MouseEvent', 'DOMParser', 'XMLHttpRequest', 'FileReader', 'ImageData', 'OffscreenCanvas'].map((k) => [k, 'readonly']));
 const rules = {
   'no-undef': 'error', 'no-unreachable': 'error', 'no-dupe-keys': 'error', 'no-dupe-else-if': 'error', 'no-duplicate-case': 'error', 'no-self-assign': 'error',
   'no-self-compare': 'error', 'no-unsafe-finally': 'error', 'no-unsafe-negation': 'error', 'no-cond-assign': ['error', 'except-parens'],
@@ -27,8 +27,9 @@ export default [
     'bds/bench/**/bp/**', 'bds/vendor/**', 'common/nethernet-connect/**', 'sandbox-be/src/vm/runtime/**', 'sandbox-be/src/vm/commands/**', '**/data/**', 'common/kit/kit.js'] },
   { files: ['**/*.mjs', '**/*.js'], languageOptions: { ecmaVersion: 2024, sourceType: 'module', globals: node }, rules },
   { files: ['**/*.cjs'], languageOptions: { ecmaVersion: 2024, sourceType: 'commonjs', globals: node }, rules },
-  // run in a browser page (the lab's pages, the app lab's page scripts, bedrock-binary's report)
-  { files: ['bedrock-binary/src/report/assets/**/*.js', 'common/nethernet-connect/web/**/*.js', 'app/lib/playwright-login.mjs'], languageOptions: { globals: { ...node, ...browser } } },
+  // run in a browser page (the lab's pages, the app lab's page scripts, bedrock-binary's report, the management panel and the
+// page.evaluate callbacks of its browser test)
+  { files: ['bedrock-binary/src/report/assets/**/*.js', 'common/nethernet-connect/web/**/*.js', 'app/lib/playwright-login.mjs', 'panel/**/*.js', 'panel/**/*.mjs', 'tests/panel-browser.mjs'], languageOptions: { globals: { ...node, ...browser } } },
   // run in the game: the in-world helper (common/helper.js: its form wrappers are spliced in by text, core.mjs EVAL_HELPER)
   { files: ['common/helper.js'], rules: { 'no-unused-vars': ['error', { args: 'none', caughtErrors: 'none', varsIgnorePattern: '^(_|wrapForm$)' }] } },
   // LegacyScriptEngine (the ll lab's helper): its own globals
