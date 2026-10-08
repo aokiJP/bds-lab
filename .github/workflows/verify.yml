@@ -54,6 +54,11 @@ jobs:
         run: node lab.mjs auto gate --all
       - name: GitHub flows (fake gh)
         run: node bds/bench/github-smoke.mjs
+      # the management panel (panel/) in a real headless Chrome, GitHub's API stood in for by routes: who is locked out,
+      # what each person may do, a secret sealed in the page, the live device driven, a lender stopping
+      - name: management panel (real browser)
+        if: matrix.os == 'ubuntu-latest'
+        run: node tests/panel-browser.mjs
       - if: hashFiles('common/nethernet-connect/dist/src/index.js') == ''
         run: echo "::warning title=lan-offline not run::common/nethernet-connect/dist is not in this repository - vendor it from the nethernet-connect project (node scripts/vendor.mjs <this lab>), then lan and its test run here"
 
@@ -77,6 +82,8 @@ jobs:
       - run: node ../lab.mjs scratch selftest --real
       # why, chaos, shrink, gaps, record, harden (a scripted AI) and mutate on the real server, end to end
       - run: node ../tests/dev-bds.mjs
+      # the server's side of the app lab's game verbs (where, items, face, lookat: their very js) with a real client joined
+      - run: node ../tests/play-bds.mjs
       - name: test and pack every addon
         run: |
           set -e

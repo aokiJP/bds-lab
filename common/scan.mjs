@@ -16,8 +16,9 @@ export function zipName(bytes, flags = 0) {
   if (flags & 0x0800 || bytes.every((b) => b < 0x80)) return Buffer.from(bytes).toString('utf8');
   try { return UTF8.decode(bytes); } catch { return SJIS ? SJIS.decode(bytes) : Buffer.from(bytes).toString('utf8'); }
 }
-/** the files of a zip as [{ name, data }]; a .mcpack/.zip inside an .mcaddon is opened too */
-export function unzipAll(buf, pre = '') {
+/** the files of a zip as [{ name, data }]; a .mcpack/.zip inside an .mcaddon is opened too (nested: false — kept whole;
+ *  want(name): only those inflated; max: a file larger than that is left out) */
+export function unzipAll(buf, pre = '', { nested = true, want = null, max = Infinity } = {}) {
   const out = [];
   let e = buf.length - 22;
   while (e > 0 && buf.readUInt32LE(e) !== 0x06054b50) e--;
@@ -28,9 +29,12 @@ export function unzipAll(buf, pre = '') {
     const name = zipName(buf.subarray(p + 46, p + 46 + fl), buf.readUInt16LE(p + 8));
     p += 46 + fl + xl + cl;
     if (name.endsWith('/') || name.includes('..')) continue;
+    if (want && !want(name)) continue;
     const at = lo + 30 + buf.readUInt16LE(lo + 26) + buf.readUInt16LE(lo + 28), raw = buf.subarray(at, at + size);
-    const data = method === 8 ? zlib.inflateRawSync(raw) : Buffer.from(raw);
-    if (/\.(mcpack|zip)$/i.test(name)) { try { out.push(...unzipAll(data, pre + name.replace(/\.(mcpack|zip)$/i, '') + '/')); continue; } catch { /* a file named .zip */ } }
+    let data;
+    try { data = method === 8 ? zlib.inflateRawSync(raw, Number.isFinite(max) ? { maxOutputLength: max } : undefined) : Buffer.from(raw); } catch (e) { if (Number.isFinite(max) && e.code === 'ERR_BUFFER_TOO_LARGE') continue; throw e; }
+    if (data.length > max) continue;
+    if (nested && /\.(mcpack|zip)$/i.test(name)) { try { out.push(...unzipAll(data, pre + name.replace(/\.(mcpack|zip)$/i, '') + '/')); continue; } catch { /* a file named .zip */ } }
     out.push({ name: pre + name, data });
   }
   return out;

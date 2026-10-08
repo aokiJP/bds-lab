@@ -42,8 +42,40 @@ node lab.mjs login ai           # ANTHROPIC_API_KEY / OPENAI_API_KEY を確か�
 | 他の人のアドオンで、最新で動くものを借りて直して学ぶ（配り直さない） | `node lab.mjs colony harvest`（見たことのないものだけ。`colony borrowed`・`colony diff`） |
 | 自分のスマホ・タブレットで JSON UI を確かめる（root あり・なし × USB・Wi-Fi） | `node lab.mjs app device add <名前>` → `app run -a <アドオン> --device <名前>`（[app/README.md](app/README.md)） |
 | 知り合いが貸してくれる GitHub Actions の時間で試験を回す | `node lab.mjs host add <owner/repo>` → `host run gate`（[docs/guide/host.md](docs/guide/host.md)） |
+| スマホのブラウザで進み具合を見る・実行する（自分の Actions か貸し手の Actions か）・成果物を Discord に・秘密を入れる・端末を動かす・貸す条件を変える | 管理パネル（下の「管理パネル」: リポジトリの GitHub Pages） |
 
 どれも最後の行に「次にやること」を 1 つだけ出します。AI も人も、それをそのまま打てば進みます。
+
+## 管理パネル（ブラウザ・スマホ: 作者と、Actions の時間を貸し借りする人のための）
+
+`panel/` の 1 枚のページで、リポジトリだけで動きます（パソコンもサーバーも要りません）。GitHub Pages
+（`.github/workflows/pages.yml`。一度だけ Settings → Pages → Source を「GitHub Actions」に）が
+`https://<owner>.github.io/<リポジトリ>/` に置きます。
+
+- **入れる人**: 自分の GitHub のトークンで入ります。GitHub がそのトークンに許していることだけが見え、できます。ラボに書き込める人
+  （作者・collaborator）と、ホストの持ち主（貸し手）・ホストに書き込める人（借り手）のほかは「使えません」で止まり、何も読みません。
+  ページは GitHub の API のほかには通信できません（CSP）。トークンはそのブラウザの中だけ。
+- **いくつものアカウント**: 作者・貸し手・借り手のアカウントを 1 つのブラウザに加え、上で切り替えます。ラボ・ホストの一覧・
+  読み直す間隔・APP_CACHE_KEY はアカウントごと（覚えないアカウントはそのタブの間だけ）。貸し手の初めての訪問では、その人の
+  ホストを自分で探します。
+- **それぞれの設定のまま**: 見るのはそれぞれのリポジトリの秘密の名前・ワークフロー・公開か非公開か・変数、ホストの `.lab-host.json`。
+  それに合わせて「できること」と「足りないもの」を出します（例: Discord の 2 つの秘密があれば、端末を Discord で操作できる）。
+- **どこの Actions で走らせるか**: 「実行」で、このラボの Actions か、貸し手のホスト（その人の Actions の分）かを選びます。ホストなら
+  貸す条件が許す仕事だけ・今月の分（GitHub が数えたホストの実行: 誰の分も）が 80% に届くまで。`.github/workflows/hostrun.yml` が
+  ラボをホストに送って走らせ、待てば結果・知らせ・成果物（go の .mcaddon）がこの実行のものになります（秘密 `LAB_HOST_TOKEN`:
+  パネルの「秘密」から）。
+- **できること**: 概要／進み具合（ラボかホストの実行。動いているものは段ごとに、失敗はその理由の注釈まで。止める・やり直す・
+  成果物）／実行（上の切り替え。ワークフローの入力をその YAML から）／成果物（実行ごとの .mcaddon など。Discord に送る）／
+  Discord（つなぐ秘密・どの実行を知らせるか・何を添えるか・試し）／秘密（その場でリポジトリの公開鍵で封じて登録・消す）／
+  端末（mode hold の端末を Discord と同じボタンで）／貸し借り（借り手: 今月の分と残り・結果・その人の Actions で走らせる。
+  貸し手: 1 か月の分・仕事・時間帯・最後の日を変える、今すぐ止める・再開）
+- **Discord**: 実行が終わると `.github/workflows/notify.yml` が DM（自分のボット: `DISCORD_BOT_TOKEN` + `DISCORD_USER_ID`）か
+  `LAB_NOTIFY_WEBHOOK` に知らせます（結果・落ちたジョブとその理由・実行と成果物とパネルへのボタン、成果物の .mcaddon・.mcpack・
+  ワールドは 10 MB まで添えて。このリポジトリのコードの実行だけ: フォークの PR のものは添えません）。どの実行かは変数 `LAB_NOTIFY`
+  （既定 auto = 失敗と、手で始めた実行。all / failures / off）、何を添えるかは `LAB_NOTIFY_FILES`（auto / off / `*.zip` など）。
+  パネルのボタンはその実行を開きます。端末の操作は [app/README.md](app/README.md)「スマホだけで」。
+
+詳しくは [panel/README.md](panel/README.md)。
 
 ## いまの状態を 1 回で見る・空きを作る
 

@@ -4,6 +4,38 @@
 **app ラボを「ほぼクライアント」に: 本物のアプリをコントローラーで人のように遊べる（歩く・見回す・跳ぶ・壊す・置く・持ち物・チャット…）。
 スマホの Discord から CI の端末を画面とボタンで動かせ、リポジトリの秘密も Discord のフォームで登録できる（node も PC も要らない）。**
 
+### 管理パネル（panel/: 作者と、GitHub Actions の時間を貸し借りする人のための Web）
+- 1 枚の静的なページ（GitHub Pages: `.github/workflows/pages.yml`。リポジトリだけで動く: 手元のサーバー `node lab.mjs panel` はやめた）。見る人の GitHub のトークンで
+  GitHub の API とだけ話す（CSP で api.github.com のほかへは通信できない。トークンはそのブラウザの中だけ）。ラボに書き込める人・ホストの持ち主（貸し手）・
+  ホストに書き込める人（借り手）のほかは「使えません」で止まり、何も読まない。
+- それぞれの設定のまま: リポジトリの秘密の名前・ワークフロー・公開か非公開か、ホストの `.lab-host.json` から「できること」と「足りないもの」。
+- 概要・進み具合（動いている実行は段ごとに、失敗は注釈まで。止める・やり直す）・実行（ワークフローの入力をその YAML から。すぐ始める型）・秘密（その場で
+  リポジトリの公開鍵で封じて登録: libsodium の sealed box を JavaScript で、libsodium の出力で試験）・端末（Discord と同じボタン。公開リポジトリでは
+  APP_CACHE_KEY でその場で封じ・開く: ランナーの vault と同じ形）・貸し借り（借り手: 今月の分と残り。貸し手: 条件を変える・今すぐ止める・再開）。
+- Discord: `.github/workflows/notify.yml` + `app notify` が、終わった実行を DM（自分のボット）か LAB_NOTIFY_WEBHOOK に（結果・落ちたジョブと理由・ボタン。
+  変数 LAB_NOTIFY: auto / all / failures / off）。端末のボタンの表は `panel/lib/pages.mjs` の 1 つ（Discord もパネルも）。
+- **いくつものアカウント**（`panel/lib/accounts.mjs`）: 作者・貸し手・借り手のアカウントを 1 つのブラウザに加え（右上の ＋）、上で切り替える。
+  トークンと設定（ラボ・ホストの一覧・読み直す間隔・APP_CACHE_KEY）はアカウントごと。覚えないものはそのタブの間だけ。「出る」はそのアカウントだけを
+  消す。前の版の 1 つのトークンは最初のアカウントに引き継ぐ。貸し手の初めての訪問では、その人のホストを先に探す（「使えません」で止めない）。
+- **どこの Actions で走らせるか**: 「実行」で、このラボの Actions か、貸し手のホスト（その人の Actions の分）かを選ぶ。ホストなら許された仕事・
+  ユニット・結果を待つかを選んで `.github/workflows/hostrun.yml` を始め、ラボのランナーの `node lab.mjs host ci` が `host run` と同じ中身・検査で
+  ホストに送る（秘密 `LAB_HOST_TOKEN`: パネルが足りないと言い、「秘密」で入れられる）。待てばホストの結果が、その実行の結果・まとめ・注釈・成果物
+  （go の .mcaddon も）になり notify が知らせる。ホストから戻る行は `::stop-commands::` の中で出す（workflow の命令として読まれない）。
+  「進み具合」もラボかホストかを選べる。
+- **ホストの分は GitHub の数でも**: `host run`（と host ci）は、ホストの今月の分を自分の台帳と、GitHub が数えた host.yml の実行（誰の分も）の
+  多いほうで見る。何人かが同じホストを借りても、台帳の無いランナーからでも 80% を超えない。走っている実行があれば始めない。
+- **成果物を Discord に**: notify が、終わった実行の成果物から .mcaddon・.mcpack・.mcworld・.mctemplate を 10 MB まで添える（DM と Discord の
+  Webhook。入らないものは名前とサイズ、「成果物」のボタン）。変数 `LAB_NOTIFY_FILES`（auto / off / 型）・`LAB_NOTIFY_MAX_MB`。このリポジトリの
+  コードの実行だけ: フォークの PR の実行のファイルは渡さない。zip は欲しいファイルだけを、上限つきで開く。notify は hostrun・ai-make の後にも走り、
+  手で `run` を入れればその実行を今送る（`app notify --force`）。「管理パネル」のボタンはその実行を開く（`#runs?repo=…&run=…`）。
+- パネルの新しいタブ: 「成果物」（実行ごとの成果物、Discord に送る）・「Discord」（つなぐ秘密をその場で封じて登録・どの実行を知らせるか / 何を添えるか
+  をリポジトリの変数に・試しに送る・いちばん新しい成果物を送る・端末と秘密のフォーム）。Fine-grained トークンが届かないホスト（ほかの人の個人アカウント）
+  には、Classic トークンを使うよう、そのホストのところで言う。
+- 試験: `tests/panel-offline.mjs`（14 本: アカウント・ホストで走らせる入力・アドレス・成果物の選び方と取り方・Discord への添付・フォークの実行）、
+  `tests/panel-browser.mjs`（本物の Chromium で 40 の確かめ: 入れない人・作者・借り手・貸し手・2 つのアカウントの切り替え・貸し手の Actions で走らせる・
+  成果物を Discord に・知らせ方の変数・Discord のリンクから実行を開く。CI の verify で）、`tests/host-offline.mjs`（`host ci` と GitHub の数）。
+- `tests/play-bds.mjs`: `do` が繰り返す命令の行を答えと読まない（CI の本物の BDS で、where・items・face の答えそのものは正しく返っていた）。
+
 ### ゲームを人のように（app.txt と live）
 - 端末のコントローラー（app/relay/lab-pad.c）にスティックとトリガーと「押したまま」: `LX=` `LY=` `RX=` `RY=`（-100〜100%）・`LT=` `RT=`（0〜100%）を
   置いたままにする、`+A` / `-A` でボタンを押す / はなす、`center` で全部はなす。`lab-pad --dry <ファイル> <語>…` は端末なしで入力イベントを
@@ -21,7 +53,14 @@
   （`gh secret set`、トークンは秘密 `LAB_SECRETS_TOKEN`: このリポジトリだけ・Secrets の Read and write）。値は届いた時点でログから伏せ、
   どこにも出さない。`名前=値` のメッセージでも（そのメッセージは自分で消す）。
 - app.yml の常駐の端末（mode hold）でも `MS_EMAIL` / `MS_PASSWORD` を渡す（`signin` がそこでも使える）。
-- 試験: `tests/play-offline.mjs`（14 本: コントローラーの入力イベント、手順、Discord の REST と偽の gateway、秘密のフォーム、ワークフロー）と、
+- 続けて: `move`（歩き続ける）・`turn`（視点を回し続ける）・`mine on|off`・`use on|off`、止めるのは `move stop` / `turn stop` / `release`。
+- サーバーに聞く手順: `where`（場所・向き・体力・手のもの）・`items`・`face`・`lookat`・`goto <x> <z>`（向きを合わせて前へ、を繰り返す。進めなければ跳ぶ）。
+  ラボのアドオンの js を `do` で送る（その js は `tests/play-bds.mjs` が CI の bds ジョブで本物の BDS と本物のクライアントで確かめる）。
+  `do` が先に命令を繰り返す行（`> js …`）を答えと読まない。
+- Discord: ボタンは 3 ページ（遊ぶ・メニュー・道具。切り替えは端末を待たずにすぐ）。道具のページからサーバーを立てて参加まで。`clip [秒]` の動画が
+  DM に動画で届く。15 分を過ぎた押した合図には新しいメッセージで答える。gateway: 最初の心拍は間隔のうちの乱数の時点で、直せない閉じ方
+  （4004 など）はつなぎ直さずに言う、READY の前に閉じたら起動のときに分かる。DM を送れない（50007）などは、何を直すかを添えて言う。
+- 試験: `tests/play-offline.mjs`（17 本: コントローラーの入力イベント、手順、続けての手順、サーバーに聞く手順〔歩くと動く偽のサーバーで goto まで〕、Discord の REST と偽の gateway〔ページ・つながらないとき〕、秘密のフォーム、ワークフロー）・`tests/play-bds.mjs`（本物の BDS）と、
   `tests/app-offline.mjs` に偽の Discord（HTTP と WebSocket）で `app hold` を DM とボタンで動かす試験。
 
 ## v1.24.0 (2026-10-06)

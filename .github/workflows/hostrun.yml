@@ -1,0 +1,57 @@
+name: hostrun
+# A job of this lab run on a lender's GitHub Actions (a host: docs/guide/host.md) — started from the management panel's
+# 「実行」 (or Run workflow here), no computer of yours in between. This runner packs the lab as `node lab.mjs host run` does
+# (no secrets, no BDS, no borrowed addons), pushes it to the host's lab/run-* branch, starts host.yml there and, when `wait`,
+# waits for it: the host's result becomes this run's result, summary and artifact (a go's .mcaddon in it), so notify tells
+# your Discord. The minutes are the lender's (the host's owner), within their .lab-host.json; GitHub's own count of the
+# host's runs this month is what stops it at 80%. Waiting runs on this repository's Actions (free for a public one).
+# Needs, once (the panel's 「秘密」 sets it):
+#   LAB_HOST_TOKEN   your own token that can push to the host and start its workflows — Classic: repo + workflow;
+#                    Fine-grained: the host's Contents, Actions and Workflows: Read and write (a fine-grained token reaches
+#                    only one owner's repositories: a host in another person's account takes a classic one)
+#   LAB_HOSTS        (a variable, for host: auto) the hosts to choose from, owner/repo separated by spaces or commas
+# (the title says where and what — and when it only started the job, so a green run is not read as the job's own result)
+run-name: "hostrun ${{ inputs.job }}${{ inputs.unit && format(' -a {0}', inputs.unit) || '' }} on ${{ inputs.host }}${{ !inputs.wait && '（始めただけ: 結果はホストで）' || '' }}"
+on:
+  workflow_dispatch:
+    inputs:
+      host:
+        description: 'ホスト（owner/repo）。auto: 変数 LAB_HOSTS のうち残りの多いもの'
+        default: 'auto'
+        type: string
+      job:
+        description: '仕事（ホストの .lab-host.json が許すもの）'
+        default: 'gate'
+        type: choice
+        options: [gate, gate-all, test, go, sim, upkeep, dev-bds]
+      unit:
+        description: 'ユニット（bds/addons/<名前>: test・go・sim）'
+        default: ''
+        type: string
+      wait:
+        description: '結果を待つ（この実行の結果・Discord の知らせ・成果物になる）'
+        default: true
+        type: boolean
+permissions: { contents: read }
+concurrency: { group: 'hostrun-${{ inputs.host }}', cancel-in-progress: false }
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version: 22 }
+      - name: ホストで走らせる
+        env:
+          GH_TOKEN: ${{ secrets.LAB_HOST_TOKEN }}
+          LAB_HOSTS: ${{ vars.LAB_HOSTS }}
+          HOST_ON: ${{ inputs.host }}
+          HOST_JOB: ${{ inputs.job }}
+          HOST_UNIT: ${{ inputs.unit }}
+          HOST_WAIT: ${{ inputs.wait }}
+        run: node lab.mjs host ci
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with: { name: hostrun-result, path: hostrun-result/, if-no-files-found: ignore, retention-days: 7 }

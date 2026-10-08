@@ -226,6 +226,8 @@ if (a[0] === 'logcat') {
   // the Google Play image: its Play Store APK (FAKE_PLAYSTORE_APK)
   if (/Phonesky\.apk$/.test(a[1] ?? '') && process.env.FAKE_PLAYSTORE_APK) { fs.copyFileSync(process.env.FAKE_PLAYSTORE_APK, a[2]); process.exit(0); }
   if (a[1] === '/product/priv-app/Phonesky/lib' && process.env.FAKE_PLAYSTORE_LIB) { fs.mkdirSync(path.join(a[2], 'lib', 'x86_64'), { recursive: true }); fs.writeFileSync(path.join(a[2], 'lib', 'x86_64', 'libfake.so'), 'x'); process.exit(0); }
+  // a recording the device's screenrecord made (live's clip): a few bytes that start as an MP4 does
+  if (/^\/sdcard\/lab-rec-[\w-]+\.mp4$/.test(a[1] ?? '') && (S.recs ?? []).includes(a[1])) { fs.writeFileSync(a[2], Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypmp42'), Buffer.alloc(64)])); process.exit(0); }
   process.exit(1);
 }
 else if (sh !== null) {
@@ -369,6 +371,7 @@ else if (sh !== null) {
   // the device's controller (lib/android.mjs startPad: lab-pad on uinput): plugged in by nohup, its presses through a FIFO
   else if (/nohup \/data\/local\/tmp\/lab-pad /.test(sh)) { S.padUp = true; save(); }
   else if (/^pidof lab-pad/.test(sh)) say(S.padUp ? '888\n' : '');
+  else if (/screenrecord .*(\/sdcard\/lab-rec-[\w-]+\.mp4)/.test(sh)) { S.recs = [...(S.recs ?? []), /(\/sdcard\/lab-rec-[\w-]+\.mp4)/.exec(sh)[1]]; save(); }
   // (the controller's other words — a stick, a trigger, a button held: LY=-100 +A -A center — are kept as they came)
   else if (/^echo '[\w =+-]*' > \/data\/local\/tmp\/lab-pad\.fifo$/.test(sh)) {
     const W = { A: 'BUTTON_A', B: 'BUTTON_B', X: 'BUTTON_X', Y: 'BUTTON_Y', LB: 'BUTTON_L1', RB: 'BUTTON_R1', UP: 'DPAD_UP', DOWN: 'DPAD_DOWN', LEFT: 'DPAD_LEFT', RIGHT: 'DPAD_RIGHT', START: 'BUTTON_START', SELECT: 'BUTTON_SELECT' };

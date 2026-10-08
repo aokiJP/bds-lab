@@ -47,6 +47,16 @@ export function codeBlock(text, room = LIMIT - 40) {
   return `\`\`\`\n${t || ' '}\n\`\`\``;
 }
 
+// what Discord's error codes mean for the person (the fix is theirs: a setting, a server, a token)
+const HINTS = {
+  token: 'ボットのトークン（DISCORD_BOT_TOKEN）が違うか、作り直されています',
+  50007: '（ボットが DM を送れません: ボットと同じサーバーに入っていて、そのサーバーの「メンバーからの DM を許可」がオンか、DISCORD_USER_ID が自分の ID かを確かめてください）',
+  10013: '（そのユーザーがいません: DISCORD_USER_ID が自分の Discord のユーザー ID〔数字〕かを確かめてください）',
+  10062: '（その押した合図は古すぎます: 15 分を過ぎた）',
+};
+// the gateway's close codes that no reconnect can fix
+export const FATAL = { 4004: HINTS.token, 4010: 'shard が違います', 4011: 'shard が要ります', 4012: 'API の版が違います', 4013: 'intents が違います', 4014: '使えない intents です（DIRECT_MESSAGES だけで足ります）' };
+
 // ---- REST ----
 /** Discord's REST API with the bot's token → call(method, path, body?, files?) (files: [{ name, data: Buffer, type }]).
  *  A rate limit (429) is waited out and tried again (3 times) */
@@ -62,7 +72,11 @@ export function rest({ token, base = apiBase(), fetchImpl = fetch, sleep = (ms) 
       } else init = { method, headers: { authorization: `Bot ${token}`, 'content-type': 'application/json', 'user-agent': 'DiscordBot (https://github.com/aokijp/bds-lab, 1) bds-lab' }, body: body === undefined ? undefined : JSON.stringify(body) };
       const r = await fetchImpl(`${base}${p}`, { ...init, signal: AbortSignal.timeout(60_000) });
       if (r.status === 429 && attempt < 3) { let wait = 1; try { wait = Number((await r.json()).retry_after) || 1; } catch { /* a plain 429 */ } await sleep(Math.min(wait, 30) * 1000); continue; }
-      if (!r.ok) throw new Error(`Discord ${method} ${p.replace(/\/[\w-]{60,}/g, '/…')}: ${r.status} ${(await r.text()).slice(0, 200)}`);
+      if (!r.ok) {
+        const text = await r.text();
+        let code = null; try { code = JSON.parse(text).code ?? null; } catch { /* not JSON */ }
+        throw Object.assign(new Error(`Discord ${method} ${p.replace(/\/[\w-]{60,}/g, '/…')}: ${r.status} ${text.slice(0, 200)}${HINTS[code] ?? (r.status === 401 ? `（${HINTS.token}）` : '')}`), { status: r.status, code });
+      }
       return r.status === 204 ? null : r.json();
     }
   };
@@ -73,7 +87,7 @@ export function rest({ token, base = apiBase(), fetchImpl = fetch, sleep = (ms) 
  *  log: where the connection's troubles are said (never a token) */
 export function bot({ token, userId, fetchImpl = fetch, WebSocketImpl = globalThis.WebSocket, log = () => {}, sleep } = {}) {
   const call = rest({ token, fetchImpl, sleep });
-  let channel = null, appId = null, ws = null, closed = false, hb = null;
+  let channel = null, appId = null, ws = null, closed = false, hb = null, first = null;
   const self = {
     call,
     /** the DM's channel with the person (made once) */
@@ -92,33 +106,43 @@ export function bot({ token, userId, fetchImpl = fetch, WebSocketImpl = globalTh
     async listen(onEvent) {
       if (!WebSocketImpl) throw new Error('WebSocket がありません（Node 22 以上で）');
       const { url } = await call('GET', '/gateway/bot');
-      let seq = null;
-      const open = () => new Promise((resolve) => {
+      let seq = null, everReady = false, fails = 0;
+      // (the first connection: listen() returns at its READY, or throws when it closes before — a refused token, a
+      //  gateway that does not answer; later ones are made again by themselves, waiting longer after each failure)
+      const open = () => new Promise((resolve, reject) => {
         ws = new WebSocketImpl(`${url}/?v=10&encoding=json`);
-        let acked = true;
+        let acked = true, ready = false;
         const sendOp = (op, d) => { try { ws.send(JSON.stringify({ op, d })); } catch { /* closing */ } };
         const beat = () => { if (!acked) { log('Discord: 心拍の返事がありません: つなぎ直します'); try { ws.close(4000); } catch { /* closed */ } return; } acked = false; sendOp(1, seq); };
         ws.onmessage = (ev) => {
           let m; try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : Buffer.from(ev.data).toString('utf8')); } catch { return; }
           if (m.s !== null && m.s !== undefined) seq = m.s;
           if (m.op === 10) {
-            clearInterval(hb); hb = setInterval(beat, m.d.heartbeat_interval);
+            // (the first heartbeat after a random part of the interval, as Discord asks; then every interval)
+            const iv = Number(m.d?.heartbeat_interval) || 41_250;
+            clearInterval(hb); clearTimeout(first);
+            first = setTimeout(() => { if (closed) return; beat(); hb = setInterval(beat, iv); }, Math.floor(iv * Math.random()));
             sendOp(2, { token, intents: INTENTS, properties: { os: 'linux', browser: 'bds-lab', device: 'bds-lab' } });
           } else if (m.op === 11) acked = true;
           else if (m.op === 1) sendOp(1, seq);
           else if (m.op === 7 || m.op === 9) { try { ws.close(4000); } catch { /* closed */ } }
           else if (m.op === 0) {
-            if (m.t === 'READY') { appId = m.d?.application?.id ?? appId; resolve(); return; }
+            if (m.t === 'READY') { appId = m.d?.application?.id ?? appId; ready = everReady = true; fails = 0; resolve(); return; }
             if (m.t === 'MESSAGE_CREATE' && !fromPerson(m.d, userId)) return;
             if (m.t === 'INTERACTION_CREATE' && senderOf(m.d) !== String(userId)) return;
             if (m.t === 'MESSAGE_CREATE' || m.t === 'INTERACTION_CREATE') Promise.resolve(onEvent(m.t, m.d)).catch((e) => log(`Discord: ${e.message}`));
           }
         };
         ws.onclose = (ev) => {
-          clearInterval(hb); hb = null;
-          // (4004: the token was refused — no point trying again)
-          if (ev?.code === 4004) { log('Discord: ボットのトークンが受け付けられません（DISCORD_BOT_TOKEN）'); closed = true; resolve(); return; }
-          if (!closed) { log(`Discord: 切れました（${ev?.code ?? '?'}）: つなぎ直します`); setTimeout(() => { if (!closed) open().catch((e) => log(`Discord: ${e.message}`)); }, 3000); }
+          clearInterval(hb); clearTimeout(first); hb = null;
+          const fatal = FATAL[ev?.code];
+          if (fatal) { closed = true; const e = new Error(`Discord の gateway が閉じました（${ev.code}）: ${fatal}`); log(e.message); if (!everReady) reject(e); else resolve(); return; }
+          if (!everReady && !ready) { reject(new Error(`Discord の gateway につながりません（${ev?.code ?? '?'}）`)); return; }
+          if (!closed) {
+            const wait = Math.min(60_000, 3000 * 2 ** Math.min(fails++, 5));
+            log(`Discord: 切れました（${ev?.code ?? '?'}）: ${Math.round(wait / 1000)} 秒後につなぎ直します`);
+            setTimeout(() => { if (!closed) open().catch((e) => log(`Discord: ${e.message}`)); }, wait);
+          }
           resolve();
         };
         ws.onerror = () => { /* onclose follows */ };
@@ -126,7 +150,7 @@ export function bot({ token, userId, fetchImpl = fetch, WebSocketImpl = globalTh
       await open();
       return self;
     },
-    close() { closed = true; clearInterval(hb); try { ws?.close(1000); } catch { /* closed */ } },
+    close() { closed = true; clearInterval(hb); clearTimeout(first); try { ws?.close(1000); } catch { /* closed */ } },
     get appId() { return appId; },
   };
   return self;

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- the page talks to GitHub's API alone, runs only its own scripts, and shows pictures only of its own, GitHub's avatars
+     and the live screen's PNG (data:). A token typed here can go nowhere else -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://avatars.githubusercontent.com; connect-src https://api.github.com; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>bds-lab 管理パネル</title>
+<link rel="stylesheet" href="panel.css">
+<script type="module" src="panel.js"></script>
+</head>
+<body>
+<header id="top"><h1>bds-lab 管理パネル</h1><div id="who"></div></header>
+<main id="main"><p class="muted">読み込んでいます…</p></main>
+<div id="toast" role="status" aria-live="polite"></div>
+<noscript><p>このパネルは JavaScript で動きます。</p></noscript>
+</body>
+</html>

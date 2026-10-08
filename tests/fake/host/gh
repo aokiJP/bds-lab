@@ -52,6 +52,12 @@ if (a[0] === 'api') {
     if (r.status !== 0) die('gh: Not Found (HTTP 404)');
     say({ name: path.basename(m[2]), path: m[2], encoding: 'base64', content: r.stdout.toString('base64') }); process.exit(0);
   }
+  // (a host's runs of host.yml as GitHub lists them — everyone's: answered only when a test set state.ghRuns[slug])
+  if ((m = /^repos\/([^/]+\/[^/]+)\/actions\/workflows\/host\.yml\/runs(\?.*)?$/.exec(p))) {
+    visible(m[1]);
+    if (!S.ghRuns?.[m[1]]) die(`fake gh: unknown api ${p}`);
+    say({ total_count: S.ghRuns[m[1]].length, workflow_runs: S.ghRuns[m[1]] }); process.exit(0);
+  }
   if ((m = /^repos\/([^/]+\/[^/]+)\/actions\/runs\/(\d+)\/timing$/.exec(p))) {
     visible(m[1]);
     const run = S.runs.find((x) => String(x.id) === m[2]);

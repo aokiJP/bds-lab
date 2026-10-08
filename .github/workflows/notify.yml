@@ -1,0 +1,53 @@
+name: notify
+# Your Discord told when a run ends (app, verify, secrets, redroid, maint, auto, latest, ai-make, hostrun): a DM from your
+# own bot (secrets DISCORD_BOT_TOKEN + DISCORD_USER_ID), else LAB_NOTIFY_WEBHOOK (a Discord / Slack webhook or ntfy.sh),
+# else nothing. Which runs (repository variable LAB_NOTIFY): auto (default: every failure, and a success only of a run
+# started by hand) · all · failures · off. The message: the result, the failed jobs and their first annotations, links to
+# the run, its artifacts and the management panel (variable LAB_PANEL_URL, else this repository's GitHub Pages), and the
+# run's deliverables attached — an addon's .mcaddon / .mcpack, a world (variable LAB_NOTIFY_FILES: auto · off · patterns;
+# up to LAB_NOTIFY_MAX_MB, 10 MB: Discord's limit) — only of a run of this repository's own code, never a fork's.
+# Run by hand: `run` = that run told now with its files (the panel's 「Discord に送る」), else a test message.
+# Each repository's own secrets decide where its news goes: a fork, or a lender's copy, tells its own people.
+on:
+  workflow_run:
+    workflows: [app, verify, secrets, redroid, maint, auto, latest, ai-make, hostrun]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run:
+        description: 'この実行（番号）を成果物と一緒に送る。空なら試しの文'
+        default: ''
+        type: string
+      message:
+        description: '試しに送る文'
+        default: 'bds-lab: Discord への通知の試し'
+        type: string
+permissions: { contents: read, actions: read, checks: read }
+jobs:
+  notify:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # (the default branch's lab: never the code of the run that ended)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version: 22 }
+      - name: Discord に知らせる
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_USER_ID: ${{ secrets.DISCORD_USER_ID }}
+          LAB_NOTIFY_WEBHOOK: ${{ secrets.LAB_NOTIFY_WEBHOOK }}
+          LAB_NOTIFY: ${{ vars.LAB_NOTIFY }}
+          LAB_NOTIFY_FILES: ${{ vars.LAB_NOTIFY_FILES }}
+          LAB_NOTIFY_MAX_MB: ${{ vars.LAB_NOTIFY_MAX_MB }}
+          LAB_PANEL_URL: ${{ vars.LAB_PANEL_URL }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ASKED_RUN: ${{ inputs.run }}
+          MESSAGE: ${{ inputs.message }}
+        run: |
+          if [ -n "$RUN_ID" ]; then node lab.mjs app notify --run "$RUN_ID"
+          elif [ -n "$ASKED_RUN" ]; then node lab.mjs app notify --run "$ASKED_RUN" --force
+          else node lab.mjs app notify --text "$MESSAGE"; fi

@@ -20,7 +20,7 @@ import { Worker } from 'node:worker_threads';
 import * as K from './lib/apk.mjs';
 import * as D from './lib/android.mjs';
 import { parseScenario, runScenario, dialogSummary, KEYS, pngSize, screenDiff, titleLike, blankScreen } from './lib/scenario.mjs';
-import { GAME_VERBS, gameLine, playGame } from './lib/play.mjs';
+import { GAME_VERBS, gameLine, playGame, playServer } from './lib/play.mjs';
 import { startMonitor, fmtStats, hostNotes, hostStats } from './lib/host.mjs';
 import { annotations, deathExcerpt, ghEscape, guard, logcatDigest, writeReport } from './lib/report.mjs';
 import * as A from './lib/account.mjs';
@@ -33,6 +33,8 @@ import * as L from './lib/license.mjs';
 import * as Live from './lib/live.mjs';
 import * as Dc from './lib/discord.mjs';
 import * as SF from './lib/secretform.mjs';
+import * as RM from './lib/runmsg.mjs';
+import * as RF from './lib/runfiles.mjs';
 import * as SI from './lib/signin.mjs';
 import * as WD from './lib/world.mjs';
 import * as Dev from './lib/device.mjs';
@@ -134,8 +136,11 @@ const HELP = `app: 本物の Minecraft アプリをエミュレータで動か�
   live [--run <番号>] "<コマンド>" …   --hold で待っている CI の端末を、コードを変えずにその場でさわる（返事と画面が数秒で
         戻る。画面は app/runs/live/）。--wait: 待つ状態になるまで待つ。コマンド: live help（screen tap key text sh logcat
         input windows fps gpu launch kill options title seal stop）。seal: いまの状態を準備済みの端末としてキャッシュへ。
-        ゲームを人のように: walk look jump sprint sneak attack mine use place slot inventory drop cmd stick release。
+        ゲームを人のように: walk look jump sprint sneak attack mine use place slot inventory drop cmd stick release、
+        続けて move turn mine|use on|off、サーバーに聞いて where items face lookat goto。画面の動画 clip [秒]。
         app.txt の手順もそのまま（chat、tap text、until text、press、mouse、perf…、steps << で続けて）
+  notify [--run <番号> [--force] | --text <文>]   （notify ワークフローの中で）終わった実行を Discord の DM（または LAB_NOTIFY_WEBHOOK）に
+        知らせる。成果物（.mcaddon など: 変数 LAB_NOTIFY_FILES）も 10 MB まで添える。--force: LAB_NOTIFY によらず
   hold [--minutes <分>]      （ワークフローの中で）端末を動かしたまま live の命令を待つ。秘密 DISCORD_BOT_TOKEN と DISCORD_USER_ID が
         あれば Discord の DM にも画面とボタン（歩く・見る・壊す・使う・持ち物・A/B・チャット…）: 押すたびにその後の画面が戻る
   checks [--artifact <名前>]  （ワークフローの中で）実行の結果をチェック（check run）として出す。--print で中身の大きさだけ
@@ -1765,6 +1770,7 @@ async function liveExec(adb, line, ctx) {
       return files.map((f) => `== ${rel(f)}\n${fs.readFileSync(f, 'utf8').split('\n').filter((l) => l.trim() && (!re || re.test(l))).slice(-n).join('\n')}`).join('\n').slice(-12_000) || 'BDS のログがありません';
     }
     case 'answer': { const d = adb.focus().dialog; return d ? D.answerDialog(adb, d) : 'Android のダイアログは出ていません'; }
+    case 'clip': return liveClip(adb, a[0], ctx);
     case 'signin': {
       // the game signed in (MS_EMAIL / MS_PASSWORD from the run's secrets), then `seal` keeps it for the next runs
       const { pngDecode } = await import(pathToFileURL(path.join(TOP, 'common', 'extra.mjs')).href);
@@ -1788,6 +1794,24 @@ async function liveExec(adb, line, ctx) {
   }
   return '';
 }
+/** `clip [s] | clip start | clip stop`: a video of the screen (the device's screenrecord) → app/.lab/live/clip-*.mp4, and as
+ *  ctx.file for Discord (a file of 9.5 MB at most: a bot's limit is 10). The issue says only where it is */
+const CLIP = '/sdcard/lab-rec-clip.mp4';
+async function liveClip(adb, arg, ctx) {
+  if (arg === 'start') { adb.run(['shell', `rm -f ${CLIP}; nohup screenrecord --bit-rate 2000000 --time-limit 60 ${CLIP} >/dev/null 2>&1 &`], { timeout: 20_000 }); return '録画を始めました（clip stop で終えて送ります。60 秒まで）'; }
+  const stop = arg === 'stop', s = stop ? 0 : Math.min(Math.max(Number(arg) || 10, 2), 30);
+  if (arg !== undefined && !stop && !/^\d+$/.test(arg)) return '書き方: clip [秒] | clip start | clip stop';
+  if (stop) { adb.run(['shell', 'pkill -2 screenrecord'], { timeout: 20_000 }); await sleep(2000); }
+  else adb.run(['shell', `rm -f ${CLIP}; screenrecord --bit-rate 2000000 --time-limit ${s} ${CLIP}`], { timeout: (s + 30) * 1000 });
+  const dst = path.join(LAB, 'live', `clip-${Date.now()}.mp4`);
+  fs.mkdirSync(path.dirname(dst), { recursive: true });
+  const r = adb.run(['pull', CLIP, dst], { timeout: 120_000 });
+  adb.run(['shell', `rm -f ${CLIP}`], { timeout: 20_000 });
+  if (r.status !== 0 || !fs.existsSync(dst)) return `動画を取り出せません: ${(r.stderr || r.stdout || '').trim().slice(0, 200) || '録画がありません（clip start の後に clip stop）'}`;
+  const size = fs.statSync(dst).size;
+  ctx.file = size <= 9.5 * 2 ** 20 ? { name: 'clip.mp4', type: 'video/mp4', data: fs.readFileSync(dst) } : null;
+  return `${stop ? '' : `${s} 秒の`}動画 ${(size / 2 ** 20).toFixed(1)} MB: ${rel(dst)}${ctx.file ? '（Discord には動画で付けます）' : '（Discord に付けるには大きすぎます: 秒を短く）'}`;
+}
 /** the controller plugged into the device for live (root: the emulator's adbd, a rooted phone's su), once → true when it is */
 function livePad(adb, ctx) {
   if (adb.padReady) return true;
@@ -1800,9 +1824,13 @@ function livePad(adb, ctx) {
 async function liveGame(adb, line, ctx) {
   const g = gameLine(line);
   if (g.error) return g.error;
+  // (where, face, goto…: asked of the lab's BDS on this runner — live's bds up, or the run's)
+  if (g.server) return playServer(adb, g, { server: liveServer(), ensurePad: () => livePad(adb, ctx) });
   livePad(adb, ctx);
   return playGame(adb, g, { ensurePad: () => livePad(adb, ctx) });
 }
+/** the lab's BDS on this runner, as app.txt's `do` sees it (5 minutes a command: the first after an addon edit reloads it) */
+const liveServer = () => ({ do: (cmd) => bdsAsync(['do', cmd], { LAB_ADDON: process.env.ADDON || 'jsonui_demo' }, 5 * 60_000) });
 /** app.txt's steps (one line, or `steps <<`) on the device as it is: lib/scenario.mjs with no restore, no BDS started and no
  *  join — what is up stays up (live's `bds up` is the server `do` and `until server` talk to). → each step's line (✔ / ✘);
  *  the picture: the last one a step took (shot, a failure), else the screen after (holdCmd) */
@@ -1822,7 +1850,7 @@ async function liveSteps(adb, text, ctx) {
   const wantsClient = reads('clientlog');
   if (wantsClient) takeRoot(adb);
   if (steps.some((x) => x.verb === 'pad' || GAME_VERBS.has(x.verb))) livePad(adb, ctx);
-  const addon = process.env.ADDON || 'jsonui_demo', said = [];
+  const said = [];
   const res = await runScenario(steps, {
     adb, runDir: dir, decode: pngDecode, pkg: K.PACKAGE, logcatFile, clientLog: wantsClient ? new C.ClientLog(adb, K.PACKAGE) : null,
     log: (x) => said.push(x),
@@ -1830,7 +1858,7 @@ async function liveSteps(adb, text, ctx) {
     dialog: () => adb.focus().dialog, answer: (d) => D.answerDialog(adb, d), focus: () => adb.focus().window,
     ocr: C.ocrAvailable() ? (f) => C.ocrWords(f) : null,
     ensurePad: () => livePad(adb, ctx),
-    server: { joinUri: 'minecraft://connect/?serverUrl=127.0.0.1&serverPort=19132', lan: appTransport() === 'lan', logFile: path.join(LAB, 'live', 'bds.log'), do: (cmd) => bdsAsync(['do', cmd], { LAB_ADDON: addon }, 5 * 60_000) },
+    server: { joinUri: 'minecraft://connect/?serverUrl=127.0.0.1&serverPort=19132', lan: appTransport() === 'lan', logFile: path.join(LAB, 'live', 'bds.log'), do: liveServer().do },
   });
   if (res.shots.length) ctx.png = fs.readFileSync(res.shots.at(-1));
   return [...said, ...(res.ok ? [] : ['--- ここで止まりました（画像はその画面）'])].join('\n') || 'OK';
@@ -2013,7 +2041,7 @@ async function holdCmd(args) {
    *  (run / ui / last / a step's shot: the picture they chose — a failing step's — else the screen now) */
   const runCmds = async (cmds) => {
     const lines = [];
-    ctx.png = null;
+    ctx.png = null; ctx.file = null;
     for (const line of cmds) {
       const head = line.split('\n')[0], more = line.split('\n').length - 1;
       out(`  live> ${head}${more ? `（と ${more} 行）` : ''}`);
@@ -2032,7 +2060,7 @@ async function holdCmd(args) {
         if (!ctx.png) lines.push(`--- 画面: ${adb.focus().window ?? '?'}、描画 毎秒 ${gameFps(adb)?.toFixed(1) ?? '?'} 枚${words ? `、文字: ${words.map((w) => w.text).join(' ').slice(0, 800)}` : ''}`);
       } catch (e) { lines.push(`--- 画面を撮れません: ${e.message}`); }
     }
-    return { lines, shot };
+    return { lines, shot, file: ctx.file };
   };
   // Discord (DISCORD_BOT_TOKEN + DISCORD_USER_ID): the person's DM is a way in too — the screen with a controller of buttons
   // under it, each press answered with the screen after it; a message there is commands as a comment's are
@@ -2053,12 +2081,19 @@ async function holdCmd(args) {
   const dcFiles = (r, text) => {
     const files = [];
     if (r.shot) { try { files.push({ name: 'screen.png', type: 'image/png', data: G.thumbPng(r.shot, { maxBytes: 3_000_000, widths: [1280, 960, 720, 540] }).png }); } catch { /* undecodable: no picture */ } }
+    if (r.file) files.push(r.file);
     if (text.length > 1800) files.push({ name: 'reply.txt', type: 'text/plain', data: Buffer.from(text) });
     return files;
   };
+  // (a press's message changed with the screen after it; a press older than 15 minutes — a long run — can no longer change
+  //  it: the answer comes as a new message then, as for a typed one)
   const dcReply = async (job, r) => {
-    const text = G.anonymize(r.lines.join('\n'), secrets), body = { content: Dc.codeBlock(text, 1800), components: ctx.stop ? Live.panel(true) : Live.panel(), files: dcFiles(r, text) };
-    try { if (job.it) await dcBot.editReply(job.it, body); else await dcBot.send(body); } catch (e) { out(`W Discord に返せません: ${e.message}`); }
+    const text = G.anonymize(r.lines.join('\n'), secrets), body = { content: Dc.codeBlock(text, 1800), components: Live.panel(job.page ?? 'play', ctx.stop), files: dcFiles(r, text) };
+    try { if (job.it) await dcBot.editReply(job.it, body); else await dcBot.send(body); }
+    catch (e) {
+      if (!job.it) { out(`W Discord に返せません: ${e.message}`); return; }
+      try { await dcBot.send(body); } catch (e2) { out(`W Discord に返せません: ${e.message} / ${e2.message}`); }
+    }
   };
   await api.comment(issue, `lab-live@${run} 待っています（${minutes} 分まで。端末: ${how}）。命令は \`lab@${run} <コマンド>\`（node lab.mjs app live --run ${run} "<コマンド>"）${dcBot ? '。Discord の DM からも' : ''}\n\`\`\`\n${Live.HELP}\n\`\`\``);
   if (dcBot) {
@@ -2381,19 +2416,70 @@ async function secretsAskCmd(args) {
     fail(why, fix);
   }
   out(`  Discord の DM で ${n.names.join('・')} を待ちます（${minutes} 分）`);
-  const r = await SF.askSecrets({
-    b, names: n.names, run, repo, minutes, log: out,
-    mask: (v) => { if (process.env.GITHUB_ACTIONS === 'true') for (const l of SF.maskLines(v)) process.stdout.write(`${l}\n`); },
-    setSecret: (name, value) => {
-      const r2 = spawnSync('gh', ['secret', 'set', name, '--repo', repo], { input: value, encoding: 'utf8', env: { ...process.env, GH_TOKEN: ghToken }, timeout: 60_000 });
-      return r2.status === 0 ? { ok: true } : { ok: false, error: (r2.stderr || r2.error?.message || `終了 ${r2.status}`).trim() };
-    },
-  });
+  let r;
+  try {
+    r = await SF.askSecrets({
+      b, names: n.names, run, repo, minutes, log: out,
+      mask: (v) => { if (process.env.GITHUB_ACTIONS === 'true') for (const l of SF.maskLines(v)) process.stdout.write(`${l}\n`); },
+      setSecret: (name, value) => {
+        const r2 = spawnSync('gh', ['secret', 'set', name, '--repo', repo], { input: value, encoding: 'utf8', env: { ...process.env, GH_TOKEN: ghToken }, timeout: 60_000 });
+        return r2.status === 0 ? { ok: true } : { ok: false, error: (r2.stderr || r2.error?.message || `終了 ${r2.status}`).trim() };
+      },
+    });
+  } catch (e) {
+    // (Discord refused: no DM to send, a wrong token — what to change is said in the message; a value never is)
+    b.close();
+    fail(`Discord で聞けません: ${e.message}`, 'DISCORD_BOT_TOKEN・DISCORD_USER_ID と、ボットが自分と同じサーバーにいるかを確かめてください（app/README.md「スマホだけで」）');
+  }
   if (r.how === 'timeout') fail(`${minutes} 分のあいだ返事がありませんでした`, 'もう一度 Actions → secrets → Run workflow');
   if (r.how === 'cancel') { out('OK やめました（何も登録していません）'); return; }
   r.failed.forEach((f) => out(`E ${f.name}: ${f.error}`));
   out(`${r.failed.length ? 'FAIL' : 'OK'} 登録: ${r.set.join(', ') || 'なし'}${r.kept.length ? `（そのまま: ${r.kept.join(', ')}）` : ''}（${r.how === 'form' ? 'フォーム' : 'メッセージ'}から）`);
   if (r.failed.length) process.exitCode = 1;
+}
+
+/** app notify (notify.yml): a finished run (--run <id>) or a test line (--text) told to the person — a DM by their own bot
+ *  (DISCORD_BOT_TOKEN + DISCORD_USER_ID), else LAB_NOTIFY_WEBHOOK (common/notify.mjs), else nothing (said, not a failure).
+ *  When: the repository variable LAB_NOTIFY (lib/runmsg.mjs); --force: told whatever it says (the panel's 「Discord に送る」).
+ *  With the run's deliverables attached (lib/runfiles.mjs: LAB_NOTIFY_FILES, LAB_NOTIFY_MAX_MB) — only of a run of this
+ *  repository's own code: a fork's pull request runs here too, and its files are not the person's to be handed */
+async function notifyCmd(args) {
+  const o = parse(args, { opts: ['--run', '--text'], flags: ['--force'] });
+  const dc = Dc.config(), hook = String(process.env.LAB_NOTIFY_WEBHOOK ?? '').trim();
+  if (dc.missing && !hook) { out('通知先がありません（DISCORD_BOT_TOKEN + DISCORD_USER_ID、または LAB_NOTIFY_WEBHOOK を Secrets に）: 何も送りません'); return; }
+  let msg, files = { attach: [] };
+  if (o.opts['--run']) {
+    const { GITHUB_REPOSITORY: repo } = process.env, base = process.env.GITHUB_API_URL || 'https://api.github.com', id = String(o.opts['--run']).replace(/\D/g, '');
+    if (!repo || !process.env.GITHUB_TOKEN || !id) fail('--run はワークフローの中で（GITHUB_REPOSITORY・GITHUB_TOKEN）');
+    const run = await ghFetch(`${base}/repos/${repo}/actions/runs/${id}`);
+    if (!o.flags.has('--force') && !RM.shouldNotify(run, process.env.LAB_NOTIFY)) { out(`知らせません（LAB_NOTIFY=${process.env.LAB_NOTIFY || 'auto'}、${run.name} ${run.conclusion}、${run.event}）`); return; }
+    const jobs = (await ghFetch(`${base}/repos/${repo}/actions/runs/${id}/jobs?per_page=100`)).jobs ?? [], annotations = {};
+    for (const j of jobs.filter((x) => x.conclusion === 'failure').slice(0, 3)) {
+      const cr = String(j.check_run_url ?? '').split('/').pop();
+      if (cr) annotations[j.name] = await ghFetch(`${base}/repos/${repo}/check-runs/${cr}/annotations?per_page=20`).catch(() => []);
+    }
+    const own = !run.head_repository?.full_name || run.head_repository.full_name.toLowerCase() === repo.toLowerCase();
+    const maxBytes = Math.min(25, Math.max(1, Number(process.env.LAB_NOTIFY_MAX_MB) || 10)) * 1e6;
+    files = await RF.runFiles({ base, repo, run: id, token: process.env.GITHUB_TOKEN, policy: own ? process.env.LAB_NOTIFY_FILES : 'off', maxBytes });
+    if (files.why) out(`W 成果物: ${files.why}`);
+    if (!own) out(`成果物は添えません（${run.head_repository.full_name} の変更から: このリポジトリのコードではありません）`);
+    msg = RM.runMessage({ run, jobs, annotations, panel: RM.panelRunUrl(RM.panelUrl(repo, process.env), repo, id), files });
+  } else msg = { content: o.opts['--text'] || 'bds-lab: Discord への通知の試し', buttons: [] };
+  const att = files.attach.map((f) => ({ name: f.name, data: f.data }));
+  if (!dc.missing) {
+    const b = Dc.bot({ token: dc.token, userId: dc.userId });
+    try { await b.send({ content: msg.content, files: att, ...(msg.buttons.length ? { components: [Dc.row(...msg.buttons.map((x) => ({ type: 2, style: 5, label: x.label, url: x.url })))] } : {}) }); }
+    catch (e) { fail(`Discord に送れません: ${e.message}`); }
+    out(`OK Discord の DM に送りました${att.length ? `（${att.map((f) => f.name).join('・')}）` : ''}`);
+    return;
+  }
+  const { notify } = await import(pathToFileURL(path.join(TOP, 'common', 'notify.mjs')).href);
+  // (the webhook's helper puts its own ✅ / ⚠️ in front: the first line without the run's icon)
+  // (and without Discord's **bold**: Slack, ntfy and a plain JSON hook would show the stars)
+  const [first, ...rest] = msg.content.replace(/\*\*/g, '').split('\n');
+  const sent = await notify(first.replace(/^\S+\s/, ''), [...rest, ...msg.buttons.map((x) => x.url)], { ok: msg.ok !== false, out, files: att });
+  if (!sent) fail('LAB_NOTIFY_WEBHOOK に送れませんでした');
+  out(`OK Webhook に送りました${att.length && /discord(app)?\.com\/api\/webhooks/.test(hook) ? `（${att.map((f) => f.name).join('・')}）` : ''}`);
 }
 
 // ---- checks / ci: a run through the GitHub API alone (lib/ghresults.mjs) ----
@@ -3118,6 +3204,7 @@ try {
   else if (cmd === 'ci') await ciCmd(argv);
   else if (cmd === 'redroid') await redroidCmd(argv);
   else if (cmd === 'hold') await holdCmd(argv);
+  else if (cmd === 'notify') await notifyCmd(argv);
   else if (cmd === 'tidy') await tidyCmd(argv);
   else if (cmd === 'open') await openCmd(argv);
   else if (cmd === 'live') await liveCmd(argv);
