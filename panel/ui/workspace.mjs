@@ -66,11 +66,12 @@ const readAsDataUrl = (file) => new Promise((resolve, reject) => {
   r.onerror = () => reject(new Error('ファイルが読めませんでした'));
   r.readAsDataURL(file);
 });
-/** 「取り込む」: a person's .mcaddon / .mcpack / .zip → incoming/<a safe name> on the default branch (the contents API, base64)
- *  → unit.yml (job import) makes it a unit, its names and UUIDs kept */
+/** 「取り込む」: a person's .mcaddon / .mcpack / .zip → incoming/<a safe name of its own> on a branch of its own,
+ *  lab-incoming/<name> — never the default branch (the contents API, base64) → unit.yml (job import) makes it the unit
+ *  bds/addons/<the name typed, else the file's>, its pack names and UUIDs kept, and deletes the branch */
 export function importCard(ctx) {
   const file = h('input', { type: 'file', id: 'import-file', accept: W.IMPORT_TYPES.join(',') });
-  const unit = h('input', { type: 'text', id: 'import-unit', placeholder: '空ならパックの名前から', autocapitalize: 'off', spellcheck: 'false' });
+  const unit = h('input', { type: 'text', id: 'import-unit', placeholder: '空ならファイルの名前から', autocapitalize: 'off', spellcheck: 'false' });
   const words = h('textarea', { id: 'import-words', placeholder: '例: 新しい Minecraft で動かなくなったので直してほしい。お店の値段を半分に' });
   const state = h('div', { class: 'muted', id: 'import-state' });
   const take = async () => {
@@ -78,23 +79,25 @@ export function importCard(ctx) {
     if (!f) return toast('ファイルを選んでください', true);
     const p = W.importPlan({ fileName: f.name, size: f.size, words: words.value, unit: unit.value });
     if (p.error) return toast(p.error, true);
-    const ok = await ctx.guarded('dispatch', { workflow: W.WORKFLOW, job: 'import', file: p.path }, async () => {
+    // (a unit by that name already: said now, not by a run a minute later)
+    if (await U.unitExists(ctx.api, ctx.lab.slug, p.unit).catch(() => false)) return toast(`bds/addons/${p.unit} はもうあります: 名前を変えて（「名前」の欄に）`, true);
+    const ok = await ctx.guarded('dispatch', { workflow: W.WORKFLOW, job: 'import', file: p.path, unit: p.unit }, async () => {
       state.replaceChildren(`${f.name}（${fmtBytes(f.size)}）を読んでいます…`);
       const content = W.base64Of(await readAsDataUrl(f));
-      state.replaceChildren(`${p.path} に入れています…`);
-      return W.importUnit(ctx.api, ctx.lab.slug, p, content, ctx.dispatch);
-    }, `${p.name} を取り込み始めました（数分: できると「アドオン」に出ます）`);
-    state.replaceChildren(ok === undefined ? '' : `✅ ${p.path} に入れ、unit.yml を始めました`);
+      state.replaceChildren(`${p.branch} に入れています…`);
+      return W.importUnit(ctx.api, ctx.lab.slug, p, content, ctx.dispatch, branch(ctx));
+    }, `${f.name} を bds/addons/${p.unit} に取り込み始めました（数分: できると「アドオン」に出ます）`);
+    state.replaceChildren(ok === undefined ? '' : `✅ ${p.branch} に入れ、unit.yml を始めました（bds/addons/${p.unit} に）`);
     if (ok === undefined) return;
     file.value = ''; unit.value = ''; words.value = '';
     later(ctx);
   };
   return h('div', { class: 'card', id: 'importunit' }, h('h2', {}, '📥 取り込む（.mcaddon・.mcpack・.zip）'),
-    h('p', { class: 'muted' }, `人のアドオンをユニットにして、直して仕上げます。ファイルはリポジトリの incoming/ に入れ、Actions がユニットにします（パックの名前と UUID はそのまま: その人のワールドが新しい版として読みます）。${W.MAX_BYTES / 1024 / 1024} MB まで。`),
+    h('p', { class: 'muted' }, `人のアドオンをユニットにして、直して仕上げます。ファイルは取り込みのための枝（lab-incoming/…）に入れ、Actions がユニットにします（既定の枝には入らず、できたら枝は消えます。パックの名前と UUID はそのまま: その人のワールドが新しい版として読みます）。${W.MAX_BYTES / 1024 / 1024} MB まで。`),
     noWorkflow(ctx),
     h('details', {}, h('summary', {}, 'ファイルを選ぶ'),
       h('label', { for: 'import-file' }, 'ファイル'), file,
-      h('label', { for: 'import-unit' }, '名前（英小文字・数字・_。空ならパックの名前から）'), unit,
+      h('label', { for: 'import-unit' }, '名前（英小文字・数字・_。空ならファイルの名前から）'), unit,
       h('label', { for: 'import-words' }, 'その人の言葉（何をしてほしいか: TASK.md に）'), words,
       h('div', { class: 'row' }, h('button', { class: 'primary', ...startAttrs(ctx), onclick: take }, '取り込む')), state));
 }
@@ -130,11 +133,14 @@ export function editorView(ctx, unit) {
   const store = async (thenTest) => {
     const f = pick.value;
     if (loaded === null) return toast(`${f} がまだ読めていません`, true);
-    const c = W.checkEdit(f, text.value, u);
+    // (the textarea gives every line break as \n: compared as such — a file of \r\n untouched is no change — and saved with
+    // the line breaks the file had, not as a commit of every line)
+    const now = W.withEol(text.value, W.eolOf(loaded));
+    const c = W.checkEdit(f, now, u);
     if (!c.ok) return toast(c.error, true);
-    if (text.value === loaded) { if (!thenTest) toast('変わっていません'); }
+    if (W.sameText(now, loaded)) { if (!thenTest) toast('変わっていません'); }
     else {
-      const path = `${u.dir}/${f}`, now = text.value;
+      const path = `${u.dir}/${f}`;
       const r = await ctx.guarded('dispatch', { file: path }, () => W.saveUnitFile(ctx.api, slug, path, now, sha, `panel: ${path} を直す`), `${f} を保存しました（既定の枝に）`);
       if (r === undefined) return;
       sha = r.sha ?? sha; loaded = now;

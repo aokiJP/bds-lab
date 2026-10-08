@@ -1,10 +1,11 @@
 // the panel's 「アドオン」 and 「配布」 without a browser or a network: the units read from a fake GitHub (what each one's files
-// say, the hidden ones left out, the limit, read once for the visit), the releases and each unit's newest pack, unit.yml's
-// inputs, a person's pack put in incoming/ (its name made safe, its bytes as base64, the path and the message) and unit.yml
-// started after it, a file changed over its sha — and common/unitci.mjs, the Actions side: the inputs checked by the panel's
-// own rules, the command run with its words as arguments (a fake spawn), its output kept from being read as workflow
-// commands, the summary and outputs written. The tabs themselves on a small fake DOM. The real GitHub client (lib/gh.mjs)
-// talks to the fake GitHub: what it sends is what GitHub would get.
+// say, the hidden ones left out, the limit, read once for the visit), the releases and each unit's newest pack (never another
+// unit's), unit.yml's inputs, a person's pack put on a branch of its own (its name made safe and its own, the unit's name from
+// it, its bytes as base64, the branch, the message — nothing on the default branch) and unit.yml started after it, a file
+// changed over its sha (its line breaks kept) — and common/unitci.mjs, the Actions side: the inputs checked by the panel's own
+// rules, the command run with its words as arguments (a fake spawn), its output kept from being read as workflow commands,
+// the unit made checked against the one asked for, the summary and outputs written. The tabs themselves on a small fake DOM.
+// The real GitHub client (lib/gh.mjs) talks to the fake GitHub: what it sends is what GitHub would get.
 // node tests/units-offline.mjs
 import fs from 'node:fs';
 import os from 'node:os';
@@ -25,14 +26,32 @@ const sha = (b) => crypto.createHash('sha1').update(b).digest('hex');
 
 // ---- a fake GitHub for the real client: files and releases in memory, each request kept ----
 const manifest = (name, description, version = [1, 0, 0], entry = 'scripts/main.js') => JSON.stringify({ format_version: 2, header: { name, description, uuid: 'u', version, min_engine_version: [1, 26, 0] }, modules: [{ type: 'script', language: 'javascript', uuid: 'm', version: [1, 0, 0], entry }] });
+/** the default branch's head in the fake GitHub */
+const MAIN = 'c0ffee'.padEnd(40, '0');
+// (fail: path → a status for any request to it, or { status, message?, method? }: GitHub's own words, only for that method)
 function fakeGitHub({ files = {}, releases = [], big = [], fail = {} } = {}) {
-  const st = { files: new Map(Object.entries(files).map(([p, x]) => [p, { data: Buffer.from(x), sha: sha(Buffer.from(x)) }])), seen: [], releases };
+  // (files: the default branch's; branches: the others', each made from a ref — git refs — with files of its own)
+  const st = { files: new Map(Object.entries(files).map(([p, x]) => [p, { data: Buffer.from(x), sha: sha(Buffer.from(x)) }])), seen: [], releases, refs: new Map([['main', MAIN]]), branches: new Map() };
   const send = (status, j) => ({ ok: status < 300, status, headers: { get: () => null }, text: async () => (j === null || j === undefined ? '' : JSON.stringify(j)) });
   const fetchImpl = async (url, init) => {
     const u = new URL(url), p = decodeURIComponent(u.pathname), body = init.body ? JSON.parse(init.body) : null;
     st.seen.push({ method: init.method, path: p + u.search, raw: u.pathname, body, auth: init.headers.authorization });
-    if (fail[p]) return send(fail[p], { message: 'Resource not accessible by integration' });
+    const no = typeof fail[p] === 'object' ? fail[p] : fail[p] ? { status: fail[p] } : null;
+    if (no && (!no.method || no.method === init.method)) return send(no.status, { message: no.message ?? 'Resource not accessible by integration' });
     let m;
+    if ((m = /^\/repos\/o\/lab\/git\/ref\/heads\/(.+)$/.exec(p)) && init.method === 'GET') return st.refs.has(m[1]) ? send(200, { ref: `refs/heads/${m[1]}`, object: { type: 'commit', sha: st.refs.get(m[1]) } }) : send(404, { message: 'Not Found' });
+    if (p === '/repos/o/lab/git/refs' && init.method === 'POST') {
+      const b = /^refs\/heads\/(.+)$/.exec(String(body?.ref ?? ''))?.[1];
+      if (!b || !/^[0-9a-f]{40}$/.test(String(body?.sha ?? ''))) return send(422, { message: 'Invalid request.' });
+      if (st.refs.has(b)) return send(422, { message: 'Reference already exists' });
+      st.refs.set(b, body.sha); st.branches.set(b, new Map());
+      return send(201, { ref: body.ref, object: { type: 'commit', sha: body.sha } });
+    }
+    if ((m = /^\/repos\/o\/lab\/git\/refs\/heads\/(.+)$/.exec(p)) && init.method === 'DELETE') {
+      if (!st.refs.has(m[1]) || m[1] === 'main') return send(422, { message: 'Reference does not exist' });
+      st.refs.delete(m[1]); st.branches.delete(m[1]);
+      return send(204, null);
+    }
     if ((m = /^\/repos\/o\/lab\/contents\/(.+)$/.exec(p))) {
       const f = m[1], x = st.files.get(f);
       if (init.method === 'GET') {
@@ -42,11 +61,15 @@ function fakeGitHub({ files = {}, releases = [], big = [], fail = {} } = {}) {
         return kids.size ? send(200, [...kids.values()]) : send(404, { message: 'Not Found' });
       }
       if (init.method === 'PUT') {
-        if (x && !body.sha) return send(422, { message: 'Invalid request.\n\n"sha" wasn\'t supplied.' });
-        if (x && body.sha !== x.sha) return send(409, { message: `${f} does not match ${body.sha}` });
+        // (on another branch: that branch's files — it must have been made first)
+        const on = body.branch && body.branch !== 'main' ? st.branches.get(body.branch) : st.files;
+        if (!on) return send(404, { message: `Branch ${body.branch} not found` });
+        const y = on.get(f);
+        if (y && !body.sha) return send(422, { message: 'Invalid request.\n\n"sha" wasn\'t supplied.' });
+        if (y && body.sha !== y.sha) return send(409, { message: `${f} does not match ${body.sha}` });
         const data = Buffer.from(body.content, 'base64'), s = sha(data);
-        st.files.set(f, { data, sha: s });
-        return send(x ? 200 : 201, { content: { path: f, sha: s }, commit: { sha: `c${s.slice(0, 7)}`, html_url: `https://github.com/o/lab/commit/c${s.slice(0, 7)}` } });
+        on.set(f, { data, sha: s });
+        return send(y ? 200 : 201, { content: { path: f, sha: s }, commit: { sha: `c${s.slice(0, 7)}`, html_url: `https://github.com/o/lab/commit/c${s.slice(0, 7)}` } });
       }
     }
     if (p === '/repos/o/lab/releases' && init.method === 'GET') return send(200, st.releases);
@@ -127,12 +150,17 @@ await t('units from a fake GitHub: bds/addons then end/plugins and ll/mods (each
   eq([await U.unitExists(f.api, 'o/lab', 'coins'), await U.unitExists(f.api, 'o/lab', 'ruby_sword')], [true, false]);
 });
 
-await t('releases: the packs, newest first, each unit\'s newest — its own tag first, whole words (shop is not in shopkeeper), the title too, drafts aside, the .mcaddon first — the totals, and the word to Discord (pure); read from a fake GitHub', async () => {
+await t('releases: the packs, newest first, each unit\'s newest — its own tag first, whole words (shop is not in shopkeeper, coins not in coins_plus), the title too, never another known unit\'s own tag, drafts aside, the .mcaddon first — the totals, and the word to Discord (pure); read from a fake GitHub', async () => {
   eq(R.packAssets(RELEASES[1]).map((a) => a.name), ['coins-latest.mcaddon']);
   eq(['A.MCADDON', 'w.mcworld', 't.mctemplate', 'p.mcpack', 'x.zip', 'mcaddon', null].map(R.isPack), [true, true, true, true, false, false, false]);
   eq(R.newestFirst(RELEASES).map((r) => r.tag_name), ['v9', 'addon-shopkeeper', 'addon-coins', 'bundle-2026'], 'a draft by when it was made');
   ok(RELEASES[0].tag_name === 'addon-shopkeeper', 'the list given stays as it was');
   eq([R.holds('addon-coins', 'coins'), R.holds('coins-latest.mcaddon', 'Coins'), R.holds('Daily.Bonus.mcpack', 'Daily Bonus'), R.holds('teleport_menu-latest.mcaddon', 'teleport_menu'), R.holds('addon-shopkeeper', 'shop'), R.holds('x', ''), R.holds('ルビーの剣.mcaddon', 'ルビーの剣')], [true, true, true, true, false, false, true]);
+  // a unit's name holds _: a match never runs on into more of a name — <name>, <name>-latest, <name>-v<version> are its;
+  // coins_plus, my_coins, coins2 are not coins's (and _ between a title's words is still a gap)
+  eq(['coins.mcaddon', 'coins-latest.mcaddon', 'coins-v1.2.0.mcaddon', 'addon-coins', 'Coins Pack.mcaddon', 'addon-coins_plus', 'coins_plus-latest.mcaddon', 'my_coins-latest.mcaddon', 'coins2.mcaddon', 'coinsplus.mcaddon'].map((n) => R.holds(n, 'coins')),
+    [true, true, true, true, true, false, false, false, false, false]);
+  eq([R.holds('Daily_Bonus.mcpack', 'Daily Bonus'), R.holds('Daily_Bonus_Plus.mcpack', 'Daily Bonus'), R.holds('coins_plus-latest.mcaddon', 'coins_plus')], [true, false, true]);
   const units = [{ kind: 'bds', name: 'coins', ref: 'bds/coins', title: 'Coins' }, { kind: 'bds', name: 'daily', ref: 'bds/daily', title: 'Daily Bonus' }, { kind: 'bds', name: 'shop', ref: 'bds/shop', title: 'Shop' }, { name: 'lamp', title: 'UI' }, { kind: 'll', name: 'hub', ref: 'll/hub', title: 'hub' }];
   const by = R.latestByUnit(RELEASES, units);
   eq(Object.keys(by), ['bds/coins', 'bds/daily', 'bds/shop'], 'no release of lamp, nor of the mod');
@@ -141,6 +169,19 @@ await t('releases: the packs, newest first, each unit\'s newest — its own tag 
   eq([by['bds/shop'].release.tag_name, by['bds/shop'].asset.name], ['bundle-2026', 'shop.mcaddon'], 'not the newer shopkeeper');
   eq(R.latestByUnit([{ tag_name: 'mod-hub', assets: [], html_url: 'https://github.com/o/lab/releases/tag/mod-hub', published_at: '2026-01-01T00:00:00Z' }, { tag_name: 'plugin-hub', assets: [], published_at: '2026-02-01T00:00:00Z' }], [{ kind: 'll', name: 'hub', title: 'hub' }])['ll/hub'], { release: { tag_name: 'mod-hub', assets: [], html_url: 'https://github.com/o/lab/releases/tag/mod-hub', published_at: '2026-01-01T00:00:00Z' }, asset: null }, 'a mod\'s own tag before a plugin\'s newer one; no pack: null');
   eq(R.latestByUnit(null, units), {}); eq(R.latestByUnit(RELEASES, null), {});
+  // a unit with no release of its own never takes another unit's whose name holds its own: coins and coins_plus (the release
+  // addon-coins_plus, coins_plus-latest.mcaddon) — coins_plus among the units or not; nor the other way
+  const plus = { tag_name: 'addon-coins_plus', name: 'Coins Plus 1.0.0', published_at: '2026-10-01T00:00:00Z', html_url: 'https://github.com/o/lab/releases/tag/addon-coins_plus', assets: [asset('coins_plus-latest.mcaddon', 10, 1), asset('coins_plus-source.zip', 10, 0)] };
+  const two = [{ kind: 'bds', name: 'coins', ref: 'bds/coins', title: 'Coins' }, { kind: 'bds', name: 'coins_plus', ref: 'bds/coins_plus', title: 'Coins Plus' }];
+  const mine = (rs, us) => Object.fromEntries(Object.entries(R.latestByUnit(rs, us)).map(([k, v]) => [k, `${v.release.tag_name} ${v.asset?.name}`]));
+  eq(mine([plus], two), { 'bds/coins_plus': 'addon-coins_plus coins_plus-latest.mcaddon' }, 'coins has none');
+  eq(mine([plus], [two[0]]), {}, 'coins_plus not among the units: still not coins\'s');
+  eq(mine([plus, RELEASES[1]], two), { 'bds/coins': 'addon-coins coins-latest.mcaddon', 'bds/coins_plus': 'addon-coins_plus coins_plus-latest.mcaddon' }, 'each its own');
+  eq(mine([RELEASES[1]], [two[1]]), {}, 'nor coins\'s for coins_plus');
+  // a release under another known unit's own tag (addon- plugin- mod- and its name) is that unit's alone, whatever its files say
+  const daily = { tag_name: 'addon-daily', published_at: '2026-10-02T00:00:00Z', assets: [asset('coins.mcaddon', 1, 0)] }, hub = { tag_name: 'mod-hub', published_at: '2026-10-03T00:00:00Z', assets: [asset('coins-hub.mcaddon', 1, 0)] };
+  eq(mine([daily, hub], [two[0], { kind: 'bds', name: 'daily', title: 'Daily' }, { kind: 'll', name: 'hub', title: 'hub' }]), { 'bds/daily': 'addon-daily coins.mcaddon', 'll/hub': 'mod-hub coins-hub.mcaddon' });
+  eq(mine([daily, hub], [two[0]]), { 'bds/coins': 'mod-hub coins-hub.mcaddon' }, 'their units not known: the files say whose');
   eq(R.totals(RELEASES), { releases: 4, assets: 7, packs: 5, downloads: 15, bytes: 136_311 });
   eq(R.totals([]), { releases: 0, assets: 0, packs: 0, downloads: 0, bytes: 0 });
   eq(R.notifyMessage(RELEASES[1]), 'Coins 1.0.0: https://github.com/o/lab/releases/tag/addon-coins', 'never starting with - (notify would take it for an option)');
@@ -159,20 +200,60 @@ await t('unit.yml\'s inputs: a new unit, a run, a pack to take in — names made
     ok(r.error && re.test(r.error) && !r.inputs, `${JSON.stringify(x)}: ${r.error}`);
   }
   ok(!W.newUnitInputs({ unit: 'ok_name', request: '- 剣\n- 雷\n\tタブも' }).error, 'a list in the request is fine (one - is not an option)');
+  // a zz_ name is a parked unit's: the list never shows one, so none is made (taken in neither)
+  for (const r of [W.newUnitInputs({ unit: 'zz_shop' }), W.importPlan({ fileName: 'a.zip', size: 1, unit: 'zz_shop' })]) ok(/zz_/.test(r.error) && !r.inputs, JSON.stringify(r));
+  eq([U.isUnitName('zz_shop'), W.unitNameProblem('zz_shop') !== '', W.unitNameProblem('shop'), W.unitNameProblem('Shop'), W.unitNameProblem('shop_'), W.unitNameProblem('shop_', { taking: true }) !== ''], [false, true, '', W.UNIT_SAY, '', true]);
   eq([W.runInputs({ job: 'test', unit: 'coins' }), W.runInputs({ job: 'go', unit: 'coins' }).inputs, W.runInputs({ job: 'sim', unit: 'coins' }).inputs.job], [{ inputs: { job: 'test', unit: 'coins' } }, { job: 'go', unit: 'coins' }, 'sim']);
   ok(W.runInputs({ job: 'new', unit: 'coins' }).error && W.runInputs({ job: 'test', unit: '../x' }).error && W.runInputs({}).error, 'only test / go / sim of a good name');
-  const p = W.importPlan({ fileName: 'C:\\Users\\me\\Downloads\\My Cool Addon v1.2.MCADDON', size: 12_345, words: ' 直してほしい ' });
-  eq(p, { name: 'My_Cool_Addon_v1.2.mcaddon', path: 'incoming/My_Cool_Addon_v1.2.mcaddon', message: 'panel: 取り込む My_Cool_Addon_v1.2.mcaddon（unit.yml が bds/addons に） [skip ci]', inputs: { job: 'import', file: 'incoming/My_Cool_Addon_v1.2.mcaddon', words: '直してほしい' } });
-  const names = (n) => W.importPlan({ fileName: n, size: 1 }).name ?? W.importPlan({ fileName: n, size: 1 }).error;
+  // a pack's name in incoming/: made safe, then its own — a short time and a random part after its stem
+  const at = Date.UTC(2026, 9, 8, 12, 3, 45);
+  eq([W.incomingStamp(at, 'ab12'), W.incomingStamp(at, 'AB-1'), W.incomingStamp(at, ''), W.incomingStamp(NaN, 'zz99')], ['-20261008T1203-ab12', '-20261008T1203-ab10', '-20261008T1203-0000', '-00000000T0000-zz99']);
+  ok(/^[a-z0-9]{4}$/.test(W.randomNonce()) && new Set(Array.from({ length: 20 }, W.randomNonce)).size > 15, 'a random part');
+  const p = W.importPlan({ fileName: 'C:\\Users\\me\\Downloads\\My Cool Addon v1.2.MCADDON', size: 12_345, words: ' 直してほしい ', now: at, nonce: 'ab12' });
+  eq(p, { name: 'My_Cool_Addon_v1.2-20261008T1203-ab12.mcaddon', path: 'incoming/My_Cool_Addon_v1.2-20261008T1203-ab12.mcaddon', branch: 'lab-incoming/My_Cool_Addon_v1.2-20261008T1203-ab12.mcaddon', unit: 'my_cool_addon_v1_2',
+    message: 'panel: 取り込む My_Cool_Addon_v1.2-20261008T1203-ab12.mcaddon（unit.yml が bds/addons/my_cool_addon_v1_2 に） [skip ci]', inputs: { job: 'import', file: 'incoming/My_Cool_Addon_v1.2-20261008T1203-ab12.mcaddon', unit: 'my_cool_addon_v1_2', words: '直してほしい' } });
+  const twice = [W.importPlan({ fileName: 'addon.mcpack', size: 1 }), W.importPlan({ fileName: 'addon.mcpack', size: 1 })];
+  ok(twice[0].path !== twice[1].path && twice.every((x) => /^incoming\/addon-\d{8}T\d{4}-[a-z0-9]{4}\.mcpack$/.test(x.path) && x.unit === 'addon'), `one file twice: two names (${twice.map((x) => x.path)})`);
+  const names = (n) => { const x = W.importPlan({ fileName: n, size: 1, now: at, nonce: 'ab12' }); return x.name?.replace('-20261008T1203-ab12', '') ?? x.error; };
   eq(['../../.github/workflows/evil.zip', '剣.mcpack', '.hidden.mcpack', 'a..b...c.zip', '-x-.zip', 'ｆｕｌｌ.zip', `${'a'.repeat(200)}.zip`].map(names),
     ['evil.zip', 'addon.mcpack', 'hidden.mcpack', 'a.b.c.zip', 'x.zip', 'full.zip', `${'a'.repeat(80)}.zip`]);
-  for (const n of ['../../.github/workflows/evil.zip', '剣.mcpack', '.hidden.mcpack', 'a..b...c.zip', `${'a'.repeat(200)}.zip`]) { const x = W.importPlan({ fileName: n, size: 1 }); ok(W.INCOMING.test(x.path) && !x.path.includes('..') && x.path.split('/').length === 2, x.path); }
+  // (INCOMING, the path's length, unit.yml's own rule for the name — a letter or digit first, letters, digits and . _ -, no ..,
+  // 121 at most — and unitci's check of FILE: all held with the longest name)
+  for (const n of ['../../.github/workflows/evil.zip', '剣.mcpack', '.hidden.mcpack', 'a..b...c.zip', `${'a'.repeat(200)}.mcaddon`, `${'a.'.repeat(200)}.mcaddon`]) {
+    const x = W.importPlan({ fileName: n, size: 1 });
+    ok(W.INCOMING.test(x.path) && !x.path.includes('..') && x.path.split('/').length === 2 && x.path.length <= W.LIMITS.file && /^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/.test(x.name) && x.branch === `lab-incoming/${x.name}` && !C.plan({ JOB: 'import', FILE: x.path }).error, x.path);
+  }
   eq(['x.exe', 'x.mcworld', 'mcaddon', '.mcaddon', 'x'].map((n) => Boolean(W.importPlan({ fileName: n, size: 1 }).error)), [true, true, true, true, true], 'only .mcaddon .mcpack .zip');
   eq([W.importPlan({ fileName: 'a.zip', size: 0 }).error, W.importPlan({ fileName: 'a.zip', size: W.MAX_BYTES + 1 }).error, W.importPlan({ fileName: 'a.zip', size: W.MAX_BYTES }).error], ['空のファイルです', '大きすぎます（50 MB まで）', undefined]);
-  eq(W.importPlan({ fileName: 'a.zip', size: 1, unit: 'mine' }).inputs, { job: 'import', file: 'incoming/a.zip', words: '', unit: 'mine' }, 'a name given: unit');
+  eq(W.importPlan({ fileName: 'a.zip', size: 1, unit: 'mine', now: at, nonce: 'ab12' }).inputs, { job: 'import', file: 'incoming/a-20261008T1203-ab12.zip', unit: 'mine', words: '' }, 'a name given: unit');
   ok(/英小文字/.test(W.importPlan({ fileName: 'a.zip', size: 1, unit: 'Mine' }).error) && /--/.test(W.importPlan({ fileName: 'a.zip', size: 1, words: '--name x' }).error), 'its name and words checked');
+  ok(/_ で終われません/.test(W.importPlan({ fileName: 'a.zip', size: 1, unit: 'mine_' }).error), 'a name the lab\'s import would cut (its _ at the end): refused');
+  // the branch a pack waits on (unitci gives the same)
+  eq(['incoming/a-20261008T1203-ab12.zip', 'a.zip', 'incoming/../a.zip', 'incoming/a/b.zip', '.a.zip', 'a.exe', ''].map(W.incomingBranch), ['lab-incoming/a-20261008T1203-ab12.zip', 'lab-incoming/a.zip', null, null, null, null, null]);
+  ok(C.incomingBranch === W.incomingBranch, 'unitci: the same incomingBranch');
   eq([W.base64Of('data:application/octet-stream;base64,UEsDBA=='), W.base64Of('data:,plain'), W.base64Of(null)], ['UEsDBA==', '', '']);
   eq([W.hasWorkflow(undefined, 'unit.yml'), W.hasWorkflow([{ path: '.github/workflows/unit.yml' }], 'unit.yml'), W.hasWorkflow([{ path: '.github/workflows/xunit.yml' }], 'unit.yml'), W.hasWorkflow([], 'unit.yml')], [true, true, false, false]);
+});
+
+await t('a pack taken in with no name given: its unit from its file\'s name — never the pack\'s own header.name (pack.name, 60 letters, "2048 Game") — always one the list shows and the lab\'s import keeps as it is; the panel and unitci give the same (pure)', () => {
+  // (the lab's own way with --name: common/core.mjs importAddon — a name it would change is not the unit asked for)
+  const lab = (n) => n.toLowerCase().replace(/§./g, '').replace(/[^a-z0-9_]+/g, '_').replace(/^_|_$/g, '');
+  const files = ['pack.name.mcaddon', 'My Cool Addon v1.2.MCADDON', '2048 Game.mcaddon', '剣.mcpack', 'a.zip', 'zz_top.zip', 'ZZ.zip', '__x__.zip', 'C:\\dl\\Shop (1).mcaddon',
+    'incoming/My_Pack-20261008T1203-ab12.mcpack', `${'Long name '.repeat(8)}.mcaddon`, `${'x'.repeat(60)}.mcaddon`, 'ｆｕｌｌ.zip', '§6Coins.mcaddon', ''];
+  eq(files.map(W.unitFromFile), ['pack_name', 'my_cool_addon_v1_2', 'addon_2048_game', 'addon', 'addon_a', 'addon_zz_top', 'zz', 'addon_x', 'shop_1', 'my_pack', 'long_name_long_name_long_name_long_name', 'x'.repeat(40), 'full', 'addon_6coins', 'addon']);
+  // any name at all (a fixed seed): a name the list shows, the lab keeps, 40 at most
+  let seed = 7;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  const chars = 'aZ09_-. §(剣ｆ\u0301zZ_İ'.split('');
+  for (let i = 0; i < 2000; i++) {
+    const n = `${Array.from({ length: rnd(70) }, () => chars[rnd(chars.length)]).join('')}${['.mcaddon', '.mcpack', '.zip'][rnd(3)]}`, u = W.unitFromFile(n);
+    ok(U.isUnitName(u) && lab(u) === u && u.length <= 40 && !W.unitNameProblem(u, { taking: true }), `${JSON.stringify(n)} → ${u}`);
+  }
+  // the panel's plan and unitci's (no UNIT: from FILE; with the panel's UNIT) say the same name, always as --name
+  for (const n of ['pack.name.mcaddon', 'My Pack.mcpack', '2048 Game.mcaddon', '剣.zip', '../../x.mcaddon', 'a..b.zip', 'zz_top.zip', `${'x'.repeat(200)}.mcpack`]) {
+    const p = W.importPlan({ fileName: n, size: 1, words: 'w' }), bare = C.plan({ JOB: 'import', FILE: p.inputs.file, WORDS: p.inputs.words }), given = C.plan({ JOB: 'import', FILE: p.inputs.file, UNIT: p.inputs.unit, WORDS: p.inputs.words });
+    eq([bare.unit, given.unit, bare.args.slice(-2), given.args.slice(-2), bare.error, given.error], [p.unit, p.unit, ['--name', p.unit], ['--name', p.unit], undefined, undefined], n);
+  }
 });
 
 await t('the editor\'s files and checks: the pack\'s script from its manifest, a manifest must stay JSON with its header, tests.txt not empty, nothing outside the list, 1 MB at most (pure)', () => {
@@ -186,24 +267,40 @@ await t('the editor\'s files and checks: the pack\'s script from its manifest, a
   ok(/直せません/.test(W.checkEdit('.github/workflows/x.yml', 'x', null).error) && /直せません/.test(W.checkEdit('../x', 'x', null).error) && /直せません/.test(W.checkEdit('bp/scripts/index.js', 'x', null).error), 'only the files offered');
   ok(W.checkEdit('bp/scripts/index.js', 'x', { entry: 'bp/scripts/index.js' }).ok, 'its own script');
   ok(/1 MB/.test(W.checkEdit('TASK.md', 'あ'.repeat(400_000), null).error), 'UTF-8 bytes counted');
+  // a file's line breaks: a textarea gives \n alone — the same text, and back with the file's own
+  eq([W.eolOf('a\r\nb\nc'), W.eolOf('a\nb\r\n'), W.eolOf('a\rb'), W.eolOf('one line'), W.eolOf(null)], ['\r\n', '\n', '\r', '\n', '\n']);
+  eq([W.withEol('a\nb\r\nc\rd\n', '\r\n'), W.withEol('a\r\nb', '\n'), W.withEol(null)], ['a\r\nb\r\nc\r\nd\r\n', 'a\nb', '']);
+  eq([W.sameText('a\r\nb\r\n', 'a\nb\n'), W.sameText('a\r\nb', 'a\nb\n'), W.sameText('a\rb', 'a\nb')], [true, false, true]);
 });
 
-await t('a person\'s pack put in incoming/ (base64 of its bytes, its path, the commit\'s message; one there by that name replaced through its sha) and unit.yml started after it; a unit\'s file read and saved over its sha, another\'s change since said in words; a big file refused (fake GitHub)', async () => {
+await t('a person\'s pack put on a branch of its own (the default branch\'s head read, lab-incoming/<name> made from it, incoming/<name> on it: base64 of its bytes, the branch, the commit\'s message — nothing on the default branch) and unit.yml started after it; a step failing leaves no branch; a unit\'s file read and saved over its sha, another\'s change since said in words, a protected branch said as GitHub said it; a big file refused (fake GitHub)', async () => {
   const f = fakeGitHub({ files: { ...LAB, 'bds/addons/coins/rp/texts/en_US.lang': 'x'.repeat(10) }, big: ['bds/addons/coins/rp/texts/en_US.lang'] });
-  const bytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0xff, 0x00, 0x80, 0x7f]), p = W.importPlan({ fileName: 'My Pack.mcpack', size: bytes.length, words: 'お店の値段を半分に' });
-  const started = [];
+  const bytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0xff, 0x00, 0x80, 0x7f]), p = W.importPlan({ fileName: 'My Pack.mcpack', size: bytes.length, words: 'お店の値段を半分に', now: Date.UTC(2026, 9, 8, 12, 3), nonce: 'ab12' });
+  const name = 'My_Pack-20261008T1203-ab12.mcpack', onMain = new Map(f.st.files), started = [];
   const dispatch = async (wf, inputs) => { started.push({ wf, inputs, at: f.st.seen.length }); return f.api.dispatch('o/lab', wf, 'main', inputs); };
-  eq(await W.importUnit(f.api, 'o/lab', p, bytes.toString('base64'), dispatch), 'incoming/My_Pack.mcpack');
-  const put = f.st.seen.find((s) => s.method === 'PUT');
-  eq([put.path, put.body.message, put.body.sha, Buffer.from(put.body.content, 'base64').equals(bytes)], ['/repos/o/lab/contents/incoming/My_Pack.mcpack', 'panel: 取り込む My_Pack.mcpack（unit.yml が bds/addons に） [skip ci]', undefined, true]);
-  eq(f.st.seen.map((s) => `${s.method} ${s.path}`), ['GET /repos/o/lab/contents/incoming', 'PUT /repos/o/lab/contents/incoming/My_Pack.mcpack', 'POST /repos/o/lab/actions/workflows/unit.yml/dispatches'], 'put first, then unit.yml');
-  eq(f.st.seen.at(-1).body, { ref: 'main', inputs: { job: 'import', file: 'incoming/My_Pack.mcpack', words: 'お店の値段を半分に' } });
-  eq(started[0].wf, 'unit.yml');
-  // the same name again: replaced (its sha), not refused by GitHub
-  await W.putIncoming(f.api, 'o/lab', p, Buffer.from('second').toString('base64'));
-  eq([f.st.seen.at(-1).body.sha, f.st.files.get('incoming/My_Pack.mcpack').data.toString()], [sha(bytes), 'second']);
-  for (const bad of [{ path: 'incoming/../x.zip' }, { path: '.github/workflows/x.zip' }, { path: 'incoming/a/b.zip' }]) { let e = null; try { await W.putIncoming(f.api, 'o/lab', { ...bad, message: 'm' }, 'QQ=='); } catch (x) { e = x; } ok(/使えません/.test(e?.message), bad.path); }
-  let e0 = null; try { await W.putIncoming(f.api, 'o/lab', p, ''); } catch (x) { e0 = x; } ok(/読めません/.test(e0?.message), 'no bytes: not sent');
+  eq(await W.importUnit(f.api, 'o/lab', p, bytes.toString('base64'), dispatch, 'main'), `incoming/${name}`);
+  eq(f.st.seen.map((s) => `${s.method} ${s.path}`), ['GET /repos/o/lab/git/ref/heads/main', 'POST /repos/o/lab/git/refs', `PUT /repos/o/lab/contents/incoming/${name}`, 'POST /repos/o/lab/actions/workflows/unit.yml/dispatches'], 'the head read, the branch made, the pack on it, then unit.yml');
+  eq(f.st.seen[1].body, { ref: `refs/heads/lab-incoming/${name}`, sha: MAIN }, 'the branch from the default branch\'s head');
+  const put = f.st.seen[2];
+  eq([put.body.message, put.body.branch, put.body.sha, Buffer.from(put.body.content, 'base64').equals(bytes)], [`panel: 取り込む ${name}（unit.yml が bds/addons/my_pack に） [skip ci]`, `lab-incoming/${name}`, undefined, true]);
+  eq([f.st.seen.at(-1).body, started.map((x) => [x.wf, x.at])], [{ ref: 'main', inputs: { job: 'import', file: `incoming/${name}`, unit: 'my_pack', words: 'お店の値段を半分に' } }, [['unit.yml', 3]]]);
+  ok(f.st.files.size === onMain.size && [...onMain].every(([k, v]) => f.st.files.get(k) === v) && f.st.seen.every((s) => s.method !== 'PUT' || s.body.branch === `lab-incoming/${name}`), 'nothing written to the default branch');
+  ok(f.st.branches.get(`lab-incoming/${name}`)?.get(`incoming/${name}`)?.data.equals(bytes), 'the pack on lab-incoming/<name> alone');
+  // the same file again: a name of its own, a branch of its own — never over the first
+  const p2 = W.importPlan({ fileName: 'My Pack.mcpack', size: 6, now: Date.UTC(2026, 9, 8, 12, 3), nonce: 'cd34' });
+  await W.importUnit(f.api, 'o/lab', p2, Buffer.from('second').toString('base64'), dispatch, 'main');
+  eq([f.st.branches.get(`lab-incoming/${name}`).get(`incoming/${name}`).data.equals(bytes), f.st.branches.get(`lab-incoming/${p2.name}`).get(`incoming/${p2.name}`).data.toString(), f.st.files.size], [true, 'second', onMain.size]);
+  // a step failing — the file refused, or unit.yml not started — leaves no branch behind; the error is GitHub's
+  for (const [fail, why] of [[{ [`/repos/o/lab/contents/incoming/x-20261008T1203-ab12.zip`]: { method: 'PUT', status: 413, message: 'Request body too large' } }, /too large/], [{ '/repos/o/lab/actions/workflows/unit.yml/dispatches': { method: 'POST', status: 422, message: 'Unexpected inputs provided: ["unit"]' } }, /Unexpected inputs/]]) {
+    const g = fakeGitHub({ files: LAB, fail }), q = W.importPlan({ fileName: 'x.zip', size: 1, now: Date.UTC(2026, 9, 8, 12, 3), nonce: 'ab12' });
+    let e = null; try { await W.importUnit(g.api, 'o/lab', q, 'UEs=', (wf, inputs) => g.api.dispatch('o/lab', wf, 'main', inputs), 'main'); } catch (x) { e = x; }
+    ok(why.test(e?.message) && !g.st.refs.has(q.branch) && g.st.seen.at(-1).method === 'DELETE' && g.st.seen.at(-1).path === `/repos/o/lab/git/refs/heads/${q.branch}`, `${e?.message} ${g.st.seen.map((s) => `${s.method} ${s.path}`).join(' | ')}`);
+  }
+  // a name that is not one, or no bytes: nothing sent at all
+  const n0 = f.st.seen.length;
+  for (const bad of [{ path: 'incoming/../x.zip' }, { path: '.github/workflows/x.zip' }, { path: 'incoming/a/b.zip' }, { path: 'incoming/.x.zip' }]) { let e = null; try { await W.putIncoming(f.api, 'o/lab', { ...bad, message: 'm' }, 'QQ==', 'main'); } catch (x) { e = x; } ok(/使えません/.test(e?.message), bad.path); }
+  let e0 = null; try { await W.putIncoming(f.api, 'o/lab', p, '', 'main'); } catch (x) { e0 = x; } ok(/読めません/.test(e0?.message), 'no bytes: not sent');
+  ok(f.st.seen.length === n0, 'nothing asked of GitHub');
   // a unit's file: read (UTF-8, its sha), saved over that sha, saved again over the new one, another's change since refused in words
   const r = await W.readUnitFile(f.api, 'o/lab', 'bds/addons/coins/src/main.ts');
   eq([r.text, r.sha], [LAB['bds/addons/coins/src/main.ts'], sha(Buffer.from(LAB['bds/addons/coins/src/main.ts']))]);
@@ -219,31 +316,45 @@ await t('a person\'s pack put in incoming/ (base64 of its bytes, its path, the c
   ok(/ほかの人が先に変えました/.test(late?.message) && f.st.files.get('bds/addons/coins/src/main.ts').data.toString() === '// 3\n', 'another\'s change not overwritten');
   let nosha = null; try { await W.saveUnitFile(f.api, 'o/lab', 'bds/addons/coins/src/main.ts', 'mine', null, 'm'); } catch (x) { nosha = x; }
   ok(/ほかの人が先に変えました/.test(nosha?.message), 'a file there already, saved with no sha: the same words');
+  // a protected default branch (a ruleset, a pull request needed) answers 409 or 422 too: GitHub's own words, not another's change
+  for (const [status, message] of [[409, 'Repository rule violations found\n\nChanges must be made through a pull request.\n\n'], [422, 'Protected branch update failed for refs/heads/main.']]) {
+    const g = fakeGitHub({ files: LAB, fail: { '/repos/o/lab/contents/bds/addons/coins/src/main.ts': { method: 'PUT', status, message } } });
+    const at = await W.readUnitFile(g.api, 'o/lab', 'bds/addons/coins/src/main.ts');
+    let e = null; try { await W.saveUnitFile(g.api, 'o/lab', 'bds/addons/coins/src/main.ts', 'mine', at.sha, 'm'); } catch (x) { e = x; }
+    ok(e && !/ほかの人が先に変えました/.test(e.message) && e.message.includes(message.split('\n')[0]) && /既定の枝が守られているかもしれません（PR が要ります）/.test(e.message) && e.status === status, `${status}: ${e?.message}`);
+  }
 });
 
 await t('unitci: the inputs checked by the panel\'s own rules — each job\'s command, its words as arguments, never through a shell; anything else refused without repeating it (pure)', () => {
   eq(C.plan({ JOB: 'new', UNIT: 'ruby_sword', TITLE: 'Ruby Sword', REQUEST: 'ルビーの剣\n雷' }).args, ['lab.mjs', 'bds', 'new', 'ruby_sword', 'Ruby Sword', 'ルビーの剣\n雷']);
   eq(C.plan({ JOB: 'new', UNIT: 'lamp' }).args, ['lab.mjs', 'bds', 'new', 'lamp', 'lamp'], 'no title: the name; no request: left out');
-  eq(C.plan({ JOB: 'import', FILE: 'incoming/My_Pack.mcpack', WORDS: '直して' }).args, ['lab.mjs', 'import', 'incoming/My_Pack.mcpack', '直して']);
+  eq(C.plan({ JOB: 'import', FILE: 'incoming/My_Pack.mcpack', WORDS: '直して' }).args, ['lab.mjs', 'import', 'incoming/My_Pack.mcpack', '直して', '--name', 'my_pack'], 'no UNIT: the file\'s name, always as --name (never the pack\'s header.name)');
   eq(C.plan({ JOB: 'import', FILE: 'incoming/a.zip', UNIT: 'mine' }).args, ['lab.mjs', 'import', 'incoming/a.zip', '--name', 'mine']);
+  eq(C.plan({ JOB: 'import', FILE: 'incoming/2048_Game-20261008T1203-ab12.mcaddon' }), { job: 'import', unit: 'addon_2048_game', args: ['lab.mjs', 'import', 'incoming/2048_Game-20261008T1203-ab12.mcaddon', '--name', 'addon_2048_game'], show: 'node lab.mjs import incoming/2048_Game-20261008T1203-ab12.mcaddon --name addon_2048_game' });
   for (const job of ['test', 'sim', 'go']) eq(C.plan({ JOB: job, UNIT: 'coins', TITLE: 'ignored', FILE: 'x' }), { job, unit: 'coins', args: ['lab.mjs', job, '-a', 'coins'], show: `node lab.mjs ${job} -a coins` });
   eq(C.plan({ JOB: 'new', UNIT: 'ruby_sword', TITLE: 'Ruby Sword', REQUEST: 'x' }).show, 'node lab.mjs bds new ruby_sword "Ruby Sword" x');
   const bad = [{ JOB: 'rm', UNIT: 'coins' }, { JOB: 'new\n::add-mask::x', UNIT: 'coins' }, { JOB: 'test', UNIT: 'Coins' }, { JOB: 'go', UNIT: 'coins; rm -rf /' }, { JOB: 'test', UNIT: '' },
     { JOB: 'new', UNIT: 'ok_x', TITLE: 'a\nb' }, { JOB: 'new', UNIT: 'ok_x', TITLE: '--stable' }, { JOB: 'new', UNIT: 'ok_x', REQUEST: 'desc=x' }, { JOB: 'new', UNIT: 'ok_x', TITLE: 'x'.repeat(81) },
     { JOB: 'import', FILE: '../x.mcaddon' }, { JOB: 'import', FILE: 'incoming/../x.mcaddon' }, { JOB: 'import', FILE: 'incoming/a/b.mcaddon' }, { JOB: 'import', FILE: 'incoming/x.exe' },
     { JOB: 'import', FILE: 'incoming/.x.zip' }, { JOB: 'import', FILE: '/etc/passwd' }, { JOB: 'import', FILE: '' }, { JOB: 'import', FILE: 'incoming/a.zip', WORDS: '--name evil' }, { JOB: 'import', FILE: 'incoming/a.zip', UNIT: 'A' },
-    { JOB: 'import', FILE: `incoming/${'a'.repeat(120)}.zip` }];
+    { JOB: 'import', FILE: `incoming/${'a'.repeat(120)}.zip` }, { JOB: 'new', UNIT: 'zz_shop' }, { JOB: 'import', FILE: 'incoming/a.zip', UNIT: 'zz_a' }, { JOB: 'import', FILE: 'incoming/a.zip', UNIT: 'mine_' }];
   for (const env of bad) { const r = C.plan(env); ok(r.error && !r.args && !/[\n\r]|::|rm -rf|evil|passwd|stable/.test(r.error), `${JSON.stringify(env).slice(0, 80)} → ${r.error}`); }
   // (the two sides hold each other: what the panel makes, unitci takes; what the panel refuses, unitci refuses)
-  for (const x of [{ unit: 'ruby_sword', title: 'Ruby', request: '剣' }, { unit: 'a1', title: '' }, { unit: 'ok_x', title: '--js' }, { unit: 'ok_x', request: 'k=v' }, { unit: 'Bad' }, { unit: 'ok_x', title: 'x'.repeat(80) }, { unit: 'ok_x', title: 'x'.repeat(81) }]) {
+  for (const x of [{ unit: 'ruby_sword', title: 'Ruby', request: '剣' }, { unit: 'a1', title: '' }, { unit: 'ok_x', title: '--js' }, { unit: 'ok_x', request: 'k=v' }, { unit: 'Bad' }, { unit: 'zz_shop' }, { unit: 'ok_x', title: 'x'.repeat(80) }, { unit: 'ok_x', title: 'x'.repeat(81) }]) {
     const panel = W.newUnitInputs(x), ci = C.plan({ JOB: 'new', UNIT: x.unit, TITLE: x.title, REQUEST: x.request });
     eq(Boolean(panel.error), Boolean(ci.error), JSON.stringify(x));
   }
-  for (const n of ['My Pack.mcpack', '剣.zip', '../../x.mcaddon', 'a..b.zip']) { const p = W.importPlan({ fileName: n, size: 1, words: 'w' }); ok(!C.plan({ JOB: 'import', FILE: p.inputs.file, WORDS: p.inputs.words }).error, n); }
-  eq([C.madeUnit(['W x', 'OK bds/addons/their_pack/ (bp rp), now the current addon']), C.madeUnit(['OK bds/addons/../x/']), C.madeUnit([])], ['their_pack', null, null]);
+  for (const x of [{ unit: 'mine' }, { unit: 'zz_mine' }, { unit: 'mine_' }, { unit: 'Mine' }, { unit: '' }, { words: '--name x' }]) {
+    const panel = W.importPlan({ fileName: 'a.zip', size: 1, ...x }), ci = C.plan({ JOB: 'import', FILE: panel.inputs?.file ?? 'incoming/a.zip', UNIT: x.unit, WORDS: x.words });
+    eq(Boolean(panel.error), Boolean(ci.error), JSON.stringify(x));
+  }
+  for (const n of ['My Pack.mcpack', '剣.zip', '../../x.mcaddon', 'a..b.zip']) { const p = W.importPlan({ fileName: n, size: 1, words: 'w' }); ok(!C.plan({ JOB: 'import', FILE: p.inputs.file, UNIT: p.inputs.unit, WORDS: p.inputs.words }).error, n); }
+  // the unit made: the lab's closing line — the last OK bds/addons/ one (an import's brief before it holds the pack's own words)
+  eq([C.madeUnit(['W x', 'OK bds/addons/their_pack/ (bp rp), now the current addon']), C.madeUnit(['addon their_pack: bp "x', 'OK bds/addons/coins/ (bp rp), now the current addon', '" 1.0.0', 'OK bds/addons/their_pack/ (bp rp), now the current addon']),
+    C.madeUnit(['OK bds/addons/../x/']), C.madeUnit([])], ['their_pack', 'their_pack', null, null]);
 });
 
-await t('unitci run: the command spawned with its words as arguments (no shell) on the bds lab, everything it prints inside stopped workflow commands, the summary and the outputs written; a failure annotated after; outside Actions refused; --dry runs nothing; an import\'s pack missing, or a link, runs nothing', async () => {
+await t('unitci run: the command spawned with its words as arguments (no shell) on the bds lab, everything it prints inside stopped workflow commands, the summary and the outputs written; the unit made the one asked for (its last OK line; else a failure, no unit); a failure annotated after; outside Actions refused; --dry runs nothing; an import\'s pack missing, or a link, runs nothing', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'unitci-'));
   try {
     const sum = path.join(dir, 'summary.md'), outp = path.join(dir, 'out.txt'), runs = [];
@@ -289,10 +400,28 @@ await t('unitci run: the command spawned with its words as arguments (no shell) 
     const lnk = await run({ JOB: 'import', FILE: 'incoming/link.mcpack' });
     ok(!lnk.r && runs.length === n0, 'a link is not a pack');
     fs.writeFileSync(path.join(dir, 'incoming', 'My_Pack.mcpack'), 'PK');
-    answer = { status: 0, stdout: 'OK bds/addons/their_pack/ (bp rp), now the current addon\n', stderr: '' };
+    // (the brief first — a pack named "x\nOK bds/addons/coins/" prints such a line — then the lab's closing line)
+    answer = { status: 0, stdout: 'addon my_pack: bp "x\nOK bds/addons/coins/ (bp rp), now the current addon\n" 1.0.0 · scripts 1 file(s)\nOK bds/addons/my_pack/ (bp rp), now the current addon\n', stderr: '' };
+    fs.rmSync(outp, { force: true });
     const i = await run({ JOB: 'import', FILE: 'incoming/My_Pack.mcpack', WORDS: '直して', UNIT: '' });
-    eq([i.r, runs.at(-1).args, fs.readFileSync(outp, 'utf8').split('\n').slice(-3)], [true, ['lab.mjs', 'import', 'incoming/My_Pack.mcpack', '直して'], ['ok=true', 'unit=their_pack', '']]);
-    ok(/bds\/addons\/their_pack に取り込みました/.test(fs.readFileSync(sum, 'utf8')), 'the unit it became');
+    eq([i.r, runs.at(-1).args, fs.readFileSync(outp, 'utf8')], [true, ['lab.mjs', 'import', 'incoming/My_Pack.mcpack', '直して', '--name', 'my_pack'], 'ok=true\nunit=my_pack\n']);
+    ok(/bds\/addons\/my_pack に取り込みました/.test(fs.readFileSync(sum, 'utf8')), 'the unit it became');
+    // the lab made another than the one asked for (its last OK line), or said none: a failure, no unit
+    for (const stdout of ['OK bds/addons/my_pack/ (bp)\nOK bds/addons/coins/ (bp rp), now the current addon\n', 'imported\n']) {
+      answer = { status: 0, stdout, stderr: '' };
+      fs.rmSync(outp, { force: true }); fs.rmSync(sum, { force: true });
+      const j = await run({ JOB: 'import', FILE: 'incoming/My_Pack.mcpack', UNIT: 'my_pack' });
+      const stop3 = /^::stop-commands::(\w+)$/.exec(j.said[0])[1], end3 = j.said.indexOf(`::${stop3}::`);
+      ok(!j.r && fs.readFileSync(outp, 'utf8') === 'ok=false\n' && j.said.slice(0, end3).some((l) => /^ERR .*bds\/addons\/my_pack/.test(l)) && /^::error title=unit import::.*my_pack/.test(j.said.at(-1)), j.said.join('\n'));
+      ok(/## ❌ 取り込み my_pack/.test(fs.readFileSync(sum, 'utf8')), 'the summary says it failed');
+    }
+    // new: the line names the unit asked for, or no line (as asked) — another one is a failure too
+    answer = { status: 0, stdout: 'OK bds/addons/coins/: write bds/addons/coins/src/main.ts\n', stderr: '' };
+    fs.rmSync(outp, { force: true });
+    ok(!(await run({ JOB: 'new', UNIT: 'ruby_sword' })).r && fs.readFileSync(outp, 'utf8') === 'ok=false\n', 'new: another unit');
+    answer = { status: 0, stdout: 'done\n', stderr: '' };
+    fs.rmSync(outp, { force: true });
+    ok((await run({ JOB: 'new', UNIT: 'ruby_sword' })).r && fs.readFileSync(outp, 'utf8') === 'ok=true\nunit=ruby_sword\n', 'new: no line, as asked');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -301,7 +430,11 @@ function fakeDom() {
   class N { get textContent() { return ''; } }
   class T extends N { constructor(s) { super(); this.data = String(s); } get textContent() { return this.data; } }
   class E extends N {
-    constructor(tag) { super(); Object.assign(this, { tagName: tag.toUpperCase(), kids: [], attrs: {}, on: {}, style: {}, className: '', value: '', checked: false, parent: null }); }
+    constructor(tag) {
+      super(); Object.assign(this, { tagName: tag.toUpperCase(), kids: [], attrs: {}, on: {}, style: {}, className: '', value: '', checked: false, parent: null });
+      // (a textarea, as a browser's: its value gives every line break as \n — a file of \r\n comes back with \n alone)
+      if (this.tagName === 'TEXTAREA') { let raw = ''; Object.defineProperty(this, 'value', { get: () => raw.replace(/\r\n?/g, '\n'), set: (v) => { raw = String(v); }, enumerable: true, configurable: true }); }
+    }
     get disabled() { return this._disabled ?? 'disabled' in this.attrs; }
     set disabled(v) { this._disabled = Boolean(v); }
     setAttribute(k, v) { this.attrs[k] = String(v); }
@@ -399,7 +532,7 @@ await t('the 「アドオン」 tab (fake DOM, fake GitHub): a card per unit —
   ok(/権限がありません/.test(b7.all((e) => e.tagName === 'P' && e.className === 'bad')[0]?.textContent) && !/読んでいます/.test(b7.textContent) && /権限がありません/.test(toast.textContent), b7.textContent);
 });
 
-await t('the cards (fake DOM, fake GitHub): 新しく作る starts unit.yml with its inputs (a name taken refused first); 取り込む reads the file, puts its bytes in incoming/ as base64 and starts unit.yml, through guarded once; the editor reads with its sha, saves, saves again over the new one, refuses a broken manifest, and 保存して試験 runs the test', async () => {
+await t('the cards (fake DOM, fake GitHub): 新しく作る starts unit.yml with its inputs (a name taken refused first); 取り込む reads the file, puts its bytes on lab-incoming/<name> as base64 and starts unit.yml, through guarded once (a name taken refused first); the editor reads with its sha, saves, saves again over the new one, refuses a broken manifest, keeps a file\'s \\r\\n, and 保存して試験 runs the test', async () => {
   const { toast } = fakeDom();
   const UW = await imp('panel/ui/workspace.mjs');
   const f = fakeGitHub({ files: LAB }), { ctx, log } = ctxOf(f.api);
@@ -421,16 +554,26 @@ await t('the cards (fake DOM, fake GitHub): 新しく作る starts unit.yml with
   ok(/ファイルを選んでください/.test(toast.textContent) && log.guarded.length === 1, 'no file: said');
   im.byId('import-file').files = [{ name: 'Their Pack (v2).mcaddon', size: bytes.length, bytes }];
   im.byId('import-words').value = '新しい版で動くように';
-  const before = f.st.seen.length;
+  const before = f.st.seen.length, onMain = [...f.st.files.keys()].join();
   await im.button(/^取り込む$/).click();
-  const sent = f.st.seen.slice(before);
-  eq(sent.map((s) => `${s.method} ${s.path}`), ['GET /repos/o/lab/contents/incoming', 'PUT /repos/o/lab/contents/incoming/Their_Pack_v2.mcaddon', 'POST /repos/o/lab/actions/workflows/unit.yml/dispatches']);
-  ok(Buffer.from(sent[1].body.content, 'base64').equals(bytes) && /\[skip ci\]$/.test(sent[1].body.message), 'the bytes as base64, the commit skips CI');
-  eq([sent[2].body.inputs, log.guarded.at(-1).detail, log.guarded.length], [{ job: 'import', file: 'incoming/Their_Pack_v2.mcaddon', words: '新しい版で動くように' }, { workflow: 'unit.yml', job: 'import', file: 'incoming/Their_Pack_v2.mcaddon' }, 2]);
-  ok(/✅ incoming\/Their_Pack_v2\.mcaddon に入れ/.test(im.byId('import-state').textContent) && im.byId('import-words').value === '', im.byId('import-state').textContent);
+  const sent = f.st.seen.slice(before), name = /^\/repos\/o\/lab\/contents\/incoming\/(Their_Pack_v2-\d{8}T\d{4}-[a-z0-9]{4}\.mcaddon)$/.exec(sent[3]?.path ?? '')?.[1];
+  ok(name, sent.map((s) => `${s.method} ${s.path}`).join('\n'));
+  eq(sent.map((s) => `${s.method} ${s.path}`), ['GET /repos/o/lab/contents/bds/addons/their_pack_v2', 'GET /repos/o/lab/git/ref/heads/main', 'POST /repos/o/lab/git/refs', `PUT /repos/o/lab/contents/incoming/${name}`, 'POST /repos/o/lab/actions/workflows/unit.yml/dispatches'], 'its name looked for first; then its own branch, the pack on it, unit.yml');
+  ok(Buffer.from(sent[3].body.content, 'base64').equals(bytes) && /\[skip ci\]$/.test(sent[3].body.message) && sent[3].body.branch === `lab-incoming/${name}` && sent[2].body.ref === `refs/heads/lab-incoming/${name}`, 'the bytes as base64 on lab-incoming/<name>, the commit skips CI');
+  ok([...f.st.files.keys()].join() === onMain && f.st.branches.get(`lab-incoming/${name}`).get(`incoming/${name}`).data.equals(bytes), 'nothing on the default branch');
+  eq([sent[4].body.inputs, log.guarded.at(-1).detail, log.guarded.length], [{ job: 'import', file: `incoming/${name}`, unit: 'their_pack_v2', words: '新しい版で動くように' }, { workflow: 'unit.yml', job: 'import', file: `incoming/${name}`, unit: 'their_pack_v2' }, 2]);
+  ok(/✅ lab-incoming\/Their_Pack_v2-.+ に入れ/.test(im.byId('import-state').textContent) && /bds\/addons\/their_pack_v2/.test(log.guarded.at(-1).done) && im.byId('import-words').value === '', `${im.byId('import-state').textContent} ${log.guarded.at(-1).done}`);
   im.byId('import-file').files = [{ name: 'x.exe', size: 3, bytes: [1, 2, 3] }];
   await im.button(/^取り込む$/).click();
   ok(log.guarded.length === 2 && /\.mcaddon・\.mcpack・\.zip/.test(toast.textContent), 'another kind: said, nothing sent');
+  // a unit by that name already — the file's, or the one typed: said before anything is sent
+  for (const [file, typed] of [['Coins.mcaddon', ''], ['Other.mcpack', 'coins']]) {
+    im.byId('import-file').files = [{ name: file, size: 3, bytes: [1, 2, 3] }]; im.byId('import-unit').value = typed;
+    const n0 = f.st.seen.length;
+    await im.button(/^取り込む$/).click();
+    ok(/bds\/addons\/coins はもうあります: 名前を変えて/.test(toast.kids.at(-1)?.textContent) && log.guarded.length === 2 && f.st.seen.slice(n0).map((s) => `${s.method} ${s.path}`).join() === 'GET /repos/o/lab/contents/bds/addons/coins', `${file} ${typed}: ${toast.kids.at(-1)?.textContent}`);
+  }
+  im.byId('import-unit').value = '';
   // the editor
   const ran = [], ed = UW.editorView({ ...ctx, runUnit: (x) => ran.push(x) }, U.unitSummary({ name: 'coins', manifest: LAB['bds/addons/coins/bp/manifest.json'] }));
   await settle();
@@ -456,6 +599,19 @@ await t('the cards (fake DOM, fake GitHub): 新しく作る starts unit.yml with
   f.st.files.set('bds/addons/coins/tests.txt', { data: Buffer.from('## theirs\n'), sha: sha(Buffer.from('## theirs\n')) });
   text.value = '## mine\n'; await ed.button(/^保存$/).click();
   ok(/ほかの人が先に変えました/.test(log.errors.at(-1)) && f.st.files.get('bds/addons/coins/tests.txt').data.toString() === '## theirs\n', log.errors.join(' / '));
+  // a file of \r\n (TASK.md here): the textarea's \n alone is no change — 保存 commits nothing, 保存して試験 only tests — and a
+  // change is saved with the file's own \r\n, not every line made \n
+  const task = 'bds/addons/coins/TASK.md', putsOf = () => f.st.seen.filter((s) => s.method === 'PUT' && s.path.endsWith(task));
+  pick.value = 'TASK.md'; await pick.fire('change'); await settle();
+  ok(text.value === LAB[task].replace(/\r\n/g, '\n') && /\r\n/.test(LAB[task]), JSON.stringify(text.value));
+  await ed.button(/^保存$/).click();
+  ok(/変わっていません/.test(toast.kids.at(-1)?.textContent) && !putsOf().length, `保存 of nothing changed: ${putsOf().length} commit(s)`);
+  await ed.button(/保存して試験/).click();
+  eq([ran.length, ran.at(-1), putsOf().length], [2, { job: 'test', unit: 'coins' }, 0], '保存して試験 of nothing changed: only the test');
+  text.value = `${text.value}追記\n`; await ed.button(/^保存$/).click();
+  eq([putsOf().length, Buffer.from(putsOf()[0].body.content, 'base64').toString('utf8'), f.st.files.get(task).data.toString()], [1, `${LAB[task]}追記\r\n`, `${LAB[task]}追記\r\n`], 'saved with \\r\\n');
+  await ed.button(/^保存$/).click();
+  ok(putsOf().length === 1 && /変わっていません/.test(toast.kids.at(-1)?.textContent), 'what was saved, again: no change');
   ok(/ここで直せるのは bds のアドオン/.test(UW.editorView(ctx, U.unitSummary({ kind: 'end', name: 'hub' })).textContent), 'an Endstone plugin: not here');
 });
 

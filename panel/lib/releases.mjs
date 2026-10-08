@@ -19,24 +19,30 @@ export const newestFirst = (releases) => [...(releases ?? [])].sort((a, b) => wh
 
 const words = (s) => String(s ?? '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 /** is `needle` in `hay` (pure): any case, as whole words in a row — - _ . and spaces between words alike, so "coins" is in
- *  "addon-coins" and "coins-latest.mcaddon", "Daily Bonus" in "Daily.Bonus.mcaddon", and "shop" is not in "shopkeeper" */
+ *  "addon-coins", "coins-latest.mcaddon" and "coins-v1.2.mcaddon", "Daily Bonus" in "Daily.Bonus.mcaddon", and "shop" is
+ *  not in "shopkeeper". Never glued by _ to more at either end — a unit's name holds _: "coins" is not in "coins_plus" nor
+ *  in "my_coins" */
 export function holds(hay, needle) {
-  const h = words(hay), n = words(needle);
+  const n = words(needle);
   if (!n.length) return false;
-  for (let i = 0; i + n.length <= h.length; i++) if (n.every((w, k) => h[i + k] === w)) return true;
-  return false;
+  // (each word letters and digits alone: nothing in it that a regular expression reads as more)
+  return new RegExp(`(?:^|[^\\p{L}\\p{N}_])${n.join('[^\\p{L}\\p{N}]+')}(?![\\p{L}\\p{N}_])`, 'u').test(String(hay ?? '').toLowerCase());
 }
 /** each unit's newest release (drafts aside: no player can take one) → { [unit.ref]: { release, asset } } (pure). A release is a
  *  unit's when its tag or a file in it has the unit's name or title in it (holds; a title of fewer than 3 letters is not
- *  looked for); the lab's own tag for the unit (addon-<name>) comes first. asset: the unit's .mcaddon in it, else its first
+ *  looked for); the lab's own tag for the unit (addon-<name>) comes first, and one under another unit's own tag — addon-
+ *  plugin- mod- and the name of another unit given — is never this one's. asset: the unit's .mcaddon in it, else its first
  *  pack (null: none — the release's page is the way) */
 export function latestByUnit(releases, units) {
-  const rs = newestFirst(releases).filter((r) => r && !r.draft), out = {};
-  for (const u of units ?? []) {
+  const rs = newestFirst(releases).filter((r) => r && !r.draft), us = (units ?? []).filter((u) => u?.name), out = {};
+  const tagsOf = (u) => Object.values(TAG_PREFIX).map((p) => `${p}-${u.name}`.toLowerCase());
+  for (const u of us) {
     const kind = u.kind ?? 'bds', ref = u.ref ?? `${kind}/${u.name}`;
     const keys = [u.name, words(u.title).join('').length >= 3 ? u.title : null].filter(Boolean);
     const own = `${TAG_PREFIX[kind] ?? TAG_PREFIX.bds}-${u.name}`.toLowerCase();
-    const has = (r) => keys.some((k) => holds(r.tag_name, k) || (r.assets ?? []).some((a) => holds(a?.name, k)));
+    const theirs = new Set(us.filter((o) => o !== u).flatMap(tagsOf));
+    theirs.delete(own);
+    const has = (r) => !theirs.has(String(r.tag_name ?? '').toLowerCase()) && keys.some((k) => holds(r.tag_name, k) || (r.assets ?? []).some((a) => holds(a?.name, k)));
     const r = rs.find((x) => String(x.tag_name ?? '').toLowerCase() === own) ?? rs.find(has);
     if (!r) continue;
     const packs = packAssets(r), mine = packs.filter((a) => keys.some((k) => holds(a.name, k)));
