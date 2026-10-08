@@ -4,7 +4,8 @@
 // (node:http) and a file in a temp folder — only the jobs on and due started, on the repository's default branch with their
 // inputs; a broken file starts nothing (exit 1); what GitHub refused is said and is exit 1; the token is never in what it
 // prints — and list / check; and the 「予約」 tab on a small fake DOM (added, changed, paused, deleted through putFile with the
-// sha read, ai-make asked first, a change made elsewhere not written over).
+// sha read, ai-make asked first, a change made elsewhere not written over; the file not read: why where the list goes, with
+// 「読み直す」; a write refused for another reason than the sha — a protected branch — the form kept, GitHub's own words).
 // node tests/schedule-offline.mjs
 import fs from 'node:fs';
 import os from 'node:os';
@@ -423,6 +424,98 @@ await t('the 「予約」 tab: the jobs with when and their next three times; ad
   await UI.scheduleTab(ro, ctx({ may: () => false, gate: () => ({ disabled: true, title: 'no' }) }));
   ok(/見るだけです/.test(ro.textContent) && btn(ro, '＋ 予約を足す')[0].disabled && btn(ro, '止める')[0].disabled && btn(ro, '消す')[0].disabled, ro.textContent);
   ok(!body.all((e) => /^(https?:)?\/\//.test(e.attrs.href ?? '') && !/^https:\/\/github\.com\//.test(e.attrs.href)).length, 'links to GitHub only');
+});
+
+// ---- the 「予約」 tab when GitHub says no: its own fake DOM, and a fake api that reads and writes as GitHub does (with the
+// sha), told to fail its reads (readError) or to refuse the next write (refusal) ----
+async function sayNo(jobs) {
+  const { E, toast } = fakeDom();
+  const UI = await imp('panel/ui/schedule.mjs'), DOM = await imp('panel/ui/dom.mjs');
+  const g = { files: { [S.SCHEDULE_FILE]: { text: JSON.stringify({ version: 1, jobs }), sha: 's1' } }, reads: 0, readError: null, refusal: null };
+  let shaN = 1;
+  g.api = {
+    async file(r, p) { g.reads++; if (g.readError) throw g.readError; return g.files[p] ? { ...g.files[p] } : null; },
+    async putFile(r, p, text, sha) {
+      // (as GitHub: a sha that is not the file's — or none for a file that is there — refused in GitHub's own words)
+      if (g.refusal) { const e = g.refusal; g.refusal = null; throw e; }
+      if (g.files[p] && sha === undefined) throw Object.assign(new Error('GitHub が受け付けません: Invalid request.\n\n"sha" wasn\'t supplied.'), { status: 422 });
+      if (g.files[p]?.sha !== sha) throw Object.assign(new Error(`GitHub: 409 ${p} does not match ${sha}`), { status: 409 });
+      g.files[p] = { text, sha: `s${++shaN}` };
+      return { content: { sha: g.files[p].sha } };
+    },
+  };
+  globalThis.confirm = () => true;
+  const ctx = { api: g.api, lab: { slug: 'o/lab', repo: { default_branch: 'main' } }, workflows: ['verify.yml'], may: () => true, now: () => NOW,
+    dispatchInputs: async () => ({ dispatch: true, inputs: [{ name: 'why', description: '', default: '', type: 'string', options: [], required: true }] }),
+    guarded: async (action, detail, fn, done) => { try { const r = await fn(); if (done) DOM.toast(done); return r; } catch (e) { DOM.toast(e.message, true); return undefined; } } };
+  return { g, tab: async (body = new E('div')) => ({ body, read: await UI.scheduleTab(body, ctx) }),
+    btn: (root, text) => root.all((e) => e.tagName === 'BUTTON' && e.textContent === text), label: (root, l) => root.all((e) => e.attrs['aria-label'] === l)[0],
+    rows: (root) => root.all((e) => e.tagName === 'LI' && e.attrs['data-job'] !== undefined), form: (root) => root.all((e) => e.id === 'scheduleform')[0],
+    bad: (root) => root.all((e) => e.className === 'bad'), last: () => toast.kids.at(-1)?.textContent ?? '' };
+}
+
+await t('the 「予約」 tab, the file not read (GitHub down, the network, no right to it): why in the list\'s place (class bad) with 「読み直す」 — never 「読んでいます…」 for good, nor the jobs read before as if they were the file\'s; read again, the list there (fake DOM)', async () => {
+  const { g, tab, btn, rows, bad } = await sayNo([{ id: 'verify-1', workflow: 'verify.yml', every: 'day', at: '03:00', timezone: 'Asia/Tokyo' }]);
+  g.readError = Object.assign(new Error('GitHub: 502 Bad Gateway'), { status: 502 });
+  const { body, read } = await tab();
+  eq(read, undefined, 'not read');
+  ok(!body.textContent.includes('読んでいます') && bad(body).length === 1 && bad(body)[0].textContent.startsWith(`${S.SCHEDULE_FILE} を読めません: GitHub: 502 Bad Gateway`) && btn(bad(body)[0], '読み直す').length === 1, body.textContent);
+  const place = bad(body)[0].parent;
+  g.readError = new TypeError('Failed to fetch');
+  await btn(bad(body)[0], '読み直す')[0].click();
+  ok(bad(body).length === 1 && bad(body)[0].textContent.startsWith(`${S.SCHEDULE_FILE} を読めません: Failed to fetch`), body.textContent);
+  g.readError = null;
+  await btn(bad(body)[0], '読み直す')[0].click();
+  ok(!bad(body).length && rows(body).length === 1 && body.all((e) => e.id === 'schedulelist')[0].parent === place, `read: the list where the reason was → ${body.textContent}`);
+  // read before, not now (「読み直す」 under the list): why in the list's place, not the jobs read before
+  g.readError = Object.assign(new Error('このトークンには、その操作の権限がありません（Resource not accessible by integration）'), { status: 403 });
+  await btn(body, '読み直す')[0].click();
+  ok(!rows(body).length && bad(body).length === 1 && bad(body)[0].textContent.startsWith(`${S.SCHEDULE_FILE} を読めません: このトークンには、その操作の権限がありません`), body.textContent);
+  g.readError = null;
+  await btn(bad(body)[0], '読み直す')[0].click();
+  eq([rows(body).length, bad(body).length], [1, 0]);
+});
+
+await t('the 「予約」 tab, a write GitHub refuses: one whose sha read is no longer the file\'s (409 「does not match」, 409 「is at … but expected …」, 422 「"sha" wasn\'t supplied」) read again, the form closed; any other 409 / 422 (a protected default branch, a ruleset) — the form kept as typed, GitHub\'s own words with what it may be, nothing read again (fake DOM)', async () => {
+  const mine = { id: 'verify-1', workflow: 'verify.yml', inputs: { why: 'w' }, every: 'day', at: '03:00', timezone: 'Asia/Tokyo' };
+  const { g, tab, btn, label, rows, form, last } = await sayNo([mine]);
+  const { body } = await tab(), P = S.SCHEDULE_FILE;
+  await btn(rows(body)[0], '直す')[0].click();
+  label(form(body), 'why').value = 'typed';
+  label(form(body), '時刻').value = '05:00';
+  for (const [status, said] of [[409, 'GitHub: 409 Repository rule violations found\n\nChanges must be made through a pull request.\n\n'], [422, 'GitHub が受け付けません: Protected branch update failed for refs/heads/main.']]) {
+    const reads = g.reads;
+    g.refusal = Object.assign(new Error(said), { status });
+    await btn(form(body), '保存')[0].click();
+    ok(form(body) && label(form(body), 'why').value === 'typed' && label(form(body), '時刻').value === '05:00', `${status}: the form kept as typed`);
+    ok(last().startsWith(said) && last().endsWith('既定の枝が守られているかもしれません（PR が要ります）'), last());
+    eq([g.reads, g.files[P].sha], [reads, 's1'], `${status}: nothing read again, nothing written`);
+  }
+  // (a row's own button: the same — and the form open meanwhile left as it is)
+  g.refusal = Object.assign(new Error('GitHub: 409 Repository rule violations found'), { status: 409 });
+  const reads = g.reads;
+  await btn(rows(body)[0], '止める')[0].click();
+  ok(form(body) && label(form(body), 'why').value === 'typed' && g.reads === reads && /既定の枝が守られているかもしれません/.test(last()), last());
+  // changed elsewhere since it was read — GitHub says the sha does not match: read again, nothing written over, the form closed
+  g.files[P] = { text: JSON.stringify({ version: 1, jobs: [mine, { id: 'theirs', workflow: 'verify.yml', every: 'hour' }] }), sha: 'elsewhere' };
+  await btn(form(body), '保存')[0].click();
+  ok(!form(body) && rows(body).length === 2 && /does not match s1/.test(last()) && !/守られて/.test(last()) && g.files[P].sha === 'elsewhere', last());
+  // (the branch moved under the write: the same)
+  await btn(rows(body)[1], '直す')[0].click();
+  label(form(body), 'why').value = 'x';
+  g.refusal = Object.assign(new Error('GitHub: 409 is at 0123abc but expected 4567def'), { status: 409 });
+  const before = g.reads;
+  await btn(form(body), '保存')[0].click();
+  ok(!form(body) && g.reads === before + 1 && !/守られて/.test(last()), last());
+  // (made elsewhere while it was read as none — GitHub asks for its sha: read again, theirs shown, nothing written over)
+  delete g.files[P];
+  const { body: fresh } = await tab();
+  ok(/まだ予約はありません/.test(fresh.textContent), fresh.textContent);
+  await btn(fresh, '＋ 予約を足す')[0].click();
+  label(form(fresh), 'why').value = 'mine';
+  g.files[P] = { text: JSON.stringify({ version: 1, jobs: [{ id: 'theirs', workflow: 'verify.yml', every: 'hour' }] }), sha: 't1' };
+  await btn(form(fresh), '予約する')[0].click();
+  ok(!form(fresh) && /"sha" wasn't supplied/.test(last()) && rows(fresh).map((r) => r.attrs['data-job']).join() === 'theirs' && g.files[P].sha === 't1', last());
 });
 
 fs.rmSync(TMP, { recursive: true, force: true });
