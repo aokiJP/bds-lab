@@ -1,5 +1,5 @@
 {
-  "$comment": "bds-lab: an AI here needs only Bash (node lab.mjs ...), Read, Write, Edit, Glob, Grep. Every other tool's definition is resent on every turn (measured: 33,065 → 6,146 tokens per turn with the same AGENTS.md). Newer Claude Code tools (tasks, plan mode, questions, cron, worktrees, monitor, LSP, ...) are listed too; a name a version does not have matches nothing. Background commands stay (node lab.mjs bg/wait does the same). The lab's own commands, git and the GitHub CLI run without asking. MCP: none (mcp__*), to keep the tokens down; a GitHub repository is never deleted from here (the PreToolUse hook). To get the other tools back in this folder, delete this file.",
+  "$comment": "bds-lab: an AI here needs only Bash (node lab.mjs ...), Read, Write, Edit, Glob, Grep. Every other tool's definition is resent on every turn (measured: 33,065 → 6,146 tokens per turn with the same AGENTS.md). Newer Claude Code tools (tasks, plan mode, questions, cron, worktrees, monitor, LSP, ...) are listed too; a name a version does not have matches nothing. Background commands stay (node lab.mjs bg/wait does the same). The lab's own commands, git and the GitHub CLI run without asking. MCP: the GitHub server's tools alone (mcp__github__*: pull requests, reviews, CI; loaded only when used, so a few hundred tokens a turn) — every other server is denied by its name, since a deny wins over an allow; a new server that shows up is denied by adding mcp__<its name>. A GitHub repository is never deleted from here (the PreToolUse hook). To get the other tools back in this folder, delete this file.",
   "permissions": {
     "allow": [
       "Bash(node lab.mjs:*)",
@@ -17,7 +17,8 @@
       "Bash(git checkout:*)",
       "Bash(git switch:*)",
       "Bash(git show:*)",
-      "Bash(git rev-parse:*)"
+      "Bash(git rev-parse:*)",
+      "mcp__github__*"
     ],
     "deny": [
       "WebFetch",
@@ -27,7 +28,12 @@
       "TodoWrite",
       "SlashCommand",
       "Workflow",
-      "mcp__*",
+      "mcp__Claude_Docs",
+      "mcp__claude-code-remote",
+      "mcp__remote-devices",
+      "mcp__claude-in-chrome",
+      "mcp__Claude_Browser",
+      "mcp__computer-use",
       "Bash(gh repo delete:*)",
       "Bash(gh api -X DELETE repos/:*)",
       "Bash(gh api -X DELETE /repos/:*)",
