@@ -41,6 +41,13 @@ export function gh({ token, base = 'https://api.github.com', fetchImpl = (...a) 
     if (!r.ok) throw new GhError(r.status, explain(r.status, j?.message ?? text.slice(0, 120)), path);
     return j;
   }
+  // (a repository whose variables GitHub refused this token once — 403: the sign-in lacks Variables — is not asked again: the
+  // same answer, no request, no error in the browser's console every few seconds)
+  const noVars = new Map();
+  async function vars(r, method, rest, body) {
+    if (noVars.has(r)) throw noVars.get(r);
+    try { return await call(method, `/repos/${r}/actions/variables${rest}`, body); } catch (e) { if (e.status === 403) noVars.set(r, e); throw e; }
+  }
   const self = {
     state, call,
     me: () => call('GET', '/user'),
@@ -81,13 +88,13 @@ export function gh({ token, base = 'https://api.github.com', fetchImpl = (...a) 
     /** a run's artifacts, or the repository's newest (expired ones too: GitHub keeps their names) */
     artifacts: async (r, { run, per = 30 } = {}) => (await call('GET', `/repos/${r}/actions/${run ? `runs/${run}/` : ''}artifacts?per_page=${per}`)).artifacts ?? [],
     /** the repository variables' names → [names], null when this token may not look */
-    async variableNames(r) { try { return ((await call('GET', `/repos/${r}/actions/variables?per_page=30`)).variables ?? []).map((v) => v.name); } catch (e) { if (e.status === 403 || e.status === 404) return null; throw e; } },
+    async variableNames(r) { try { return ((await vars(r, 'GET', '?per_page=30')).variables ?? []).map((v) => v.name); } catch (e) { if (e.status === 403 || e.status === 404) return null; throw e; } },
     /** a repository variable's value: null when it is not set (403: this token may not read variables) */
-    async variable(r, name) { try { return (await call('GET', `/repos/${r}/actions/variables/${encodeURIComponent(name)}`)).value ?? null; } catch (e) { if (e.status === 404) return null; throw e; } },
+    async variable(r, name) { try { return (await vars(r, 'GET', `/${encodeURIComponent(name)}`)).value ?? null; } catch (e) { if (e.status === 404) return null; throw e; } },
     /** a repository variable set (made when it is not there yet) */
     async setVariable(r, name, value) {
-      try { return await call('PATCH', `/repos/${r}/actions/variables/${encodeURIComponent(name)}`, { name, value }); }
-      catch (e) { if (e.status === 404) return call('POST', `/repos/${r}/actions/variables`, { name, value }); throw e; }
+      try { return await vars(r, 'PATCH', `/${encodeURIComponent(name)}`, { name, value }); }
+      catch (e) { if (e.status === 404) return vars(r, 'POST', '', { name, value }); throw e; }
     },
     issues: (r) => call('GET', `/repos/${r}/issues?state=open&per_page=100`),
     comments: (r, n, since) => call('GET', `/repos/${r}/issues/${n}/comments?per_page=100${since ? `&since=${encodeURIComponent(since)}` : ''}`),

@@ -40,8 +40,17 @@ export async function setMember(api, slug, login, permission) {
   if (!PERMISSIONS.includes(permission)) throw new Error('役割を選んでください');
   // (a name GitHub does not know: said before anything is sent)
   try { await api.call('GET', `/users/${encodeURIComponent(login)}`); } catch (e) { if (e.status === 404) throw new Error(`${login} という GitHub のユーザーはいません`); throw e; }
-  const r = await api.call('PUT', `/repos/${slug}/collaborators/${encodeURIComponent(login)}`, { permission });
-  return r && r.id ? 'invited' : 'changed';
+  const r = await putCollaborator(api, slug, login, permission);
+  return (r.value && r.value.id ? 'invited' : 'changed') + (r.plain ? '-write' : '');
+}
+/** a collaborator put on a repository with a role → { value, plain }: a person's own repository has no roles (GitHub answers
+ *  422 to one named), so they come in as a collaborator who writes — plain: the role was left out */
+export async function putCollaborator(api, slug, login, permission) {
+  const at = `/repos/${slug}/collaborators/${encodeURIComponent(login)}`;
+  try { return { value: await api.call('PUT', at, { permission }), plain: false }; } catch (e) {
+    if (e.status !== 422 || permission === 'push') throw e;
+    return { value: await api.call('PUT', at, {}), plain: true };
+  }
 }
 export const removeMember = (api, slug, login) => api.call('DELETE', `/repos/${slug}/collaborators/${encodeURIComponent(login)}`);
 export const cancelInvitation = (api, slug, id) => api.call('DELETE', `/repos/${slug}/invitations/${encodeURIComponent(id)}`);

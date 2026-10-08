@@ -292,10 +292,17 @@ export function shortcut(key, tabs) {
   if (key === '0') return tabs[9] ? { tab: tabs[9] } : null;
   return ({ '/': { search: true }, r: { reload: true }, '?': { help: true } })[key] ?? null;
 }
+/** the title an outsider's request to join begins with (an issue on the lab: ui/lend.mjs; the owner's 「メンバー」) */
+export const JOIN_TITLE = '[bds-lab 参加のお願い]';
+/** the open requests to join among the lab's issues (pure) → [{ number, login, body, at, url }] */
+export const joinRequests = (issues = []) => issues.filter((i) => !i.pull_request && String(i.title ?? '').startsWith(JOIN_TITLE))
+  .map((i) => ({ number: i.number, login: i.user?.login ?? String(i.title).slice(JOIN_TITLE.length).trim(), body: String(i.body ?? '').slice(0, 500), at: i.created_at, url: i.html_url }));
 /** what needs doing now, from what the panel read (pure) → [{ level: 'bad' | 'warn' | 'info', text, tab }], the worst first.
  *  health: workflowHealth's; ending: [{ slug, until, days }] a lender's hosts whose last day is near */
-export function todos({ policyErrors = [], version = null, idleAdmins = [], invites = 0, unlisted = [], stale = [], health = [], ending = [] } = {}) {
+export function todos({ policyErrors = [], version = null, idleAdmins = [], invites = 0, unlisted = [], stale = [], health = [], ending = [], joins = 0, noVars = false } = {}) {
   const out = [], add = (level, text, tab = null) => out.push({ level, text, tab });
+  if (joins) add('warn', `参加のお願いが ${joins} 件`, 'members');
+  if (noVars) add('info', 'このサインインでは変数（LAB_HOSTS・LAB_NOTIFY）を読めません: App の権限（actions_variables）か、トークンの Variables: Read and write', 'setup');
   if (policyErrors.length) add('bad', '.github/bds-lab-panel.json が正しくありません: 直すまでパネルは何も許しません', 'members');
   for (const x of health.filter((y) => y.streak >= 2)) add('bad', `${x.name} が ${x.streak} 回続けて失敗しています`, 'runs');
   if (idleAdmins.length) add('warn', `まだいつも貸していない管理者: ${idleAdmins.join('・')}`, 'hosts');

@@ -4,6 +4,7 @@
 import { h, toast, act, link } from './dom.mjs';
 import * as MB from '../lib/members.mjs';
 import * as P from '../lib/policy.mjs';
+import * as M from '../lib/model.mjs';
 
 /** ctx: { api, lab: { slug, repo, role }, me, policy, role, may(action), guarded(action, detail, fn, done), reload(),
  *  lending() (the owner's: the lab's lending forks → { list }, for each administrator's mark) } */
@@ -28,6 +29,15 @@ export function membersTab(body, ctx) {
       m.invitations.map((i) => h('li', { class: 'row' }, h('span', { class: 'grow' }, h('strong', {}, i.login), ' ', h('span', { class: 'chip' }, '招待中'), h('div', { class: 'muted' }, `${MB.PERMISSION_WORDS[i.permission] ?? i.permission}・相手が GitHub の通知かメールで受けると入ります`)),
         h('button', { title: '相手に渡すアドレス（GitHub の通知とメールにも届きます）', onclick: () => copy(MB.invitationUrl(lab.slug), '招待を受けるアドレスを写しました') }, '🔗 アドレス'),
         admin ? h('button', { onclick: () => ctx.guarded('members', { user: i.login, permission: 'none' }, () => MB.cancelInvitation(api, lab.slug, i.id), `${i.login} への招待を取り消しました`).then(load) }, '取り消す') : null))));
+    // (outsiders asking to join — issues on the lab, ui/lend.mjs: invited here with the role chosen above, or closed)
+    if (admin) api.issues(lab.slug).then((is) => {
+      const rq = M.joinRequests(is ?? []);
+      if (!rq.length) return;
+      list.prepend(h('div', { id: 'joins' }, h('h3', {}, `参加のお願い（${rq.length}）`), h('ul', { class: 'plain' }, rq.map((q) => h('li', { class: 'row', 'data-join': q.login },
+        h('span', { class: 'grow' }, h('strong', {}, q.login), ' ', link(q.url, `#${q.number}`), h('div', { class: 'muted' }, q.body)),
+        h('button', { class: 'primary', onclick: async () => { const r = await ctx.guarded('members', { user: q.login, permission: perm.value }, () => MB.setMember(api, lab.slug, q.login, perm.value)); if (r !== undefined) { await api.closeIssue(lab.slug, q.number).catch(() => {}); toast(`${q.login} を「${MB.PERMISSION_WORDS[perm.value]}」で招きました`); load(); } } }, `「${MB.PERMISSION_WORDS[perm.value].split('（')[0]}」で招く`),
+        h('button', { onclick: () => act(() => api.closeIssue(lab.slug, q.number), 'お願いを閉じました').then(load) }, '閉じる'))))));
+    }).catch(() => { /* issues not readable: none shown */ });
     // (each administrator but the owner: lending always from their fork, or not yet — the policy's adminsLend)
     if (ctx.lending && P.adminsLend(ctx.policy)) ctx.lending().then((d) => {
       for (const x of m.members.filter((y) => y.permission === 'admin' && y.login.toLowerCase() !== m.owner.toLowerCase())) {
@@ -43,7 +53,7 @@ export function membersTab(body, ctx) {
       const name = who.value.trim().replace(/^@/, '');
       if (perm.value === 'admin' && !confirm(`${name} を管理者にしますか（メンバー・秘密・設定も変えられるようになります）${P.adminsLend(ctx.policy) ? '。管理者はいつも時間を貸します: 入るとまず自分のフォークで貸し、その全権限をあなたに預けます' : ''}`)) return;
       const r = await ctx.guarded('members', { user: name, permission: perm.value }, () => MB.setMember(api, lab.slug, name, perm.value));
-      if (r !== undefined) { toast(r === 'invited' ? `${name} を招きました（相手が受けると入ります）` : `${name} の役割を変えました`); who.value = ''; load(); }
+      if (r !== undefined) { toast(`${r.startsWith('invited') ? `${name} を招きました（相手が受けると入ります）` : `${name} の役割を変えました`}${r.endsWith('-write') ? '。個人のリポジトリには役割がないので「書き込み」の協力者です（管理者にするなら組織のリポジトリに）' : ''}`); who.value = ''; load(); }
     } }, '招く')) : null,
     list));
   body.append(policyCard(ctx, admin));

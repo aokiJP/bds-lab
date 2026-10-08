@@ -286,6 +286,22 @@ await t('administrators always lend (adminsLend): the rules that lend always, an
   eq(M.todos({}), [], 'nothing to do: nothing said');
 });
 
+await t('fewer errors and outsiders who ask: a role GitHub refuses on a person\'s repository (422) left out; requests to join read from the lab\'s issues; variables GitHub refused once not asked again (pure / fake)', async () => {
+  const MB = await imp('panel/lib/members.mjs'), { gh } = await imp('panel/lib/gh.mjs');
+  const calls = [], api = { call: async (m, p, b) => { calls.push(`${m} ${p} ${JSON.stringify(b)}`); if (b?.permission && b.permission !== 'push') throw Object.assign(new Error('Validation Failed'), { status: 422 }); return { id: 1 }; } };
+  eq(await MB.putCollaborator(api, 'me/lab', 'friend', 'admin'), { value: { id: 1 }, plain: true });
+  eq(calls, ['PUT /repos/me/lab/collaborators/friend {"permission":"admin"}', 'PUT /repos/me/lab/collaborators/friend {}'], 'tried with the role, then without');
+  let e = null; try { await MB.putCollaborator({ call: async () => { throw Object.assign(new Error('x'), { status: 422 }); } }, 'me/lab', 'f', 'push'); } catch (x) { e = x; } ok(e?.status === 422, 'write itself refused: said, not retried');
+  const rq = M.joinRequests([{ number: 3, title: `${M.JOIN_TITLE} lee`, body: 'hi', user: { login: 'lee' }, html_url: 'u' }, { number: 4, title: 'other' }, { number: 5, title: `${M.JOIN_TITLE} x`, pull_request: {} }]);
+  eq(rq.map((x) => [x.number, x.login, x.body]), [[3, 'lee', 'hi']]);
+  eq(M.todos({ joins: 2, noVars: true }).map((x) => [x.level, x.tab]), [['warn', 'members'], ['info', 'setup']]);
+  let n = 0;
+  const g = gh({ token: 't', base: 'https://x', fetchImpl: async () => { n++; return { status: 403, ok: false, headers: { get: () => null }, text: async () => '{"message":"Resource not accessible by integration"}' }; } });
+  ok(await g.variableNames('o/r') === null, 'refused: no names');
+  for (let i = 0; i < 3; i++) { let x = null; try { await g.variable('o/r', 'LAB_HOSTS'); } catch (y) { x = y; } ok(x?.status === 403, 'the same answer'); }
+  eq(n, 1, 'asked GitHub once: no request after a 403 on that repository\'s variables');
+});
+
 await t('the secret sealed as libsodium seals it (crypto_box_seal; vectors from libsodium) and its parts against Node\'s own X25519 and BLAKE2b', () => {
   // (made with libsodium-wrappers 0.7.15: seed keypair from 32 bytes of i+1, ephemeral secret 32 bytes of 100+i; sha256 of the box)
   const V = [['', '1b1b58dd50ea14b60da17b790cd02754d970c9bab864ebb3c0f3016fe51d3f57', '138d5a94edadcd0cb3573cbbad620463cd344c38f5017230d1a0d5eb53a52b7b'],

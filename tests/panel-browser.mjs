@@ -55,7 +55,7 @@ const G = {
     [`${LAB}:.github/bds-lab-panel.json`]: JSON.stringify({ version: 1, adminsLend: true }) },
   // (the organization's lab: its own secrets, variables, Pages, issues; the App made from its manifest)
   corp: { secrets: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID']), vars: {}, pages: null, pagesPut: [], issues: [], comments: {}, labels: [], locks: [], manifests: [], conversions: [] },
-  members: [['author1', 'admin'], ['helper1', 'write'], ['admin2', 'admin']], invites: [], membersPut: [], accepted: [],
+  joinIssues: [], members: [['author1', 'admin'], ['helper1', 'write'], ['admin2', 'admin']], invites: [], membersPut: [], accepted: [],
   dispatched: [], secretsPut: [], filesPut: [], posted: [], secretNames: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID', 'GOOGLE_EMAIL']), vars: { LAB_NOTIFY: 'failures' }, varsPut: [],
   artifacts: [{ id: 31, name: 'bds-addons', size_in_bytes: 1_234_567, expired: false, created_at: iso(now - 3_000_000), workflow_run: { id: 100, head_branch: 'main' } },
     { id: 30, name: 'old-addons', size_in_bytes: 99, expired: true, created_at: iso(now - 90 * 86_400_000), workflow_run: { id: 90, head_branch: 'main' } }],
@@ -145,7 +145,10 @@ async function api(route) {
   const jm = /^\/actions\/runs\/(\d+)\/jobs/.exec(rest); if (jm) return send(200, { jobs: jobs[jm[1]] ?? [] });
   if (/^\/check-runs\/55\/annotations/.test(rest)) return send(200, [{ annotation_level: 'failure', title: '結果とエラー', message: 'FAIL gate: tests/panel-offline.mjs' }]);
   if (rest.startsWith('/pulls')) return send(200, []);
-  if (rest === '/issues') return send(200, [{ number: 7, title: AL.ISSUE_TITLE }]);
+  // (the live issue, and requests to join an outsider opened — anyone may open an issue on a public lab; closed by the owner)
+  if (rest === '/issues' && req.method() === 'POST') { const n = 80 + G.joinIssues.length; G.joinIssues.push({ number: n, title: body.title, body: body.body, user: { login: who.login }, state: 'open', html_url: `https://github.com/${slug}/issues/${n}`, created_at: iso(now) }); return send(201, { number: n }); }
+  if (rest === '/issues') return send(200, [{ number: 7, title: AL.ISSUE_TITLE }, ...G.joinIssues.filter((i) => i.state === 'open')]);
+  const ic = /^\/issues\/(\d+)$/.exec(rest); if (ic && req.method() === 'PATCH') { if (!perm.push) return send(403, { message: 'no' }); const i = G.joinIssues.find((x) => String(x.number) === ic[1]); if (i) i.state = body.state; return send(200, {}); }
   if (/^\/issues\/7\/comments/.test(rest)) { if (req.method() === 'POST') { G.posted.push(body.body); return send(201, { id: 1000 + G.posted.length }); } return send(200, G.comments); }
   return send(404, { message: `Not Found ${rest}` });
 }
@@ -256,6 +259,12 @@ let shots = 0;
 try {
   // a stranger: GitHub gives this token no write on the lab and no host
   await signIn('tok-stranger');
+  // (asking to join: an issue on the lab the owner answers from 「メンバー」)
+  await waitText(/参加をお願いする/);
+  await page.fill('#join textarea', 'テストを手伝いたいです');
+  await page.locator('#join button', { hasText: 'お願いを出す' }).click();
+  await waitText(/お願いを出しました/, 5000);
+  check(G.joinIssues.length === 1 && /^\[bds-lab 参加のお願い\] stranger$/.test(G.joinIssues[0].title) && /手伝いたい/.test(G.joinIssues[0].body), 'a stranger asks to join (an issue on the lab)', JSON.stringify(G.joinIssues));
   check(await waitText(/時間を貸す/) && /書き込める人/.test(await text()) && !/進み具合/.test(await page.locator('body').innerText()) && await page.locator('nav.tabs').count() === 0, 'a token with no write and no host: the lab shut, lending its only door, no tabs', await text());
 
   // a stranger who lends: their own new repository made a host from the page — someone else's never — and then lending is
@@ -268,12 +277,12 @@ try {
   await page.waitForTimeout(500);
   check(/フォークだけ/.test(await page.locator('#toast').innerText()) && !G.filesPut.some((f) => f.slug === 'someone/their-repo'), 'a repository that is not their fork of the lab is never made a host', await page.locator('#toast').innerText());
   await page.fill('#lend input[aria-label="フォーク"]', FORK);
-  await page.fill('#lend input[aria-label="1 か月に貸す分"]', '300');
+  check(await page.locator('#lend input[aria-label="1 か月に貸す分"]').isDisabled() && await page.locator('#lend input[aria-label="最後の日"]').isDisabled(), 'whoever lends, lends for good: the minutes and the last day fixed', '');
   await page.locator('#lend button', { hasText: 'フォークで貸す' }).click();
   await waitText(/貸す条件（あなたのホスト）/, 8000);
   const made = G.filesPut.filter((f) => f.slug === FORK).map((f) => f.f);
   const tabsNow = await page.locator('nav.tabs button').allInnerTexts();
-  check(JSON.stringify(forkSide.synced) === '["main"]' && JSON.stringify(made) === '[".lab-host.json"]' && JSON.parse(G.files[`${FORK}:.lab-host.json`]).minutesPerMonth === 300, 'their fork made a host: brought up to the lab (host.yml as the lab has it), their rules written — nothing else', JSON.stringify({ synced: forkSide.synced, made }));
+  check(JSON.stringify(forkSide.synced) === '["main"]' && JSON.stringify(made) === '[".lab-host.json"]' && JSON.parse(G.files[`${FORK}:.lab-host.json`]).minutesPerMonth === 50000 && !JSON.parse(G.files[`${FORK}:.lab-host.json`]).until, 'their fork made a host: brought up to the lab (host.yml as the lab has it), their rules written — nothing else', JSON.stringify({ synced: forkSide.synced, made }));
   check(JSON.stringify(forkSide.toggled) === JSON.stringify(['enable 31', 'disable 32']), 'only host.yml runs in their fork: the lab\'s own CI off there', JSON.stringify(forkSide.toggled));
   check(JSON.stringify(tabsNow) === JSON.stringify(['概要', '貸し借り', '設定']) && /貸し手/.test(await text()) && /のフォーク/.test(await text()), 'then a lender: lending is all there is (no runs, secrets, members …)', JSON.stringify(tabsNow));
   await page.locator('#who button', { hasText: '出る' }).click();
@@ -434,7 +443,7 @@ try {
   check(await waitText(/helper1/) && await page.locator('[data-member="author1"] select').isDisabled() && /持ち主/.test(await text()), 'the lab\'s people: the owner (not changeable here), a writer', await text());
   await page.locator('#tabbody input[aria-label="招く人"]').fill('friend1');
   await page.selectOption('#tabbody select[aria-label="役割"]', 'admin');
-  await page.locator('#tabbody button', { hasText: '招く' }).click();
+  await page.locator('#tabbody button', { hasText: /^招く$/ }).click();
   await waitText(/friend1/, 5000);
   await page.selectOption('[data-member="helper1"] select', 'pull');
   await page.waitForTimeout(600);
@@ -443,6 +452,11 @@ try {
   await page.locator('[data-preset="team"]').click();
   check(await page.locator('table input[aria-label="maintain: variables"]').isChecked() && !await page.locator('table input[aria-label="maintain: secrets.put"]').isChecked() && await page.locator('table input[aria-label="write: hostrun"]').isChecked() && !G.filesPut.some((f) => /bds-lab-panel/.test(JSON.stringify(f))), 'a ready-made grid in one tap, not saved until asked', JSON.stringify(G.filesPut));
   check(await page.locator('#tabbody button', { hasText: '🔗 アドレス' }).count() >= 1, 'an invitation\'s address to pass along');
+  // the stranger's request to join: invited from it with the role chosen, the request closed
+  await page.selectOption('#tabbody select[aria-label="役割"]', 'push');
+  await page.locator('[data-join="stranger"] button', { hasText: '招く' }).click();
+  await page.waitForTimeout(800);
+  check(G.membersPut.includes('stranger=push') && G.joinIssues[0].state === 'closed', 'a request to join answered: invited, closed', JSON.stringify({ put: G.membersPut, st: G.joinIssues[0].state }));
   // the owner: each administrator's lending in the members; the forks that lend, an invitation from one taken here, that fork
   // brought up to the lab from here — and one whose say is not taken yet: said so, nothing done
   await page.waitForSelector('[data-lending="admin2"]', { timeout: 8000 });
@@ -450,7 +464,7 @@ try {
   await tab('貸し借り');
   await page.waitForSelector(`#forks [data-fork="${FORK2}"]`, { timeout: 8000 });
   const f2 = await page.locator(`#forks [data-fork="${FORK2}"]`).innerText(), f1 = await page.locator(`#forks [data-fork="${FORK}"]`).innerText();
-  check(/管理者/.test(f2) && /⏱ いつも/.test(f2) && /LAB_HOSTS/.test(f2) && /いつもではない/.test(f1) && !/管理者/.test(f1), 'the owner\'s forks: the administrator\'s always and in LAB_HOSTS; a stranger\'s as they chose', `${f2}\n${f1}`);
+  check(/管理者/.test(f2) && /⏱ いつも/.test(f2) && /LAB_HOSTS/.test(f2) && /⏱ いつも/.test(f1) && !/管理者/.test(f1), 'the owner\'s forks: the administrator\'s always and in LAB_HOSTS; a stranger\'s as they chose', `${f2}\n${f1}`);
   await page.locator(`#forks [data-invite="${FORK2}"] button`, { hasText: '受ける' }).click();
   await page.waitForTimeout(800);
   check(G.accepted.includes(FORK2) && await page.locator(`#forks [data-invite="${FORK2}"]`).count() === 0, 'the fork\'s invitation taken from the panel: its say held', JSON.stringify(G.accepted));

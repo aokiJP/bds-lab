@@ -449,10 +449,12 @@ function todoCard() {
   const box = h('div', { class: 'card', id: 'todo' }, h('h2', {}, 'いまやること'), h('p', { class: 'muted' }, '見ています…'));
   act(async () => {
     const owner = isOwner(), admin = st.lab.role === 'admin', name = st.lab.slug.split('/')[1];
-    const [forks, inv, secrets, runs, listed] = await Promise.all([owner ? forkLendingNow().catch(() => null) : null, owner ? st.api.myInvitations().catch(() => null) : null,
-      admin ? st.api.secrets(st.lab.slug).catch(() => null) : null, st.api.runs(st.lab.slug, { per: 50 }).catch(() => []), owner ? st.api.variable(st.lab.slug, 'LAB_HOSTS').catch(() => null) : null]);
+    let noVars = false;
+    const [forks, inv, secrets, runs, listed, issues] = await Promise.all([owner ? forkLendingNow().catch(() => null) : null, owner ? st.api.myInvitations().catch(() => null) : null,
+      admin ? st.api.secrets(st.lab.slug).catch(() => null) : null, st.api.runs(st.lab.slug, { per: 50 }).catch(() => []),
+      admin ? st.api.variable(st.lab.slug, 'LAB_HOSTS').catch((e) => { noVars = e.status === 403; return null; }) : null, admin ? st.api.issues(st.lab.slug).catch(() => []) : []]);
     const inList = new Set(M.labHostsWith(listed).toLowerCase().split(' ')), today = Date.now();
-    const items = M.todos({ policyErrors: st.policyErrors, version: st.version, idleAdmins: forks?.idle ?? [],
+    const items = M.todos({ policyErrors: st.policyErrors, version: st.version, idleAdmins: forks?.idle ?? [], joins: M.joinRequests(issues ?? []).length, noVars,
       invites: (inv ?? []).filter((i) => i.repository?.fork && M.same(i.repository?.name, name)).length,
       unlisted: (forks?.list ?? []).filter((x) => x.rules && !inList.has(x.slug.toLowerCase())).map((x) => x.slug),
       stale: (secrets ?? []).filter((x) => M.secretAge(x.updated_at).stale).map((x) => x.name), health: M.workflowHealth(runs ?? []),
@@ -816,10 +818,10 @@ function hostCard(x, brief = false) {
   return card;
 }
 function lenderForm(x) {
-  // (an administrator's own fork: always lent — its time zone and contact alone are theirs to change)
-  if (st.adminLend?.required && M.same(x.slug, st.adminLend.fork)) {
+  // (a fork of the lab: lent for good — whoever lends, an administrator or not; its time zone and contact alone are theirs)
+  if (M.same(M.forkOf(x.repo), st.lab?.slug ?? settings().lab) || (st.adminLend?.required && M.same(x.slug, st.adminLend.fork))) {
     const tz = h('input', { type: 'text', value: x.json.timezone ?? 'UTC', 'aria-label': '時間帯の地域' }), contact = h('input', { type: 'text', value: x.json.contact ?? '', 'aria-label': '連絡先' });
-    return h('div', {}, h('h3', {}, '貸す条件（管理者: いつも）'), h('p', { class: 'muted' }, `全部の仕事・一日中・期限なし・1 か月 ${M.ALWAYS_MINUTES} 分（public のフォークは標準のランナーの分が掛かりません）。止めるときは、持ち主に管理者を外してもらいます。`),
+    return h('div', {}, h('h3', {}, '貸す条件（ずっと）'), h('p', { class: 'muted' }, `全部の仕事・一日中・期限なし・1 か月 ${M.ALWAYS_MINUTES} 分（public のフォークは標準のランナーの分が掛かりません）。貸す人はずっと貸します: 止めるボタンはありません。`),
       h('label', {}, '時間帯の地域'), tz, h('label', {}, '連絡先'), contact,
       h('div', { class: 'row' }, h('button', { class: 'primary', onclick: () => act(async () => { await lendFork(st.api, { slug: x.slug, me: st.me.login, labSlug: st.lab.slug, rules: M.alwaysRules(tz.value.trim(), contact.value.trim()) }); const i = st.hosts.findIndex((y) => y.slug === x.slug); st.hosts[i] = await loadHost(x.slug); render(); }, '保存しました（いつも貸します）') }, '保存')));
   }
@@ -879,7 +881,7 @@ function forksCard() {
         listed.has(x.slug.toLowerCase()) ? h('span', { class: 'chip' }, 'LAB_HOSTS') : null,
         h('div', { class: 'muted' }, x.rules ? `1 か月 ${x.rules.minutesPerMonth} 分・${x.rules.jobs.join(' ')}・${x.rules.hours}${x.rules.until ? `・${x.rules.until} まで` : ''}${d.files[x.slug]?.hostYmlOk ? '' : '・host.yml がラボと違う'}` : x.errors.join(' / '), x.always.ok ? '' : `（${x.always.why.join(' / ')}）`)),
       h('button', { onclick: () => act(sync(x.slug), `${x.slug} をラボに合わせました（動くのは host.yml だけ）`).then(draw) }, '🔄 合わせる'),
-      x.admin && !x.always.ok ? h('button', { onclick: () => act(setAlways(x), `${x.slug} をいつも貸すにしました`).then(draw) }, '⏱ いつも貸すに') : null,
+      !x.always.ok ? h('button', { onclick: () => act(setAlways(x), `${x.slug} をずっと貸すにしました`).then(draw) }, '⏱ ずっと貸すに') : null,
       listed.has(x.slug.toLowerCase()) ? h('button', { ...gate('variables'), onclick: () => guarded('variables', { name: 'LAB_HOSTS' }, () => addLabHost(x.slug, true), `${x.slug} を LAB_HOSTS から外しました`).then(draw) }, 'LAB_HOSTS から外す')
         : h('button', { ...gate('variables'), onclick: () => guarded('variables', { name: 'LAB_HOSTS' }, () => addLabHost(x.slug), `${x.slug} を LAB_HOSTS に入れました（hostrun の auto が選びます）`).then(draw) }, 'LAB_HOSTS に入れる')));
     box.replaceChildren(
