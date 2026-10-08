@@ -18,6 +18,8 @@ const ok = (c, m) => { if (!c) throw new Error(m); };
 const hand = (j) => Buffer.from(typeof j === 'string' ? j : JSON.stringify(j)).toString('base64url');
 const TOK = { access_token: 'ghu_A1', expires_in: 28800, refresh_token: 'ghr_R1', refresh_token_expires_in: 15811200, token_type: 'bearer' };
 const AUTH = 'https://auth.test';
+// (the nonce this tab kept when it began the sign-in, and the same left in the panel's own # — the service hands it back)
+const NONCE = 'NonceNonceNonce01', MINE = `bdslab-nonce=${NONCE}&`, KEPT = { nonce: NONCE };
 
 await t('loginUrl: the service\'s /login with the panel\'s address to return to (its route kept, an old handoff dropped, this tab\'s nonce added), the account picker and a login hint when asked; an address that is not https is refused (pure)', () => {
   const u = new URL(S.loginUrl(`${AUTH}/`, { returnTo: 'https://o.github.io/bds-lab/#runs?repo=o/r&run=5&bdslab-auth=old&bdslab-nonce=old0000000000000', select: true, login: 'author1', nonce: 'NonceNonceNonce01' }));
@@ -34,27 +36,38 @@ await t('loginUrl: the service\'s /login with the panel\'s address to return to 
 });
 
 await t('takeHandoff: the tokens from the #, the rest of the # (the panel\'s own route) handed back; an error word; nothing of ours → null (pure)', () => {
-  eq(S.takeHandoff(`#bdslab-auth=${hand(TOK)}`), { tokens: TOK, rest: '' });
+  eq(S.takeHandoff(`#${MINE}bdslab-auth=${hand(TOK)}`, KEPT), { tokens: TOK, rest: '' });
   eq(S.takeHandoff(`#runs?repo=o/r&run=5&bdslab-nonce=NonceNonceNonce01&bdslab-auth=${hand(TOK)}`, { nonce: 'NonceNonceNonce01' }), { tokens: TOK, rest: '#runs?repo=o/r&run=5' });
-  eq(S.takeHandoff(`overview&bdslab-auth=${hand({ access_token: 'ghu_noexpiry' })}`), { tokens: { access_token: 'ghu_noexpiry', expires_in: null, refresh_token: null, refresh_token_expires_in: null, token_type: 'bearer' }, rest: '#overview' }, 'a token that never runs out (the App\'s expiry off)');
-  eq(S.takeHandoff('#overview&bdslab-auth-error=denied'), { error: 'denied', rest: '#overview' });
-  eq(S.takeHandoff('#bdslab-auth-error=<script>'), { error: 'unknown', rest: '' }, 'an error word of another shape: unknown');
-  eq(S.takeHandoff(`#bdslab-auth=${hand({ ...TOK, scope: 'repo', extra: 'x' })}`).tokens, TOK, 'only the five fields');
-  for (const h of ['', '#', '#runs?repo=o/r', '#bdslab-authx=1', '#xbdslab-auth=1', null, undefined]) eq(S.takeHandoff(h), null, String(h));
+  eq(S.takeHandoff(`overview&${MINE}bdslab-auth=${hand({ access_token: 'ghu_noexpiry' })}`, KEPT), { tokens: { access_token: 'ghu_noexpiry', expires_in: null, refresh_token: null, refresh_token_expires_in: null, token_type: 'bearer' }, rest: '#overview' }, 'a token that never runs out (the App\'s expiry off)');
+  eq(S.takeHandoff(`#overview&${MINE}bdslab-auth-error=denied`, KEPT), { error: 'denied', rest: '#overview' });
+  eq(S.takeHandoff(`#${MINE}bdslab-auth-error=<script>`, KEPT), { error: 'unknown', rest: '' }, 'an error word of another shape: unknown');
+  eq(S.takeHandoff(`#${MINE}bdslab-auth=${hand({ ...TOK, scope: 'repo', extra: 'x' })}`, KEPT).tokens, TOK, 'only the five fields');
+  for (const h of ['', '#', '#runs?repo=o/r', '#bdslab-authx=1', '#xbdslab-auth=1', `#${MINE}runs`, null, undefined]) { eq(S.takeHandoff(h), null, String(h)); eq(S.takeHandoff(h, KEPT), null, String(h)); }
 });
 
-await t('takeHandoff refuses: broken base64 or JSON, no access token, another token type, a token of a strange shape, two handoffs, over 8 KB, and — when the panel says which nonce it kept — one without it (pure)', () => {
+await t('takeHandoff takes nothing this tab did not begin: with no opts, no nonce kept, or another, every handoff — tokens or an error word, a nonce in the # or none — is { error: \'nonce\' } (login CSRF; pure)', () => {
+  const tok = `#bdslab-auth=${hand(TOK)}`, withNonce = `#overview&${MINE}bdslab-auth=${hand(TOK)}`, word = `#${MINE}bdslab-auth-error=denied`;
+  eq(S.takeHandoff(tok), { error: 'nonce', rest: '' }, 'no opts: a link made elsewhere');
+  eq(S.takeHandoff(withNonce), { error: 'nonce', rest: '#overview' }, 'no opts, though the # names a nonce');
+  for (const o of [{}, { nonce: null }, { nonce: undefined }, { nonce: '' }, { nonce: 'short' }, { nonce: 'NonceNonceNonce02' }, null]) {
+    for (const h of [tok, withNonce, word]) eq(S.takeHandoff(h, o)?.error, 'nonce', `${JSON.stringify(o)} ${h.slice(0, 30)}`);
+  }
+  eq(S.takeHandoff(withNonce, KEPT), { tokens: TOK, rest: '#overview' }, 'the very nonce this tab kept: taken');
+  eq(S.takeHandoff(tok, KEPT), { error: 'nonce', rest: '' }, 'this tab began one, but the # has no nonce');
+});
+
+await t('takeHandoff refuses: broken base64 or JSON, no access token, another token type, a token of a strange shape, two handoffs, over 8 KB, and one without the nonce the panel kept (pure)', () => {
   const err = (h, o) => S.takeHandoff(h, o)?.error;
-  eq(err('#bdslab-auth=***'), 'broken');
-  eq(err(`#bdslab-auth=${hand('not json')}`), 'broken');
-  eq(err(`#bdslab-auth=${hand('[1]')}`), 'broken');
-  eq(err(`#bdslab-auth=${Buffer.from([0xff, 0xfe, 0x7b]).toString('base64url')}`), 'broken', 'not UTF-8');
-  eq(err(`#bdslab-auth=${hand({ ...TOK, access_token: '' })}`), 'broken');
-  eq(err(`#bdslab-auth=${hand({ ...TOK, access_token: 'has space' })}`), 'broken');
-  eq(err(`#bdslab-auth=${hand({ ...TOK, token_type: 'mac' })}`), 'broken');
-  eq(err(`#bdslab-auth=${hand({ ...TOK, access_token: 'ghu_EVIL' })}&bdslab-auth=${hand(TOK)}`), 'broken', 'two handoffs: neither');
-  eq(err(`#bdslab-auth=${hand(TOK)}&bdslab-auth-error=denied`), 'broken');
-  const big = S.takeHandoff(`#overview&bdslab-auth=${hand({ ...TOK, access_token: `ghu_${'x'.repeat(2000)}`, pad: 'y'.repeat(6000) })}`);
+  eq(err(`#${MINE}bdslab-auth=***`, KEPT), 'broken');
+  eq(err(`#${MINE}bdslab-auth=${hand('not json')}`, KEPT), 'broken');
+  eq(err(`#${MINE}bdslab-auth=${hand('[1]')}`, KEPT), 'broken');
+  eq(err(`#${MINE}bdslab-auth=${Buffer.from([0xff, 0xfe, 0x7b]).toString('base64url')}`, KEPT), 'broken', 'not UTF-8');
+  eq(err(`#${MINE}bdslab-auth=${hand({ ...TOK, access_token: '' })}`, KEPT), 'broken');
+  eq(err(`#${MINE}bdslab-auth=${hand({ ...TOK, access_token: 'has space' })}`, KEPT), 'broken');
+  eq(err(`#${MINE}bdslab-auth=${hand({ ...TOK, token_type: 'mac' })}`, KEPT), 'broken');
+  eq(err(`#${MINE}bdslab-auth=${hand({ ...TOK, access_token: 'ghu_EVIL' })}&bdslab-auth=${hand(TOK)}`, KEPT), 'broken', 'two handoffs: neither');
+  eq(err(`#${MINE}bdslab-auth=${hand(TOK)}&bdslab-auth-error=denied`, KEPT), 'broken');
+  const big = S.takeHandoff(`#overview&${MINE}bdslab-auth=${hand({ ...TOK, access_token: `ghu_${'x'.repeat(2000)}`, pad: 'y'.repeat(6000) })}`, KEPT);
   eq(big, { error: 'too_big', rest: '#overview' });
   const n = 'NonceNonceNonce01', good = `#bdslab-nonce=${n}&bdslab-auth=${hand(TOK)}`;
   eq(S.takeHandoff(good, { nonce: n }).tokens, TOK, 'the nonce this tab kept');

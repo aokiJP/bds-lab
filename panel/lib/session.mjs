@@ -63,8 +63,9 @@ export function cleanTokens(j) {
   return { access_token: j.access_token, expires_in: num(j.expires_in), refresh_token: TOKEN.test(String(j.refresh_token ?? '')) ? j.refresh_token : null, refresh_token_expires_in: num(j.refresh_token_expires_in), token_type: 'bearer' };
 }
 /** the address's # → { tokens, rest } / { error, rest } / null when no handoff is in it (pure). rest: the # without ours
- *  (the panel's own route), '' when nothing is left. Broken, doubled or over 8 KB: an error. With { nonce } (the one this
- *  tab kept — null when it began none), a handoff without that very nonce is refused: a link made elsewhere signs nobody in */
+ *  (the panel's own route), '' when nothing is left. Broken, doubled or over 8 KB: an error. opts.nonce: the one this tab
+ *  kept when it began a sign-in — always needed: without it (no opts, null: this tab began none) or with another, every
+ *  handoff is { error: 'nonce' }: a link made elsewhere signs nobody in (login CSRF) */
 export function takeHandoff(hash, opts = {}) {
   const s = String(hash ?? '').replace(/^#/, '');
   if (!/(^|&)bdslab-auth(-error)?=/.test(s)) return null;
@@ -73,7 +74,7 @@ export function takeHandoff(hash, opts = {}) {
   if (s.length > MAX) return { error: 'too_big', rest };
   const got = of('bdslab-auth'), bad = of('bdslab-auth-error'), nonce = of('bdslab-nonce');
   if (got.length + bad.length !== 1 || nonce.length > 1) return { error: 'broken', rest };
-  if ('nonce' in opts && !(typeof opts.nonce === 'string' && NONCE.test(opts.nonce) && nonce[0] === opts.nonce)) return { error: 'nonce', rest };
+  if (!(typeof opts?.nonce === 'string' && NONCE.test(opts.nonce) && nonce[0] === opts.nonce)) return { error: 'nonce', rest };
   if (bad.length) return { error: /^[a-z_]{1,32}$/.test(bad[0]) ? bad[0] : 'unknown', rest };
   if (!/^[A-Za-z0-9_-]+$/.test(got[0])) return { error: 'broken', rest };
   let j; try { j = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(unb64url(got[0]))); } catch { return { error: 'broken', rest }; }
