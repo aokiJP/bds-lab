@@ -415,7 +415,7 @@ async function runCmd(args, out) {
 async function ciCmd(out) {
   const E = process.env;
   if (!E.GITHUB_ACTIONS && !E.LAB_HOST_CI) throw new Error('host ci は hostrun.yml の中で（手元からは node lab.mjs host run）');
-  if (!E.GH_TOKEN) throw new Error('秘密 LAB_HOST_TOKEN がありません: ホストに push でき、ワークフローを始められるあなたのトークン（Classic: repo・workflow / Fine-grained: ホストの Contents・Actions・Workflows を Read and write）を、ラボの Secrets に（管理パネルの「秘密」から）');
+  if (!E.GH_TOKEN) throw new Error('ホストへのトークンがありません: 貸し手にラボの GitHub App をホストへ入れてもらう（管理パネルの「準備」のリンク。host は名前で: auto では App を使いません）か、秘密 LAB_HOST_TOKEN（ホストに push でき、ワークフローを始められるあなたのトークン。Classic: repo・workflow / Fine-grained: ホストの Contents・Actions・Workflows を Read and write）を、ラボの Secrets に');
   const job = String(E.HOST_JOB ?? '').trim(), unit = String(E.HOST_UNIT ?? '').trim(), on = String(E.HOST_ON || 'auto').trim(), wait = !/^(false|0|no)$/i.test(String(E.HOST_WAIT ?? ''));
   const list = on === 'auto' ? String(E.LAB_HOSTS ?? '').split(/[\s,]+/).filter(Boolean) : [on];
   if (!list.length) throw new Error('ホストがありません: HOST_ON に owner/repo を、または変数 LAB_HOSTS にホストの一覧を（管理パネルの「実行」）');

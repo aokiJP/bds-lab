@@ -1,0 +1,48 @@
+name: auth-deploy
+# The sign-in service (auth/: a small Cloudflare Worker) put in place — the one piece of the management panel GitHub cannot
+# host: it finishes "Sign in with GitHub" (the code exchanged with the GitHub App's client secret, which a page may not hold)
+# and hands the person's token to the panel. Started by the panel's 「準備」 (or Run workflow here); run it again after the
+# GitHub App is made (its secrets go in then). Needs, once (the panel sets them, sealed in the page):
+#   CLOUDFLARE_API_TOKEN   a Cloudflare API token that may edit Workers (template "Edit Cloudflare Workers")
+#   CLOUDFLARE_ACCOUNT_ID  the Cloudflare account's id
+# and, from the GitHub App: variable APP_CLIENT_ID, secrets APP_CLIENT_SECRET and AUTH_STATE_SECRET. Which pages may use it:
+# variable LAB_PANEL_ORIGINS (default: this repository's own GitHub Pages, its path included — not the owner's other
+# repositories' pages on the same github.io). Its address is printed as the notice "auth-url"; the panel reads it into the
+# variable LAB_AUTH_URL. On a server of your own instead: auth/README.md (Docker).
+on:
+  workflow_dispatch:
+permissions: { contents: read }
+concurrency: { group: auth-deploy, cancel-in-progress: false }
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version: 22 }
+      - name: Cloudflare Workers に置く
+        working-directory: auth
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLIENT_ID: ${{ vars.APP_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.APP_CLIENT_SECRET }}
+          STATE_SECRET: ${{ secrets.AUTH_STATE_SECRET }}
+          ORIGINS: ${{ vars.LAB_PANEL_ORIGINS }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then echo "::error title=auth-deploy::秘密 CLOUDFLARE_API_TOKEN と CLOUDFLARE_ACCOUNT_ID が要ります（管理パネルの「準備」）"; exit 1; fi
+          origins="${ORIGINS:-https://$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]').github.io/$REPO/}"
+          W="npx --yes wrangler@4.148.0"
+          $W deploy --var "PANEL_ORIGINS:$origins" --var "GITHUB_CLIENT_ID:${CLIENT_ID:-}" | tee deploy.log
+          # (the App's secrets: only once the App is made; through stdin, never on the command line or in the log)
+          if [ -n "$CLIENT_SECRET" ]; then printf '%s' "$CLIENT_SECRET" | $W secret put GITHUB_CLIENT_SECRET > /dev/null; fi
+          if [ -n "$STATE_SECRET" ]; then printf '%s' "$STATE_SECRET" | $W secret put STATE_SECRET > /dev/null; fi
+          url="$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' deploy.log | head -1 || true)"
+          if [ -z "$url" ]; then echo "::warning title=auth-url::置きましたが、アドレスを読めませんでした（Cloudflare の画面で Workers → bds-lab-auth）"; exit 0; fi
+          echo "::notice title=auth-url::$url"
+          { echo "## サインインのサービス"; echo; echo "$url（パネルの「準備」が変数 LAB_AUTH_URL に入れます）"; [ -n "$CLIENT_SECRET" ] || echo "（App はまだ: App を作ったあと、もう一度これを走らせます）"; } >> "$GITHUB_STEP_SUMMARY"

@@ -52,3 +52,7 @@ input[type=radio] { width: 20px; height: 20px; margin: 0; flex: none; }
 .files { margin-top: 8px; display: grid; gap: 6px; }
 .files .chip { margin: 2px 4px 2px 0; }
 [hidden] { display: none !important; }
+details > summary { cursor: pointer; margin: 10px 0 4px; color: var(--muted); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; display: block; overflow-x: auto; }
+th, td { border-top: 1px solid var(--line); padding: 5px 6px; text-align: left; vertical-align: top; }
+th { color: var(--muted); font-weight: normal; }

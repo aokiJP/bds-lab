@@ -1,10 +1,13 @@
 name: pages
 # The management panel (panel/) on GitHub Pages: https://<owner>.github.io/<repo>/ — a static page. It shows and does
-# nothing without the visitor's own GitHub token, and then only what GitHub lets that token do (README「管理パネル」).
-# Once: Settings → Pages → Build and deployment → Source: GitHub Actions. Only the default branch deploys.
+# nothing until the visitor signs in (「GitHub でサインイン」 through the lab's GitHub App, or a token), and then only what GitHub
+# lets that person do (README「管理パネル」). What the page must know before anyone signs in is written in here from the
+# repository's variables (common/panel-config.mjs): the sign-in service (LAB_AUTH_URL, also let into the page's CSP) and the
+# App (APP_SLUG, APP_CLIENT_ID). Once: Settings → Pages → Source: GitHub Actions (the panel's 「準備」 can do it). Only the
+# default branch deploys; run it again after those variables change (the panel's 「準備」 does).
 on:
   push:
-    paths: ['panel/**', '.github/workflows/pages.yml']
+    paths: ['panel/**', 'common/panel-config.mjs', '.github/workflows/pages.yml']
   workflow_dispatch:
 permissions: { contents: read, pages: write, id-token: write }
 concurrency: { group: pages, cancel-in-progress: true }
@@ -17,8 +20,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version: 22 }
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: パネルに設定を（サインインのサービス・App）
+        env:
+          LAB_AUTH_URL: ${{ vars.LAB_AUTH_URL }}
+          APP_SLUG: ${{ vars.APP_SLUG }}
+          APP_CLIENT_ID: ${{ vars.APP_CLIENT_ID }}
+        run: node common/panel-config.mjs _site
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
-        with: { path: panel }
+        with: { path: _site }
       - id: deploy
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

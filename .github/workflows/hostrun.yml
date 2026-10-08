@@ -5,7 +5,8 @@ name: hostrun
 # waits for it: the host's result becomes this run's result, summary and artifact (a go's .mcaddon in it), so notify tells
 # your Discord. The minutes are the lender's (the host's owner), within their .lab-host.json; GitHub's own count of the
 # host's runs this month is what stops it at 80%. Waiting runs on this repository's Actions (free for a public one).
-# Needs, once (the panel's 「秘密」 sets it):
+# Needs, once: the lab's GitHub App (the panel's 「準備」 makes it: variable APP_ID, secret APP_PRIVATE_KEY) installed by the
+# lender on the host — then nobody's own token is used (common/ghapp.mjs: an hour, that host only). Without it:
 #   LAB_HOST_TOKEN   your own token that can push to the host and start its workflows — Classic: repo + workflow;
 #                    Fine-grained: the host's Contents, Actions and Workflows: Read and write (a fine-grained token reaches
 #                    only one owner's repositories: a host in another person's account takes a classic one)
@@ -43,9 +44,19 @@ jobs:
         with: { persist-credentials: false }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with: { node-version: 22 }
+      # the lab's GitHub App, when the lender installed it on the host: an hour's token for that host alone (no one's own
+      # token); not installed there (or host: auto) → LAB_HOST_TOKEN as before
+      - name: App のトークン（ホストに App が入っていれば）
+        if: vars.APP_ID != '' && inputs.host != 'auto'
+        continue-on-error: true
+        env:
+          APP_ID: ${{ vars.APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+          HOST_ON: ${{ inputs.host }}
+        run: node common/ghapp.mjs token "$HOST_ON" --perm contents=write --perm actions=write --perm workflows=write --env APP_TOKEN
       - name: ホストで走らせる
         env:
-          GH_TOKEN: ${{ secrets.LAB_HOST_TOKEN }}
+          GH_TOKEN: ${{ env.APP_TOKEN || secrets.LAB_HOST_TOKEN }}
           LAB_HOSTS: ${{ vars.LAB_HOSTS }}
           HOST_ON: ${{ inputs.host }}
           HOST_JOB: ${{ inputs.job }}

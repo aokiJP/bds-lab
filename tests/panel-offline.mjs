@@ -243,10 +243,10 @@ await t('the GitHub client: the token as a bearer, workflow dispatch and secret 
   ok(/権限がありません/.test(G.explain(403, 'x')) && /回数の上限/.test(G.explain(403, 'API rate limit exceeded')) && /見つからない/.test(G.explain(404)), 'errors in words');
 });
 
-await t('the page: its CSP allows GitHub\'s API alone and its own scripts; no inline script or style; text is never parsed as HTML', () => {
+await t('the page: its CSP allows GitHub\'s API alone (and its own config; pages.yml adds the sign-in service), its own scripts, a form to GitHub only; no inline script or style; text is never parsed as HTML', () => {
   const html = fs.readFileSync(path.join(TOP, 'panel', 'index.html'), 'utf8'), js = fs.readFileSync(path.join(TOP, 'panel', 'panel.js'), 'utf8');
   const csp = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(html)?.[1] ?? '';
-  ok(/default-src 'none'/.test(csp) && /script-src 'self';/.test(csp) && /connect-src https:\/\/api\.github\.com;/.test(csp) && !/unsafe/.test(csp), csp);
+  ok(/default-src 'none'/.test(csp) && /script-src 'self';/.test(csp) && /connect-src 'self' https:\/\/api\.github\.com;/.test(csp) && /form-action https:\/\/github\.com$/.test(csp) && !/unsafe/.test(csp), csp);
   ok(!/<script>(?!\s*<\/script>)/.test(html) && !/ style="/.test(html) && !/ on\w+="/.test(html), 'no inline script, style or handler in the page');
   for (const f of ['panel.js', ...['lib', 'ui'].flatMap((d) => (fs.existsSync(path.join(TOP, 'panel', d)) ? fs.readdirSync(path.join(TOP, 'panel', d)).map((x) => `${d}/${x}`) : []))]) {
     const src = fs.readFileSync(path.join(TOP, 'panel', f), 'utf8');
