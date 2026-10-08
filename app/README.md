@@ -167,6 +167,25 @@ node lab.mjs app screen                   # 押した結果を見る
 | `background` / `foreground` | ホームへ出る / ゲームへ戻る（戻った後の画面・UI の状態） |
 | `trim <RUNNING_CRITICAL\|COMPLETE\|…>` | Android がメモリ不足をゲームに知らせる（後始末と、その後の画面） |
 
+ゲームを人のように遊ぶ手順（ワールドの中で。端末に挿したコントローラーのスティック・トリガー・ボタンを押したまま動かす。
+`app/lib/play.mjs`。スティックとトリガーはコントローラー（root）が要ります: エミュレータ・redroid・root のある端末）:
+
+| 手順 | すること |
+|---|---|
+| `walk <forward\|back\|left\|right>… [秒]` | 歩く（左スティック。`walk forward left 2` で斜め。既定 1 秒） |
+| `sprint [秒]` | 前へ走る（左スティック + L3） |
+| `jump [forward\|back\|left\|right] [秒]` | 跳ぶ（A）/ その向きへ跳びながら進む（段差を登る） |
+| `look <left\|right\|up\|down> [ミリ秒] [強さ%]` | 視点を回す（右スティック。既定 300 ミリ秒・100%）。向きをきっちり決めるなら `do tp @a ~ ~ ~ 90 0` |
+| `sneak [秒]` | しゃがむ（R3。秒があればその間しゃがんで戻す） |
+| `attack [秒]` / `mine [秒]` | 殴る / 壊す（RT を押したまま。既定 0.6 秒 / 2 秒） |
+| `use [秒]` / `place [秒]` | 使う・置く・開ける（LT を押したまま） |
+| `slot <1〜9\|next\|prev>` | 持つものを替える（数字キー / RB・LB） |
+| `inventory` / `drop [回数]` | 持ち物を開く（Y。閉じるのは `pad B`）/ 持っているものを落とす（Q） |
+| `cmd </コマンド>` | プレイヤーとしてコマンド（チャットで。`/` は省いてもよい） |
+| `perspective` / `pause` | 視点の切り替え（F5）/ ポーズの画面（START） |
+| `stick <L\|R> <x%> <y%> [ミリ秒]` | スティックを好きな向きへ（-100〜100。y は負が前・上） |
+| `release` | スティック・トリガー・ボタンを全部はなす |
+
 ゲームのコンテンツログは、毎回の実行で区切りごとに端末から読みます（root）。ERROR の行があれば実行は FAIL です（報告の
 「クライアントのエラー」に、区切りの名前付きで並びます）。失敗にしないなら `--allow-client-errors`。
 
@@ -332,6 +351,12 @@ node lab.mjs app live --run <番号> "seal"                  # この状態を�
 `relay` `join` `run` `ui` `pull <枝>` `last` `pad A DOWN …`（端末に挿したコントローラー）`world [restart]`
 `signin` `code <数字>` `seal` `stop`。
 
+ゲームを人のように遊ぶ命令（上の表の `walk` `look` `jump` `sprint` `sneak` `attack` `mine` `use` `place` `slot` `inventory`
+`drop` `cmd` `perspective` `pause` `stick` `release`）と、app.txt の手順（`chat` `tap text` `until text` `press` `hold` `mouse`
+`shot` `do` `perf` `network` `size` …）も、その端末のまま 1 行ずつ使えます（BDS も参加もそのまま。`run` と違い何も立て直さない）。
+続けて走らせるなら `steps <<` の次の行から `EOF` まで（`record start` … `record stop` もこの中で）。live と同じ名前の手順は
+`step <1 行>`（`step stop` = ゲームを止める、`step join` …）。端末のファイルを読む `push` は使えません。
+
 ### サインインした端末（フレンドのワールド・アドレスでのサーバー参加）
 
 サインインなしで入れるのは、同じネットワークのワールド（LAN。ラボの BDS はこの形で立てます）だけです。フレンドのワールドと、
@@ -345,6 +370,37 @@ node lab.mjs app live --run <番号> "seal"                  # この状態を�
 「Authenticator で承認（番号 42）」なら手元のスマホで承認、「コードを送って」なら
 `node lab.mjs app live --run <番号> "code 123456"`（実行した人のコメントだけ受け取る）。常駐の端末なら `signin` で始めて、
 終わったら `seal` で残せます。サインインなしで作るなら knobs に `APP_SIGNIN=0`。
+
+### スマホだけで: Discord の DM に画面とボタン、秘密の登録もフォームで
+
+node も端末（PC）も無いスマホから、GitHub の Actions と Discord だけで使えます。
+
+**はじめに 1 回**（スマホのブラウザでもできます）:
+
+1. Discord Developer Portal（https://discord.com/developers/applications）→ New Application → Bot → Reset Token。
+   このトークンを、リポジトリの Settings → Secrets and variables → Actions に `DISCORD_BOT_TOKEN` として入れる。
+2. 自分だけのサーバーを作り、ボットを招く（OAuth2 → URL Generator → scope `bot` → 出た URL を開く）。ボットが DM を送れるのは
+   同じサーバーにいる間だけなので、そのまま置いておく（そのサーバーのプライバシー設定「サーバーにいるメンバーからの DM を許可」はオン）。
+3. 自分のユーザー ID（Discord の 設定 → 詳細設定 → 開発者モード をオン → 自分のプロフィール → ユーザー ID をコピー、数字）を
+   `DISCORD_USER_ID` として Secrets に。
+4. 秘密の登録もスマホでするなら: GitHub の Settings → Developer settings → Personal access tokens → Fine-grained tokens で、
+   このリポジトリだけ・Repository permissions の **Secrets: Read and write** のトークンを作り、`LAB_SECRETS_TOKEN` として Secrets に
+   （ワークフローの GITHUB_TOKEN は秘密を書けません）。
+
+**秘密を登録する**（例 `MS_EMAIL` と `MS_PASSWORD`）: GitHub の Actions → secrets → Run workflow（名前は既定で
+`MS_EMAIL,MS_PASSWORD`、5 つまで）。Discord の DM に「📝 入力する」が届くので、押して出たフォームに書いて送ると、その値が
+リポジトリの秘密になります（✅ 登録しました: …）。値はチャットに残らず、実行のログでも最初に伏せます（`::add-mask::`）。空の欄の
+秘密は変えません。メッセージで `MS_EMAIL=…` と 1 行ずつ送っても登録できますが、そのメッセージは自分で消してください
+（ボットには人のメッセージを消せません）。10 分（`minutes`）返事がなければ何もせずに終わります。
+
+**端末を画面とボタンで動かす**: GitHub の Actions → app → Run workflow（mode `hold`、または hold に分）。`DISCORD_BOT_TOKEN` と
+`DISCORD_USER_ID` があれば、端末が待つ状態になると DM に画面と 25 個のボタンが届きます:
+⬆️⬅️⬇️➡️ 歩く・🦘 ジャンプ・↩️↪️🔼🔽 見回す・🏃 走る・⛏️ 壊す・⚔️ 殴る・✋ 使う／置く・🎒 持ち物・🔁 次の物・Ⓐ Ⓑ ▲ ▼ ◀ ▶
+（メニューの操作）・☰ ポーズ・💬 チャット（フォーム）・⌨️ 命令（フォーム）・📷 画面。押すたびに同じメッセージの画面が、
+その後の画面に変わります。DM に書いて送った文は live の命令です（1 行 1 つ。`walk forward 3`、`look right 600`、`mine 2`、
+`cmd /give @s diamond 3`、`tap text (?i)^play$`、`run`、`help`、`stop` …。返事は新しいメッセージで、画面と同じボタン付き）。
+issue のコメントも今までどおり同時に使えます。動くのは `DISCORD_USER_ID` の人の DM だけで（サーバーのメッセージ・ほかの人・
+ボットは見ない）、ボットのトークンはどこにも出しません。画面は Discord の DM に届きます（公開リポジトリでも、見えるのは自分だけ）。
 
 **確かめたこと（2026-10-04）**: GitHub の端末で、jsonui_demo の app.txt が本物のアプリで通りました（サインインなし。
 BDS は NetherNet の LAN、アプリは PLAY → Worlds の LAN のワールドから入り、アドオンの JSON UI のフォームが画面に出た）。
@@ -472,6 +528,7 @@ node lab.mjs app run -a jsonui_demo --device phone
 | `node lab.mjs app apk fetch` / `apk <フォルダ>` / `apk info` | APK を取る / 手元のものを使う / 版を見る |
 | `node lab.mjs app emu` / `emu stop` | エミュレータを起動 / 停止（`--window` で窓付き） |
 | `node lab.mjs app secrets` | GitHub に認証を登録 |
+| `node lab.mjs app secrets ask --names MS_EMAIL,MS_PASSWORD` | （secrets ワークフローの中で）Discord の DM のフォームで値を聞いて、リポジトリの秘密に（上の「スマホだけで」） |
 | `node lab.mjs app ci -a <名前>` | GitHub で動かし、終わるまで待って結果を取ってくる（`--mode run\|ui\|ui-all` `--devices <1〜4>` `--fresh` `--no-account` `--ref <枝>` `--screen <幅x高さ>` `--full` / `ci fetch <番号>` / `ci watch <番号>`） |
 | `node lab.mjs app vending` | 必要な部品を公式イメージから取り出す（`--account` 用、`--cleanup` で後片付け） |
 | `node lab.mjs app account` | アカウントの書き込みだけ（`check` で状態） |

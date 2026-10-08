@@ -1,5 +1,29 @@
 # bds-lab の変更
 
+## 次の版（作業中）
+**app ラボを「ほぼクライアント」に: 本物のアプリをコントローラーで人のように遊べる（歩く・見回す・跳ぶ・壊す・置く・持ち物・チャット…）。
+スマホの Discord から CI の端末を画面とボタンで動かせ、リポジトリの秘密も Discord のフォームで登録できる（node も PC も要らない）。**
+
+### ゲームを人のように（app.txt と live）
+- 端末のコントローラー（app/relay/lab-pad.c）にスティックとトリガーと「押したまま」: `LX=` `LY=` `RX=` `RY=`（-100〜100%）・`LT=` `RT=`（0〜100%）を
+  置いたままにする、`+A` / `-A` でボタンを押す / はなす、`center` で全部はなす。`lab-pad --dry <ファイル> <語>…` は端末なしで入力イベントを
+  ファイルに書く（試験が読む）。arm64 でも作れる。
+- 手順（`app/lib/play.mjs`）: `walk` `sprint` `jump` `look` `sneak` `attack` `mine` `use` `place` `slot` `inventory` `drop` `cmd` `perspective`
+  `pause` `stick` `release`。app.txt でも live でも同じ。スティックが要る手順は、コントローラーが無ければそう言って止まる。
+- live（`app live` / issue / Discord）: ゲームの手順に加えて、app.txt の手順をその端末のまま 1 行ずつ（`chat` `tap text` `until text` `press` `hold`
+  `mouse` `shot` `do` `perf` `network` `size` …）。`steps <<` で続けて、`step <1 行>` で live と同じ名前の手順。端末へファイルを送る `push` は不可。
+
+### スマホから（Discord）
+- `app hold`: 秘密 `DISCORD_BOT_TOKEN` と `DISCORD_USER_ID` があれば、その人の DM に画面と 25 個のボタン。押すたびにそのメッセージの画面が、
+  その後の画面に変わる。DM に書いた文は live の命令。チャットと命令はフォームから。issue と同時に使える。Discord の接続は別のスレッドで
+  （adb を待つ間も、押した合図に 3 秒以内に答える）。その人の DM だけ（サーバー・ほかの人・ボットは見ない）。
+- `.github/workflows/secrets.yml` と `app secrets ask`: Run workflow → DM の「📝 入力する」→ フォームに書いて送る → リポジトリの秘密に
+  （`gh secret set`、トークンは秘密 `LAB_SECRETS_TOKEN`: このリポジトリだけ・Secrets の Read and write）。値は届いた時点でログから伏せ、
+  どこにも出さない。`名前=値` のメッセージでも（そのメッセージは自分で消す）。
+- app.yml の常駐の端末（mode hold）でも `MS_EMAIL` / `MS_PASSWORD` を渡す（`signin` がそこでも使える）。
+- 試験: `tests/play-offline.mjs`（14 本: コントローラーの入力イベント、手順、Discord の REST と偽の gateway、秘密のフォーム、ワークフロー）と、
+  `tests/app-offline.mjs` に偽の Discord（HTTP と WebSocket）で `app hold` を DM とボタンで動かす試験。
+
 ## v1.24.0 (2026-10-06)
 **v1.23.0 に、v1.22.0 の上で進めていた redroid と fanout の作業を合わせた版。app/redroid を GitHub Actions なしで手元の Linux で回せるようにし、「戻す → 起動 → タイトル」（48〜50 秒）を削る手を入れた。AI の並行開発の仕組み（fanout）も入れた。秒数はまだ実機で計っていない（`node lab.mjs app redroid bench` の表で前と比べる）。**
 

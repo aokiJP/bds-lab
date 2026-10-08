@@ -410,6 +410,107 @@ await t('app hold: the device kept up, the live issue made, commands from the ru
   const st2 = JSON.parse(fs.readFileSync(state, 'utf8'));
   ok(!(st2.calls ?? []).some((x) => /emu kill|-avd /.test(x)) && (st2.bds ?? []).filter((x) => /^up /.test(x)).length === 2, 'the device stayed, a BDS for each run: ' + (st2.bds ?? []).join(' | '));
 }));
+await t('app hold + Discord: the screen and a controller of buttons in the person\'s DM; a press walks, the command form looks and picks a slot, a message mines and stops; strangers and servers unseen (fake Discord + fake device)', asPrivate(async () => {
+  const http = await import('node:http');
+  // a fake GitHub: the live issue and its comments (no commands come from it here)
+  const gh = { issues: [], comments: [] };
+  const ghServer = http.createServer((req, res) => {
+    let body = ''; req.on('data', (d) => { body += d; });
+    req.on('end', () => {
+      const u = new URL(req.url, 'http://x'), send = (code, j) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(j)); };
+      if (req.method === 'GET' && u.pathname === '/repos/o/r/issues') return send(200, gh.issues);
+      if (req.method === 'POST' && u.pathname === '/repos/o/r/issues') { const i = { number: 8, title: JSON.parse(body).title }; gh.issues.push(i); return send(201, i); }
+      if (req.method === 'GET' && u.pathname === '/repos/o/r/issues/8/comments') return send(200, gh.comments);
+      if (req.method === 'POST' && u.pathname === '/repos/o/r/issues/8/comments') { const c = { id: 900 + gh.comments.length, body: JSON.parse(body).body, created_at: new Date().toISOString(), user: { login: 'github-actions[bot]' } }; gh.comments.push(c); return send(201, c); }
+      send(404, {});
+    });
+  });
+  // a fake Discord: REST (multipart read back as a form) and a gateway (the least of RFC 6455: text frames)
+  const ME = '123456789012345678', dc = { rest: [], ws: null, step: 0 };
+  const frame = (text) => { const p = Buffer.from(text), n = p.length; const h = n < 126 ? Buffer.from([0x81, n]) : Buffer.from([0x81, 126, n >> 8, n & 255]); return Buffer.concat([h, p]); };
+  const emit = (t2, d) => dc.ws?.write(frame(JSON.stringify({ op: 0, s: ++dc.step, t: t2, d })));
+  const press = (id, custom, type = 3, more = {}) => emit('INTERACTION_CREATE', { id, token: `tok-${id}`, application_id: 'app1', type, user: { id: ME }, data: { custom_id: custom, ...more } });
+  // the person's moves, each after the lab answered the one before
+  const next = (r) => {
+    if (r.url === '/channels/dm1/messages' && r.n === 1) {
+      emit('MESSAGE_CREATE', { author: { id: '999999999999999999' }, content: 'kill' });
+      emit('MESSAGE_CREATE', { author: { id: ME }, guild_id: '42', content: 'kill' });
+      press('i1', 'lab:walk forward 1');
+    }
+    if (r.url === '/webhooks/app1/tok-i1/messages/@original') press('i2', 'lab:#cmd');
+    if (r.url === '/interactions/i2/tok-i2/callback') press('i3', 'lab-form:cmd', 5, { components: [{ components: [{ custom_id: 'cmds', value: 'look right 400\nslot 3\nchat hello\nsteps <<\nwait 10\nshot live-dc\nEOF\nstep push /etc/passwd /sdcard/x' }] }] });
+    if (r.url === '/webhooks/app1/tok-i3/messages/@original') emit('MESSAGE_CREATE', { author: { id: ME }, content: 'mine 2\nstop' });
+  };
+  const dcServer = http.createServer((req, res) => {
+    const chunks = []; req.on('data', (d) => chunks.push(d));
+    req.on('end', async () => {
+      const send = (code, j) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(j === null ? '' : JSON.stringify(j)); };
+      if (req.headers.authorization !== 'Bot dc-token') return send(401, {});
+      const url = req.url.replace(/^\/api/, ''), raw = Buffer.concat(chunks);
+      let body = null, files = [];
+      if (/multipart/.test(req.headers['content-type'] ?? '')) { const fd = await new Response(raw, { headers: { 'content-type': req.headers['content-type'] } }).formData(); body = JSON.parse(fd.get('payload_json')); files = await Promise.all([...fd.entries()].filter(([k]) => k.startsWith('files')).map(async ([, f]) => ({ name: f.name, head: Buffer.from(await f.arrayBuffer()).subarray(1, 4).toString() }))); }
+      else if (raw.length) body = JSON.parse(raw);
+      const r = { method: req.method, url, body, files, n: dc.rest.filter((x) => x.url === url).length + 1 };
+      dc.rest.push(r);
+      if (url === '/gateway/bot') send(200, { url: `ws://127.0.0.1:${dcServer.address().port}` });
+      else if (url === '/users/@me/channels') send(200, { id: 'dm1' });
+      else if (/\/callback$/.test(url)) send(204, null);
+      else send(200, { id: `m${dc.rest.length}` });
+      setTimeout(() => next(r), 20);
+    });
+  });
+  dcServer.on('upgrade', (req, socket) => {
+    const accept = crypto.createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+    dc.ws = socket;
+    socket.write(frame(JSON.stringify({ op: 10, d: { heartbeat_interval: 30_000 } })));
+    let buf = Buffer.alloc(0);
+    socket.on('data', (d) => {
+      buf = Buffer.concat([buf, d]);
+      while (buf.length >= 6) {
+        let len = buf[1] & 127, off = 2;
+        if (len === 126) { len = buf.readUInt16BE(2); off = 4; }
+        if (buf.length < off + 4 + len) break;
+        const mask = buf.subarray(off, off + 4), op = buf[0] & 15, p = Buffer.from(buf.subarray(off + 4, off + 4 + len)).map((x, i) => x ^ mask[i % 4]);
+        buf = buf.subarray(off + 4 + len);
+        if (op === 8) { socket.end(); return; }
+        const m = JSON.parse(p.toString());
+        if (m.op === 2) { dc.identify = m.d; emit('READY', { application: { id: 'app1' }, user: { id: 'bot1' } }); }
+      }
+    });
+    socket.on('error', () => {});
+  });
+  await new Promise((r) => ghServer.listen(0, '127.0.0.1', r)); await new Promise((r) => dcServer.listen(0, '127.0.0.1', r));
+  const state = path.join(tmp, 'hold-dc.json'); fs.writeFileSync(state, JSON.stringify({ phase: 'title', launched: true }));
+  const sdk = path.join(tmp, 'sdk-hold-dc'); fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', HOST_ABI), { recursive: true });
+  const env = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_ADBKEY_DIR: path.join(tmp, 'adbkey-hold-dc'), GITHUB_API_URL: `http://127.0.0.1:${ghServer.address().port}`, GITHUB_REPOSITORY: 'o/r', GITHUB_RUN_ID: '124', GITHUB_TOKEN: 'tok', LIVE_USER: 'me', APP_LIVE_POLL_MS: '50', APP_TESSERACT: path.join(FAKE, 'tesseract'),
+    APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, APP_APK_DIR: apkDir, APP_RELAY_BIN: RELAY_STUB, APP_PAD_BIN: PAD_STUB, APP_PAD_WAIT_MS: '50',
+    DISCORD_BOT_TOKEN: 'dc-token', DISCORD_USER_ID: ME, DISCORD_API_URL: `http://127.0.0.1:${dcServer.address().port}/api` };
+  delete env.GITHUB_ACTIONS; delete env.GITHUB_OUTPUT; delete env.GITHUB_STEP_SUMMARY; delete env.GOOGLE_AAS_TOKEN; delete env.GOOGLE_EMAIL;
+  const c = spawn(process.execPath, [path.join(TOP, 'lab.mjs'), 'app', 'hold', '--minutes', '2'], { cwd: TOP, env });
+  let text = ''; c.stdout.on('data', (d) => { text += d; }); c.stderr.on('data', (d) => { text += d; });
+  const code = await new Promise((r) => c.on('exit', r));
+  ghServer.close(); dcServer.close(); dc.ws?.destroy();
+  ok(code === 0 && /live: issue #8 と Discord の DM で命令を待ちます/.test(text) && /OK live: 終わりました（命令で）/.test(text), `exit ${code}\n${text}`);
+  ok(dc.identify?.token === 'dc-token' && dc.identify?.intents === 4096, 'identified with DIRECT_MESSAGES: ' + JSON.stringify(dc.identify));
+  const posts = dc.rest.filter((r) => r.url === '/channels/dm1/messages'), edits = dc.rest.filter((r) => /^\/webhooks\//.test(r.url)), cbs = dc.rest.filter((r) => /\/callback$/.test(r.url));
+  // the first DM: the screen and the controller
+  ok(/端末を待っています/.test(posts[0]?.body?.content) && posts[0].body.components.length === 5 && posts[0].files[0]?.name === 'screen.png' && posts[0].files[0].head === 'PNG', JSON.stringify(posts[0]));
+  // a press: answered at once (deferred), then its message changed with the screen after the walk
+  eq(cbs.map((r) => [r.url, r.body.type]), [['/interactions/i1/tok-i1/callback', 6], ['/interactions/i2/tok-i2/callback', 9], ['/interactions/i3/tok-i3/callback', 6]]);
+  ok(/forward へ 1 秒歩きました/.test(edits[0]?.body?.content) && edits[0].url === '/webhooks/app1/tok-i1/messages/@original' && edits[0].files[0]?.head === 'PNG' && edits[0].body.components.length === 5, JSON.stringify(edits[0]));
+  ok(/視点を right へ（400 ミリ秒/.test(edits[1]?.body?.content) && /スロット 3/.test(edits[1]?.body?.content), edits[1]?.body?.content);
+  // app.txt's steps on the device as it is: one line, several (steps <<: the picture it took is the answer's), never push
+  ok(/✔ 1 chat hello/.test(edits[1]?.body?.content) && /✔ 2 shot live-dc/.test(edits[1]?.body?.content) && /push は live では使えません/.test(edits[1]?.body?.content), edits[1]?.body?.content);
+  // a typed message: a new message with the answer; stop greys the buttons; the last word says it ended
+  const last = posts.at(-2), bye = posts.at(-1);
+  ok(/壊す（RT 2 秒）/.test(last?.body?.content) && /終わります/.test(last?.body?.content) && last.body.components.every((r) => r.components.every((b) => b.disabled)), JSON.stringify(last?.body));
+  ok(/終わりました/.test(bye?.body?.content) && !bye.body.components, bye?.body?.content);
+  const st2 = JSON.parse(fs.readFileSync(state, 'utf8'));
+  eq((st2.padWords ?? []).filter((w) => /=/.test(w)), ['LY=-100 wait1000 LY=0', 'RX=100 wait400 RX=0', 'RT=100 wait2000 RT=0'], 'the sticks and the trigger through the controller');
+  ok((st2.calls ?? []).includes('shell input keyevent 10') && (st2.calls ?? []).includes('shell input text hello') && !(st2.calls ?? []).some((x) => /force-stop|passwd/.test(x)), 'slot 3 by its key, the chat typed; the stranger\'s and the server\'s kill not run: ' + (st2.calls ?? []).slice(-15).join(' | '));
+  ok(!JSON.stringify(dc.rest).includes('dc-token') && !gh.comments.some((x) => x.body.includes('dc-token')), 'the bot\'s token said nowhere');
+}));
 await t('app live: posts the command for the run, waits for its answer, prints it and keeps the screen (fake gh)', () => {
   const bin = path.join(tmp, 'ghbin-live'); fs.mkdirSync(bin, { recursive: true }); fs.copyFileSync(path.join(FAKE, 'gh'), path.join(bin, 'gh')); fs.chmodSync(path.join(bin, 'gh'), 0o755);
   const lv = path.join(tmp, 'live.json'); fs.writeFileSync(lv, JSON.stringify({ issues: [{ number: 7, title: 'app live: 実機をそのまま調べる（ラボが使います）' }], comments: [{ id: 1, body: 'lab-live@123 待っています（30 分まで）', created_at: new Date().toISOString() }] }));

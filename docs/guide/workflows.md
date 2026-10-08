@@ -129,6 +129,8 @@ FAIL upkeep (412s) · 次: node lab.mjs bds why -a my_addon
 | `node lab.mjs apidiff` | **API の差分**。今の BDS と最新（`--preview` なら次のプレビュー）で Script API の何が消え・変わり・増え・stable になったかと、**各アドオンのどのファイルの何行目が影響を受けるか**。サーバーもトークンも使いません |
 | `node lab.mjs watch` | **保存したら自動でテスト**。ファイルを保存するたびに本物のサーバーでテストし、✘ の行だけ出します（`--check` 型検査だけ・`--go` 全部・`--live` 起動したままのサーバーに /reload） |
 | `node lab.mjs undo` | **元に戻す**。`make` と `maintain` はアドオンを変える前に自動でチェックポイントを取ります。`undo` で直前に戻り、`undo --list` で一覧、`checkpoint "メモ"` で手動保存。undo 自体も undo できます |
+| Actions → **secrets** | **スマホだけで秘密を登録**。Run workflow で Discord の DM にフォームが届き、書いて送った値がリポジトリの秘密になります（`MS_EMAIL` `MS_PASSWORD` など 5 つまで。要るもの: 秘密 `DISCORD_BOT_TOKEN` `DISCORD_USER_ID` `LAB_SECRETS_TOKEN`。app/README.md「スマホだけで」） |
+| Actions → **app**（mode hold） | **スマホの Discord で本物のアプリを操作**。DM に画面と 25 個のボタン（歩く・見回す・壊す・使う・持ち物・チャット…）、押すたびにその後の画面。DM に書いた文は `app live` の命令 |
 | `LAB_NOTIFY_WEBHOOK` | **スマホに通知**。`.env` に Discord / Slack の Webhook か `https://ntfy.sh/<トピック>` を書くと、make・maintain・最新版チェックの結果が届きます（`node lab.mjs notify` で試験） |
 | `--budget` / `LAB_TOKEN_BUDGET` | **トークンの上限**。`make --budget 300000` はそれ以上 AI に聞きません |
 | `upkeep --auto daily` | **毎日自動で点検**（`weekly` も可、`--at 04:00` で時刻、`off` で解除）。Linux/Mac は cron、Windows はタスク スケジューラに登録します。GitHub を使わなくても手元で回り続け、結果は通知に届きます（`maintain --schedule daily` は 3 番目だけ） |

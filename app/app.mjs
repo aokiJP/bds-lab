@@ -16,9 +16,11 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { Worker } from 'node:worker_threads';
 import * as K from './lib/apk.mjs';
 import * as D from './lib/android.mjs';
 import { parseScenario, runScenario, dialogSummary, KEYS, pngSize, screenDiff, titleLike, blankScreen } from './lib/scenario.mjs';
+import { GAME_VERBS, gameLine, playGame } from './lib/play.mjs';
 import { startMonitor, fmtStats, hostNotes, hostStats } from './lib/host.mjs';
 import { annotations, deathExcerpt, ghEscape, guard, logcatDigest, writeReport } from './lib/report.mjs';
 import * as A from './lib/account.mjs';
@@ -29,6 +31,8 @@ import * as C from './lib/client.mjs';
 import * as U from './lib/uicatalog.mjs';
 import * as L from './lib/license.mjs';
 import * as Live from './lib/live.mjs';
+import * as Dc from './lib/discord.mjs';
+import * as SF from './lib/secretform.mjs';
 import * as SI from './lib/signin.mjs';
 import * as WD from './lib/world.mjs';
 import * as Dev from './lib/device.mjs';
@@ -110,6 +114,8 @@ const HELP = `app: 本物の Minecraft アプリをエミュレータで動か�
   tap <x> <y> | key <キー> | text <文字>   いまの画面を操作（位置を試すとき）。自分の端末なら --device <名前>
   install                    起動中のエミュレータに APK を入れる
   secrets [--repo <owner/名前>] [--env <Environment>] [--from <.env.local>]   GitHub に Google の認証を登録（gh）
+  secrets ask [--names MS_EMAIL,MS_PASSWORD] [--minutes 10]   （secrets ワークフローの中で）Discord の DM にフォームを送り、
+        書いて送られた値をリポジトリの秘密に（DISCORD_BOT_TOKEN・DISCORD_USER_ID・LAB_SECRETS_TOKEN。スマホだけで登録できる）
   guard [フォルダ]           そのフォルダに APK・.so・トークンが無いか
   run / ui … --device redroid   エミュレータの代わりに redroid（コンテナの Android、VM なし）で。準備: node lab.mjs app redroid help
   run / ui … --device <名前>   自分の端末（スマホ・タブレット。root あり・なし × USB・Wi-Fi）で。登録・つなぎ方: node lab.mjs app device help
@@ -127,8 +133,11 @@ const HELP = `app: 本物の Minecraft アプリをエミュレータで動か�
         --hold <分>: 端末を作った後（失敗しても）・確かめた後、端末を動かしたまま命令を待つ（下の live）
   live [--run <番号>] "<コマンド>" …   --hold で待っている CI の端末を、コードを変えずにその場でさわる（返事と画面が数秒で
         戻る。画面は app/runs/live/）。--wait: 待つ状態になるまで待つ。コマンド: live help（screen tap key text sh logcat
-        input windows fps gpu launch kill options title seal stop）。seal: いまの状態を準備済みの端末としてキャッシュへ
-  hold [--minutes <分>]      （ワークフローの中で）端末を動かしたまま live の命令を待つ
+        input windows fps gpu launch kill options title seal stop）。seal: いまの状態を準備済みの端末としてキャッシュへ。
+        ゲームを人のように: walk look jump sprint sneak attack mine use place slot inventory drop cmd stick release。
+        app.txt の手順もそのまま（chat、tap text、until text、press、mouse、perf…、steps << で続けて）
+  hold [--minutes <分>]      （ワークフローの中で）端末を動かしたまま live の命令を待つ。秘密 DISCORD_BOT_TOKEN と DISCORD_USER_ID が
+        あれば Discord の DM にも画面とボタン（歩く・見る・壊す・使う・持ち物・A/B・チャット…）: 押すたびにその後の画面が戻る
   checks [--artifact <名前>]  （ワークフローの中で）実行の結果をチェック（check run）として出す。--print で中身の大きさだけ
   vending [--cleanup]         本物の Play ストアを、Google の「Google Play 入り」エミュレータイメージから取り出す（2 台目の AVD を一度だけ
         起動、root 不要）。app/.lab/vending/ に置き、--account が使う。--cleanup: 使ったイメージと AVD を消す（CI のディスク）
@@ -1675,6 +1684,11 @@ async function liveExec(adb, line, ctx) {
   const c = Live.parseCommand(line);
   if (c.error) return c.error;
   const { verb, args: a, tail } = c;
+  // the game played by name (walk, look, attack…) and app.txt's steps, on the device as it is
+  const kind = Live.liveKind(line);
+  if (kind === 'game') return liveGame(adb, line, ctx);
+  if (kind === 'steps') { const h = Live.heredoc(tail); return h ? liveSteps(adb, h.text, ctx) : '書き方: steps <<（次の行から EOF の行まで app.txt の手順）'; }
+  if (kind === 'step') return liveSteps(adb, verb === 'step' ? tail : String(line).trim(), ctx);
   const px = (x, y) => { const s = x <= 1 || y <= 1 ? pngSize(adb.screencap()) : null; return [x <= 1 ? Math.round(x * s.w) : Math.round(x), y <= 1 ? Math.round(y * s.h) : Math.round(y)]; };
   const sh = (cmd, timeout = 60_000) => { const r = adb.run(['shell', cmd], { timeout }); return `${r.stdout}${r.stderr}`.trim(); };
   switch (verb) {
@@ -1774,6 +1788,53 @@ async function liveExec(adb, line, ctx) {
   }
   return '';
 }
+/** the controller plugged into the device for live (root: the emulator's adbd, a rooted phone's su), once → true when it is */
+function livePad(adb, ctx) {
+  if (adb.padReady) return true;
+  takeRoot(adb);
+  const pd = D.startPad(adb, { labDir: LAB });
+  if (!pd.ok) ctx.said.push(`（${pd.note}）`);
+  return pd.ok;
+}
+/** a game verb (lib/play.mjs: walk, look, jump, attack, use, slot…) on the device → what was done */
+async function liveGame(adb, line, ctx) {
+  const g = gameLine(line);
+  if (g.error) return g.error;
+  livePad(adb, ctx);
+  return playGame(adb, g, { ensurePad: () => livePad(adb, ctx) });
+}
+/** app.txt's steps (one line, or `steps <<`) on the device as it is: lib/scenario.mjs with no restore, no BDS started and no
+ *  join — what is up stays up (live's `bds up` is the server `do` and `until server` talk to). → each step's line (✔ / ✘);
+ *  the picture: the last one a step took (shot, a failure), else the screen after (holdCmd) */
+async function liveSteps(adb, text, ctx) {
+  const { steps, errors } = parseScenario(text);
+  if (errors.length) return errors.map((e) => `E ${e}`).join('\n');
+  if (!steps.length) return '手順がありません';
+  // (push reads a file of the runner: not the comment's — live acts on the device alone)
+  if (steps.some((x) => x.verb === 'push')) return 'push は live では使えません（端末へ送るものは、アドオンの中に置いて pull <枝> → run で）';
+  const { pngDecode } = await import(pathToFileURL(path.join(TOP, 'common', 'extra.mjs')).href);
+  const dir = path.join(LAB, 'live', 'steps');
+  fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true });
+  // the app's log as it is now (until / expect log read it); the content log only when a step reads it (root)
+  const logcatFile = path.join(dir, 'logcat.txt');
+  const reads = (what) => steps.some((x) => ['until', 'expect', 'absent'].includes(x.verb) && x.args[0] === what);
+  fs.writeFileSync(logcatFile, reads('log') ? adb.run(['shell', 'logcat -d -t 3000'], { timeout: 60_000 }).stdout : '');
+  const wantsClient = reads('clientlog');
+  if (wantsClient) takeRoot(adb);
+  if (steps.some((x) => x.verb === 'pad' || GAME_VERBS.has(x.verb))) livePad(adb, ctx);
+  const addon = process.env.ADDON || 'jsonui_demo', said = [];
+  const res = await runScenario(steps, {
+    adb, runDir: dir, decode: pngDecode, pkg: K.PACKAGE, logcatFile, clientLog: wantsClient ? new C.ClientLog(adb, K.PACKAGE) : null,
+    log: (x) => said.push(x),
+    launch: () => adb.shell(['monkey', '-p', K.PACKAGE, '-c', 'android.intent.category.LAUNCHER', '1']),
+    dialog: () => adb.focus().dialog, answer: (d) => D.answerDialog(adb, d), focus: () => adb.focus().window,
+    ocr: C.ocrAvailable() ? (f) => C.ocrWords(f) : null,
+    ensurePad: () => livePad(adb, ctx),
+    server: { joinUri: 'minecraft://connect/?serverUrl=127.0.0.1&serverPort=19132', lan: appTransport() === 'lan', logFile: path.join(LAB, 'live', 'bds.log'), do: (cmd) => bdsAsync(['do', cmd], { LAB_ADDON: addon }, 5 * 60_000) },
+  });
+  if (res.shots.length) ctx.png = fs.readFileSync(res.shots.at(-1));
+  return [...said, ...(res.ok ? [] : ['--- ここで止まりました（画像はその画面）'])].join('\n') || 'OK';
+}
 // what `run` / `ui` take from a comment (the rest is refused: the runner's own files and tools are not the comment's)
 const LIVE_RUN_OPTS = { run: { flags: ['--allow-client-errors', '-v'], opts: ['--scenario'] }, ui: { flags: ['--all', '--allow-client-errors', '-v'], opts: ['--screens', '--sizes', '--cutouts', '--shard'] } };
 /** `run` / `ui` on the device the session holds: a whole `app run` / `app ui` (its own process, its run folder, its report)
@@ -1801,7 +1862,7 @@ async function liveRun(verb, tail, ctx) {
     args.push('--scenario', f);
   }
   // (the run's own process, as on a terminal; the session's token and secrets are not passed on)
-  const { GITHUB_TOKEN, LIVE_USER, ...env } = process.env;
+  const { GITHUB_TOKEN, LIVE_USER, DISCORD_BOT_TOKEN, ...env } = process.env;
   const t0 = Date.now(), lines = [];
   const code = await new Promise((resolve) => {
     const ch = spawn(process.execPath, [path.join(TOP, 'lab.mjs'), 'app', ...args], { cwd: TOP, env: { ...env, APP_LIVE_DEVICE: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -1948,43 +2009,97 @@ async function holdCmd(args) {
   if (stamp?.tap && stamp.tap !== 'tap') adb.tapHow = stamp.tap;
   const t0 = Date.now(), seen = new Set(), ctx = { stop: false, said: [], stuck: null };
   let since = new Date(t0 - 60_000).toISOString();
-  await api.comment(issue, `lab-live@${run} 待っています（${minutes} 分まで。端末: ${how}）。命令は \`lab@${run} <コマンド>\`（node lab.mjs app live --run ${run} "<コマンド>"）\n\`\`\`\n${Live.HELP}\n\`\`\``);
-  out(`  live: issue #${issue} で命令を待ちます（${minutes} 分、端末: ${how}）`);
+  /** commands run on the device one after another → { lines, shot }: each command's head, time and answer, then the screen
+   *  (run / ui / last / a step's shot: the picture they chose — a failing step's — else the screen now) */
+  const runCmds = async (cmds) => {
+    const lines = [];
+    ctx.png = null;
+    for (const line of cmds) {
+      const head = line.split('\n')[0], more = line.split('\n').length - 1;
+      out(`  live> ${head}${more ? `（と ${more} 行）` : ''}`);
+      ctx.said = [];
+      const t1 = Date.now();
+      let r; try { r = await liveExec(adb, line, ctx); } catch (e) { r = `ERR ${e instanceof K.AppError ? `${e.message}${e.hint ? ` → ${e.hint}` : ''}` : e.message}`; }
+      // (each command's time: what the device costs, measured where it runs)
+      lines.push(`> ${head}${more ? `（と ${more} 行）` : ''}  [${((Date.now() - t1) / 1000).toFixed(1)} 秒]`, ...ctx.said, ...(r ? [String(r)] : []));
+      if (ctx.stop) break;
+    }
+    let shot = null;
+    if (!(ctx.stop && /seal/.test(cmds.join(' ')))) {
+      try {
+        shot = ctx.png ?? adb.screencap();
+        const words = ctx.png ? null : ocrBuf(shot);
+        if (!ctx.png) lines.push(`--- 画面: ${adb.focus().window ?? '?'}、描画 毎秒 ${gameFps(adb)?.toFixed(1) ?? '?'} 枚${words ? `、文字: ${words.map((w) => w.text).join(' ').slice(0, 800)}` : ''}`);
+      } catch (e) { lines.push(`--- 画面を撮れません: ${e.message}`); }
+    }
+    return { lines, shot };
+  };
+  // Discord (DISCORD_BOT_TOKEN + DISCORD_USER_ID): the person's DM is a way in too — the screen with a controller of buttons
+  // under it, each press answered with the screen after it; a message there is commands as a comment's are
+  const dc = Dc.config(), jobs = [];
+  let dcBot = null, dcWorker = null;
+  if (!dc.missing) {
+    secrets.push(dc.token);
+    dcWorker = new Worker(new URL('./lib/discord-worker.mjs', import.meta.url), { workerData: { token: dc.token, userId: dc.userId } });
+    const ready = await new Promise((resolve) => {
+      dcWorker.on('message', (m) => { if (m.job) jobs.push(m.job); if (m.log) out(`  ${m.log}`); if (m.ready) resolve(true); if (m.error) { out(`W Discord: ${m.error}`); resolve(false); } });
+      dcWorker.on('error', (e) => { out(`W Discord: ${e.message}`); resolve(false); });
+      setTimeout(() => resolve(false), 30_000);
+    });
+    if (ready) dcBot = Dc.bot({ token: dc.token, userId: dc.userId });
+    else { dcWorker.terminate(); dcWorker = null; out('W Discord につながりません: issue だけで待ちます'); }
+  } else if (process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_USER_ID) out(`W Discord: ${dc.missing.join('・')} がありません（または形が違います）: issue だけで待ちます`);
+  /** the screen for Discord: bigger than the issue's (a phone shows it whole), a text too long for a message as a file */
+  const dcFiles = (r, text) => {
+    const files = [];
+    if (r.shot) { try { files.push({ name: 'screen.png', type: 'image/png', data: G.thumbPng(r.shot, { maxBytes: 3_000_000, widths: [1280, 960, 720, 540] }).png }); } catch { /* undecodable: no picture */ } }
+    if (text.length > 1800) files.push({ name: 'reply.txt', type: 'text/plain', data: Buffer.from(text) });
+    return files;
+  };
+  const dcReply = async (job, r) => {
+    const text = G.anonymize(r.lines.join('\n'), secrets), body = { content: Dc.codeBlock(text, 1800), components: ctx.stop ? Live.panel(true) : Live.panel(), files: dcFiles(r, text) };
+    try { if (job.it) await dcBot.editReply(job.it, body); else await dcBot.send(body); } catch (e) { out(`W Discord に返せません: ${e.message}`); }
+  };
+  await api.comment(issue, `lab-live@${run} 待っています（${minutes} 分まで。端末: ${how}）。命令は \`lab@${run} <コマンド>\`（node lab.mjs app live --run ${run} "<コマンド>"）${dcBot ? '。Discord の DM からも' : ''}\n\`\`\`\n${Live.HELP}\n\`\`\``);
+  if (dcBot) {
+    const r = await runCmds(['screen']);
+    r.lines = [`端末を待っています（${minutes} 分まで。端末: ${how}）。下のボタンで操作、またはここに命令を書いて送る（1 行 1 つ。help で一覧、stop で終わり）`, ...r.lines.slice(-1)];
+    await dcReply({}, r);
+  }
+  out(`  live: issue #${issue}${dcBot ? ' と Discord の DM' : ''} で命令を待ちます（${minutes} 分、端末: ${how}）`);
+  const poll = Number(process.env.APP_LIVE_POLL_MS) || 3000;
+  let lastPoll = 0;
   while (!ctx.stop && Date.now() - t0 < minutes * 60_000) {
-    let list = [];
-    try { list = await api.comments(issue, since); } catch (e) { out(`W ${e.message}`); }
-    for (const c of list) {
-      if (seen.has(c.id) || CODES_TAKEN.has(c.id)) continue;
-      seen.add(c.id);
-      if (Date.parse(c.created_at) > Date.parse(since)) since = new Date(Date.parse(c.created_at) - 1000).toISOString();
-      const cmds = Live.commandsOf(c.body, run);
-      if (!cmds || (user && c.user?.login !== user)) continue;
-      const lines = [];
-      ctx.png = null;
-      for (const line of cmds) {
-        const head = line.split('\n')[0], more = line.split('\n').length - 1;
-        out(`  live> ${head}${more ? `（と ${more} 行）` : ''}`);
-        ctx.said = [];
-        const t1 = Date.now();
-        let r; try { r = await liveExec(adb, line, ctx); } catch (e) { r = `ERR ${e instanceof K.AppError ? `${e.message}${e.hint ? ` → ${e.hint}` : ''}` : e.message}`; }
-        // (each command's time: what the device costs, measured where it runs)
-        lines.push(`> ${head}${more ? `（と ${more} 行）` : ''}  [${((Date.now() - t1) / 1000).toFixed(1)} 秒]`, ...ctx.said, ...(r ? [String(r)] : []));
+    // Discord's first: a press waits for its screen in seconds
+    while (jobs.length && !ctx.stop) { const job = jobs.shift(); await dcReply(job, await runCmds(job.cmds)); }
+    if (ctx.stop) break;
+    if (Date.now() - lastPoll >= poll) {
+      lastPoll = Date.now();
+      let list = [];
+      try { list = await api.comments(issue, since); } catch (e) { out(`W ${e.message}`); }
+      for (const c of list) {
+        if (seen.has(c.id) || CODES_TAKEN.has(c.id)) continue;
+        seen.add(c.id);
+        if (Date.parse(c.created_at) > Date.parse(since)) since = new Date(Date.parse(c.created_at) - 1000).toISOString();
+        const cmds = Live.commandsOf(c.body, run);
+        if (!cmds || (user && c.user?.login !== user)) continue;
+        const r = await runCmds(cmds);
+        let png = null;
+        try { if (r.shot) png = G.thumbPng(r.shot, { maxBytes: 36_000 }).png; } catch { /* undecodable */ }
+        try { await api.comment(issue, Live.replyBody(run, c.id, G.anonymize(r.lines.join('\n'), secrets), png)); } catch (e) { out(`W 返事を書けません: ${e.message}`); }
         if (ctx.stop) break;
       }
-      let png = null;
-      if (!(ctx.stop && /seal/.test(cmds.join(' ')))) {
-        try {
-          // (run / ui / last: the picture they chose — a failing step's — else the screen now)
-          const b = ctx.png ?? adb.screencap(), words = ctx.png ? null : ocrBuf(b);
-          png = G.thumbPng(b, { maxBytes: 36_000 }).png;
-          if (!ctx.png) lines.push(`--- 画面: ${adb.focus().window ?? '?'}、描画 毎秒 ${gameFps(adb)?.toFixed(1) ?? '?'} 枚${words ? `、文字: ${words.map((w) => w.text).join(' ').slice(0, 800)}` : ''}`);
-        } catch (e) { lines.push(`--- 画面を撮れません: ${e.message}`); }
-      }
-      try { await api.comment(issue, Live.replyBody(run, c.id, G.anonymize(lines.join('\n'), secrets), png)); } catch (e) { out(`W 返事を書けません: ${e.message}`); }
     }
-    if (!ctx.stop) await sleep(Number(process.env.APP_LIVE_POLL_MS) || 3000);
+    // (short naps while Discord is there: its presses are answered between the issue's polls)
+    if (!ctx.stop && !jobs.length) await sleep(dcBot ? 250 : poll);
   }
-  await api.comment(issue, `lab-live@${run} 終わりました（${Math.round((Date.now() - t0) / 60_000)} 分）`).catch(() => {});
+  const mins = Math.round((Date.now() - t0) / 60_000);
+  await api.comment(issue, `lab-live@${run} 終わりました（${mins} 分）`).catch(() => {});
+  if (dcBot) {
+    await dcBot.send({ content: `終わりました（${mins} 分、${ctx.stop ? '命令で' : '時間切れ'}）。上のボタンはもう効きません: 次は GitHub の Actions → app → mode hold` }).catch(() => {});
+    dcWorker?.postMessage('close');
+    setTimeout(() => dcWorker?.terminate(), 3000).unref();
+  }
   out(`OK live: 終わりました（${ctx.stop ? '命令で' : '時間切れ'}）`);
 }
 // app live: a command to the device a CI run holds (workflow input hold), its answer printed and its screen saved
@@ -2238,6 +2353,47 @@ async function secretsCmd(args) {
     out(`OK 変数 BB_PLAY_ENV=${envName}（app.yml はこの Environment から読みます）`);
   }
   out('次: GitHub の Actions → app → Run workflow');
+}
+
+/** app secrets ask (secrets.yml, in GitHub's Actions): the person asked on Discord for the values of the secrets named, by a
+ *  form in their DM; what they send is set as the repository's secrets (gh, with GH_TOKEN = the secret LAB_SECRETS_TOKEN).
+ *  The values are hidden in the log as they arrive and never printed (lib/secretform.mjs) */
+async function secretsAskCmd(args) {
+  const o = parse(args, { opts: ['--names', '--minutes', '--repo'] });
+  const n = SF.secretNames(o.opts['--names'] ?? 'MS_EMAIL,MS_PASSWORD');
+  if (n.error) fail(n.error);
+  const dc = Dc.config();
+  if (dc.missing) fail(`${dc.missing.join('・')} がありません`, 'リポジトリの Settings → Secrets and variables → Actions に DISCORD_BOT_TOKEN（自分のボットのトークン）と DISCORD_USER_ID（自分の Discord のユーザー ID、数字）を（app/README.md「Discord」）');
+  const repo = o.opts['--repo'] ?? process.env.GITHUB_REPOSITORY ?? fail('リポジトリが分かりません', '--repo <owner/名前>');
+  const minutes = Math.max(1, Math.min(Number(o.opts['--minutes']) || 10, 30)), run = process.env.GITHUB_RUN_ID ?? String(Date.now());
+  const ghToken = process.env.GH_TOKEN || process.env.LAB_SECRETS_TOKEN || '';
+  const b = Dc.bot({ token: dc.token, userId: dc.userId, log: (x) => out(`  ${x}`) });
+  // (the token that sets secrets, looked at before the person types anything: a missing or weak one said in the DM too)
+  const why = !ghToken ? '秘密 LAB_SECRETS_TOKEN がありません' : await (async () => {
+    try {
+      const r = await fetch(`${process.env.GITHUB_API_URL || 'https://api.github.com'}/repos/${repo}/actions/secrets/public-key`, { headers: { authorization: `Bearer ${ghToken}`, accept: 'application/vnd.github+json', 'user-agent': 'bds-lab' }, signal: AbortSignal.timeout(30_000) });
+      return r.ok ? null : `LAB_SECRETS_TOKEN で ${repo} の秘密を扱えません（HTTP ${r.status}）`;
+    } catch (e) { return `GitHub に聞けません: ${e.message}`; }
+  })();
+  if (why) {
+    const fix = `GitHub の Settings → Developer settings → Fine-grained tokens で、このリポジトリ（${repo}）だけ・Repository permissions の Secrets を Read and write にしたトークンを作り、リポジトリの秘密 LAB_SECRETS_TOKEN に入れてください（スマホのブラウザでもできます）`;
+    await b.send({ content: `🔑 秘密を登録できません: ${why}\n${fix}` }).catch((e) => out(`W Discord: ${e.message}`));
+    fail(why, fix);
+  }
+  out(`  Discord の DM で ${n.names.join('・')} を待ちます（${minutes} 分）`);
+  const r = await SF.askSecrets({
+    b, names: n.names, run, repo, minutes, log: out,
+    mask: (v) => { if (process.env.GITHUB_ACTIONS === 'true') for (const l of SF.maskLines(v)) process.stdout.write(`${l}\n`); },
+    setSecret: (name, value) => {
+      const r2 = spawnSync('gh', ['secret', 'set', name, '--repo', repo], { input: value, encoding: 'utf8', env: { ...process.env, GH_TOKEN: ghToken }, timeout: 60_000 });
+      return r2.status === 0 ? { ok: true } : { ok: false, error: (r2.stderr || r2.error?.message || `終了 ${r2.status}`).trim() };
+    },
+  });
+  if (r.how === 'timeout') fail(`${minutes} 分のあいだ返事がありませんでした`, 'もう一度 Actions → secrets → Run workflow');
+  if (r.how === 'cancel') { out('OK やめました（何も登録していません）'); return; }
+  r.failed.forEach((f) => out(`E ${f.name}: ${f.error}`));
+  out(`${r.failed.length ? 'FAIL' : 'OK'} 登録: ${r.set.join(', ') || 'なし'}${r.kept.length ? `（そのまま: ${r.kept.join(', ')}）` : ''}（${r.how === 'form' ? 'フォーム' : 'メッセージ'}から）`);
+  if (r.failed.length) process.exitCode = 1;
 }
 
 // ---- checks / ci: a run through the GitHub API alone (lib/ghresults.mjs) ----
@@ -2945,7 +3101,7 @@ try {
   else if (cmd === 'install') { parse(argv); const list = apkPaths() ?? fail('APK がありません', 'node lab.mjs app apk fetch'); const { adb } = await ensureEmulator(); out(install(adb, list, K.inspectApks(list)) ? 'OK 入れました' : 'OK'); }
   else if (cmd === 'init') initCmd(argv);
   else if (cmd === 'run') await runCmd(argv);
-  else if (cmd === 'secrets') await secretsCmd(argv);
+  else if (cmd === 'secrets') await (argv[0] === 'ask' ? secretsAskCmd(argv.slice(1)) : secretsCmd(argv));
   else if (cmd === 'annotate') annotateCmd(argv);
   else if (cmd === 'checks') await checksCmd(argv);
   else if (cmd === 'vending') {
