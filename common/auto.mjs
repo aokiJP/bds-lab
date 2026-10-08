@@ -347,6 +347,13 @@ export function gate(pol, out, only = null, { jobs } = {}) {
     out(`  gate ${x.ok ? '✔' : '✘'} ${x.t}${x.ms ? ` (${Math.round(x.ms / 1000)} s)` : ''}${x.ok ? '' : ': ' + (x.lines.filter((l) => /^(✘|FAIL )/.test(l)).slice(0, 2).join(' | ') || x.lines.at(-1))}`);
     // a failure: where it failed, from the test's own output (CI shows nothing else of a test run side by side)
     if (!x.ok) { const at = Math.max(0, x.lines.findIndex((l) => /^(✘|FAIL )/.test(l))); for (const l of x.lines.slice(at, at + 25)) out(`      | ${l}`); }
+    // (on GitHub Actions also an annotation: the run's page and its API name the failing test and its first lines, even when
+    // the log itself cannot be opened)
+    if (!x.ok && process.env.GITHUB_ACTIONS && !process.env.LAB_AUTO_IN_GATE) {
+      const esc = (s) => String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+      const at = Math.max(0, x.lines.findIndex((l) => /^(✘|FAIL )/.test(l)));
+      out(`::error title=gate ${esc(x.t).replace(/[:,]/g, ' ')}::${esc(x.lines.slice(at, at + 12).join('\n').slice(0, 3000) || 'failed')}`);
+    }
   }
   return res;
 }
