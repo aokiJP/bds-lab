@@ -188,12 +188,15 @@ export const normYaw = (y) => { let v = ((Number(y) % 360) + 360) % 360; if (v >
 export const compassOf = (yaw) => NAMES[((Math.round(normYaw(yaw) / 45) % 8) + 8) % 8];
 /** the yaw that faces from one place to another on the ground (pure) */
 export const yawTo = (from, to) => normYaw((Math.atan2(-(to.x - from.x), to.z - from.z) * 180) / Math.PI);
+/** the yaw and pitch that look from the eyes (head) at a place (pure): the same sum lookat does on the server */
+export const lookAngles = (head, at) => ({ yaw: yawTo(head, at), pitch: (-Math.atan2(at.y - head.y, Math.hypot(at.x - head.x, at.z - head.z)) * 180) / Math.PI });
 export const distXZ = (a, b) => Math.hypot(b.x - a.x, b.z - a.z);
 // (one line for the lab's `do js`: no line break; its answer is found by its LAB_… word whatever the line around it)
-export const STATE_JS = 'js (q=>{if(!q)return "LAB_STATE {}";const l=q.location,r=q.getRotation();let hp=null,max=null,slot=null,item=null;try{const h=q.getComponent("minecraft:health");hp=h.currentValue;max=h.effectiveMax}catch{}try{slot=q.selectedSlotIndex;const it=q.getComponent("minecraft:inventory").container.getItem(slot);item=it?it.typeId+"*"+it.amount:null}catch{}return "LAB_STATE "+JSON.stringify({name:q.name,x:l.x,y:l.y,z:l.z,yaw:r.y,pitch:r.x,hp,max,slot,item,dim:q.dimension.id})})(p())';
+export const STATE_JS = 'js (q=>{if(!q)return "LAB_STATE {}";const l=q.location,r=q.getRotation();let hp=null,max=null,slot=null,item=null;try{const h=q.getComponent("minecraft:health");hp=h.currentValue;max=h.effectiveMax}catch{}try{slot=q.selectedSlotIndex;const it=q.getComponent("minecraft:inventory").container.getItem(slot);item=it?it.typeId+"*"+it.amount:null}catch{}let hy=null;try{hy=q.getHeadLocation().y}catch{}return "LAB_STATE "+JSON.stringify({name:q.name,x:l.x,y:l.y,z:l.z,hy,yaw:r.y,pitch:r.x,hp,max,slot,item,dim:q.dimension.id})})(p())';
 export const ITEMS_JS = 'js (q=>q?"LAB_ITEMS "+JSON.stringify(inv(q)):"LAB_ITEMS null")(p())';
-/** the js that turns the player to a yaw and pitch, or to face a place (pure) */
-export const faceJs = ({ yaw, pitch, at }) => `js (q=>{if(!q)return "LAB_FACE none";q.teleport(q.location,${at ? `{facingLocation:{x:${Number(at.x)},y:${Number(at.y)},z:${Number(at.z)}}}` : `{rotation:{x:${Number(pitch)},y:${Number(yaw)}}}`});return "LAB_FACE ok"})(p())`;
+/** the js that turns the player to a yaw and pitch, or to face a place (pure). A place: the angles from the player's own
+ *  eyes (getHeadLocation) — teleport's facingLocation does not say from where it looks, and the real BDS turned it up */
+export const faceJs = ({ yaw, pitch, at }) => `js (q=>{if(!q)return "LAB_FACE none";${at ? `const h=q.getHeadLocation(),dx=${Number(at.x)}-h.x,dy=${Number(at.y)}-h.y,dz=${Number(at.z)}-h.z;q.teleport(q.location,{rotation:{x:-Math.atan2(dy,Math.hypot(dx,dz))*180/Math.PI,y:Math.atan2(-dx,dz)*180/Math.PI}})` : `q.teleport(q.location,{rotation:{x:${Number(pitch)},y:${Number(yaw)}}})`};return "LAB_FACE ok"})(p())`;
 /** the lab's `do` lines → what the server said after its word (pure): the parsed JSON, null when it did not say it.
  *  The lab echoes each command first ("> js …") and the js itself holds the word: those lines are never the answer */
 export function serverSaid(lines, word) {

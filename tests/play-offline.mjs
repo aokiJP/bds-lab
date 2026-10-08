@@ -101,7 +101,7 @@ await t('server verbs: where / items / face / lookat / goto through the lab\'s d
     if (c === P.STATE_JS) return { ok: true, lines: ['> js …', `W [Scripting] LAB_STATE ${JSON.stringify(st)}`] };
     if (c === P.ITEMS_JS) return { ok: true, lines: ['LAB_ITEMS ["0:minecraft:diamond*3","5:minecraft:bread*2"]'] };
     const m = /rotation:\{x:(-?[\d.]+),y:(-?[\d.]+)\}/.exec(c); if (m) { st.pitch = Number(m[1]); st.yaw = Number(m[2]); return { ok: true, lines: ['LAB_FACE ok'] }; }
-    const f = /facingLocation:\{x:(-?[\d.]+),y:(-?[\d.]+),z:(-?[\d.]+)\}/.exec(c); if (f) { st.yaw = P.yawTo(st, { x: Number(f[1]), z: Number(f[3]) }); return { ok: true, lines: ['LAB_FACE ok'] }; }
+    const f = /dx=(-?[\d.]+)-h\.x,dy=(-?[\d.]+)-h\.y,dz=(-?[\d.]+)-h\.z/.exec(c); if (f) { st.yaw = P.yawTo(st, { x: Number(f[1]), z: Number(f[3]) }); return { ok: true, lines: ['LAB_FACE ok'] }; }
     return { ok: false, lines: ['E unknown'] };
   } };
   // (the controller's walk moves the player along its yaw at 4.3 blocks a second; a wall at z stops it unless it jumps)
@@ -369,7 +369,8 @@ await t('secrets.yml: by hand only, read-only token, actions pinned to commits, 
   ok([...y.matchAll(/uses: (\S+)/g)].every((m) => /@[0-9a-f]{40}$/.test(m[1])), 'pinned');
   const run = y.split('\n').filter((l) => /^\s+run:/.test(l)).join('\n');
   ok(run && !/\$\{\{/.test(run), 'no ${{ }} in a run line: ' + run);
-  ok(/GH_TOKEN: \$\{\{ secrets\.LAB_SECRETS_TOKEN \}\}/.test(y) && /persist-credentials: false/.test(y), 'the token that sets secrets, no git credentials left');
+  ok(/GH_TOKEN: \$\{\{ env\.APP_TOKEN \|\| secrets\.LAB_SECRETS_TOKEN \}\}/.test(y) && /persist-credentials: false/.test(y), 'the token that sets secrets (the lab App\'s, else LAB_SECRETS_TOKEN), no git credentials left');
+  ok(/node common\/ghapp\.mjs token "\$GITHUB_REPOSITORY" --perm secrets=write --env APP_TOKEN$/m.test(y) && (y.match(/--perm/g) ?? []).length === 1, 'the App\'s token: this repository\'s secrets, nothing more');
   const al = spawnSync('actionlint', ['-version'], { encoding: 'utf8' });
   if (al.status === 0) { const r = spawnSync('actionlint', [path.join(TOP, '.github', 'workflows', 'secrets.yml')], { encoding: 'utf8' }); ok(r.status === 0, r.stdout + r.stderr); }
 });
