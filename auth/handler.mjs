@@ -1,13 +1,13 @@
 // auth: the panel's small sign-in service — GitHub's OAuth web flow for the lab's GitHub App, done where the App's client
 // secret can live (a Cloudflare Worker: worker.mjs; or your own server behind TLS: node.mjs), and nothing more. It keeps no
-// store: a sign-in's state rides in one signed value (the `state` GitHub carries back, and the same value in an HttpOnly
-// cookie of this origin), and the tokens are handed to the panel once, after the # of its address (never in a query: the #
-// reaches no server, no log, no Referer). The panel then talks to GitHub itself with the person's own user token: what it may
+// store: a sign-in rides in two signed values — a random k in an HttpOnly cookie of this origin alone, and the `state`
+// GitHub carries back (where it returns, k's keyed hash, when) — and the tokens are handed to the panel once, after the # of
+// its address (never in a query: the # reaches no server, no log, no Referer). The panel then talks to GitHub itself with the person's own user token: what it may
 // see and do is what GitHub gives that person through the App installed on the lab's repositories — this service adds no
 // power and holds no token. Runs as it is on Node 22, in a browser and on Workers: fetch, Request, Response, URL,
 // crypto.subtle, TextEncoder (and btoa/atob) only.
-//   GET /health                          → { ok, clientId, origins, version } (CORS to the panel's origins)
-//   GET /login?return=<panel>&select=1&login=<name>   → 302 to GitHub (the state signed, in the cookie and the URL)
+//   GET /health                          → { ok, clientId, origins, panels, version } (CORS to the panel's origins)
+//   GET /login?return=<panel>&select=1&login=<name>   → 302 to GitHub (k in the cookie, the state in the URL; both signed)
 //   GET /callback?code&state             → 302 to <panel>#bdslab-auth=<base64url(JSON tokens)> (or #bdslab-auth-error=<word>)
 //   POST /refresh {refresh_token}        → the renewed tokens (from the panel's origins only)
 //   POST /logout {access_token}          → 204 (the token revoked on GitHub; from the panel's origins only)
@@ -32,17 +32,25 @@ const b64url = (bytes) => { const b = new Uint8Array(bytes); let s = ''; for (le
 const unb64url = (s) => Uint8Array.from(atob(String(s).replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (String(s).length % 4)) % 4)), (c) => c.charCodeAt(0));
 const reply = (status, body, extra = {}) => new Response(body === null ? null : JSON.stringify(body), { status, headers: { ...HEADERS, ...(body === null ? {} : { 'content-type': 'application/json; charset=utf-8' }), ...extra } });
 
-/** a panel's origin as written in PANEL_ORIGINS → the origin, or null (pure): https, or http on this machine only */
-function originOf(s) {
+// (a path written escaped — a dot, a slash, a backslash — may be read as another place by the server behind it)
+const ESCAPED = /%(2e|2f|5c)/i;
+/** a panel as written in PANEL_ORIGINS → { origin, path, href }, or null (pure): https, or http on this machine only. The path
+ *  is the head of the panel's addresses, ending in / (GitHub Pages: /<repository>/ — the owner's other repositories share
+ *  the origin); none: the whole origin (a domain of the panel's own) */
+function panelOf(s) {
   let u; try { u = new URL(s); } catch { return null; }
   const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname);
-  return (u.protocol === 'https:' || (u.protocol === 'http:' && local)) && u.pathname === '/' && !u.search && !u.hash && !u.username && !u.password ? u.origin : null;
+  if (!(u.protocol === 'https:' || (u.protocol === 'http:' && local)) || u.search || u.hash || u.username || u.password || ESCAPED.test(u.pathname)) return null;
+  const path = u.pathname.endsWith('/') ? u.pathname : `${u.pathname}/`;
+  return { origin: u.origin, path, href: `${u.origin}${path}` };
 }
 /** env → the service's settings (pure): what is missing is named (never a value) */
 export function config(env = {}) {
   const base = (v, d) => String(v ?? '').trim().replace(/\/+$/, '') || d;
-  const origins = [...new Set(String(env.PANEL_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean).map(originOf).filter(Boolean))];
-  const c = { clientId: String(env.GITHUB_CLIENT_ID ?? '').trim(), secret: String(env.GITHUB_CLIENT_SECRET ?? '').trim(), stateSecret: String(env.STATE_SECRET ?? ''), origins, web: base(env.GITHUB_WEB, 'https://github.com'), api: base(env.GITHUB_API, 'https://api.github.com') };
+  const panels = [...new Map(String(env.PANEL_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean).map(panelOf).filter(Boolean).map((p) => [p.href, p])).values()];
+  // (origins: for CORS — a browser's Origin header carries no path; panels: where a sign-in may return)
+  const origins = [...new Set(panels.map((p) => p.origin))];
+  const c = { clientId: String(env.GITHUB_CLIENT_ID ?? '').trim(), secret: String(env.GITHUB_CLIENT_SECRET ?? '').trim(), stateSecret: String(env.STATE_SECRET ?? ''), origins, panels, web: base(env.GITHUB_WEB, 'https://github.com'), api: base(env.GITHUB_API, 'https://api.github.com') };
   c.missing = [!c.clientId && 'GITHUB_CLIENT_ID', !c.secret && 'GITHUB_CLIENT_SECRET', c.stateSecret.length < 32 && 'STATE_SECRET', !origins.length && 'PANEL_ORIGINS'].filter(Boolean);
   return c;
 }
@@ -58,33 +66,42 @@ export function handler(env, { fetchImpl = (...a) => globalThis.fetch(...a), now
   const c = config(env ?? {}), subtle = () => globalThis.crypto.subtle;
   let keyP = null;
   const key = () => (keyP ??= subtle().importKey('raw', enc.encode(c.stateSecret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']));
-  // (one key, each use its own label: a state's signature is never a PKCE verifier)
+  // (one key, each use its own label: a state's signature is never a PKCE verifier, k's hash never the cookie's signature)
   const mac = async (label, data) => subtle().sign('HMAC', await key(), enc.encode(`${label}\n${data}`));
+  const macOk = async (label, data, sig) => { try { return await subtle().verify('HMAC', await key(), unb64url(sig), enc.encode(`${label}\n${data}`)); } catch { return false; } };
   // (the PKCE verifier is written nowhere — not in the state GitHub's address carries, not in the cookie: it is made again
-  //  from the state's nonce with the secret, so a code seen on the way cannot be redeemed with what travelled beside it)
-  const verifierOf = async (nonce) => b64url(await mac('pkce', nonce));
+  //  from the cookie's k with the secret. k never leaves this browser and this service, so whoever saw the callback's
+  //  address — its code and state — can neither make the cookie nor the verifier: the code stays theirs who began)
+  const verifierOf = async (k) => b64url(await mac('pkce', k));
   const cookie = (v, age) => `${COOKIE}=${v}; Max-Age=${age}; Path=/; Secure; HttpOnly; SameSite=Lax`;
   const cookieOf = (req) => { for (const part of String(req.headers.get('cookie') ?? '').split(';')) { const i = part.indexOf('='); if (i > 0 && part.slice(0, i).trim() === COOKIE) return part.slice(i + 1).trim(); } return null; };
-  /** the address a sign-in returns to → the same, cleaned, or null: one of PANEL_ORIGINS, no user:password, no handoff in it */
+  /** the address a sign-in returns to → the same, cleaned, or null: under one of PANEL_ORIGINS (its origin, and its path's
+   *  head: /bds-lab/ is not /bds-lab-evil/), no user:password, no escaped dot or slash in the path, no handoff in it */
   const returnOf = (s) => {
     if (typeof s !== 'string' || !s || s.length > 1500) return null;
     let u; try { u = new URL(s); } catch { return null; }
-    if (!c.origins.includes(u.origin) || u.username || u.password || /bdslab-auth/.test(u.hash)) return null;
+    if (u.username || u.password || ESCAPED.test(u.pathname) || /bdslab-auth/.test(u.hash)) return null;
+    if (!c.panels.some((p) => p.origin === u.origin && u.pathname.startsWith(p.path))) return null;
     return `${u.origin}${u.pathname}${u.search}${u.hash}`;
   };
   // (the panel's own # is kept: its route — a run Discord linked to — and the nonce it left to know its own sign-in)
   const handTo = (back, part) => { const i = back.indexOf('#'), frag = i < 0 ? '' : back.slice(i + 1); return `${i < 0 ? back : back.slice(0, i)}#${frag ? `${frag}&` : ''}${part}`; };
-  /** a sign-in begun → { state, n }: where it returns (r), a nonce (n), when (t), signed */
-  async function signState(r) {
-    const n = b64url(globalThis.crypto.getRandomValues(new Uint8Array(16))), payload = b64url(enc.encode(JSON.stringify({ r, n, t: now() })));
-    return { state: `${payload}.${b64url(await mac('state', payload))}`, n };
+  /** a sign-in begun → { state, cookie, k }: k (16 random bytes) goes in the cookie alone, signed (k.sig); the state GitHub's
+   *  address carries has where it returns (r), k's keyed hash (h: k cannot be had from it) and when (t), signed */
+  async function begin(r) {
+    const k = b64url(globalThis.crypto.getRandomValues(new Uint8Array(16)));
+    const payload = b64url(enc.encode(JSON.stringify({ r, h: b64url(await mac('bind', k)), t: now() })));
+    return { state: `${payload}.${b64url(await mac('state', payload))}`, cookie: `${k}.${b64url(await mac('cookie', k))}`, k };
   }
   async function openState(state) {
     const m = /^([A-Za-z0-9_-]{1,3000})\.([A-Za-z0-9_-]{43})$/.exec(String(state ?? ''));
-    if (!m) return null;
-    let good = false; try { good = await subtle().verify('HMAC', await key(), unb64url(m[2]), enc.encode(`state\n${m[1]}`)); } catch { return null; }
-    if (!good) return null;
-    try { const s = JSON.parse(dec.decode(unb64url(m[1]))); return typeof s?.r === 'string' && /^[A-Za-z0-9_-]{22}$/.test(String(s.n)) && Number.isFinite(s.t) ? s : null; } catch { return null; }
+    if (!m || !(await macOk('state', m[1], m[2]))) return null;
+    try { const s = JSON.parse(dec.decode(unb64url(m[1]))); return typeof s?.r === 'string' && /^[A-Za-z0-9_-]{43}$/.test(String(s.h)) && Number.isFinite(s.t) ? s : null; } catch { return null; }
+  }
+  /** the cookie's value → its k, or null when this service did not sign it */
+  async function openCookie(v) {
+    const m = /^([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{43})$/.exec(String(v ?? ''));
+    return m && (await macOk('cookie', m[1], m[2])) ? m[1] : null;
   }
   /** a code or a refresh token traded at GitHub → { ok, tokens } / { ok: false, error } (GitHub's own words are not passed on) */
   async function exchange(params) {
@@ -105,13 +122,13 @@ export function handler(env, { fetchImpl = (...a) => globalThis.fetch(...a), now
   async function login(url) {
     const back = returnOf(url.searchParams.get('return'));
     if (!back) return reply(400, { error: 'return' });
-    const { state, n } = await signState(back);
+    const { state, cookie: kept, k } = await begin(back);
     const q = new URLSearchParams({ client_id: c.clientId, redirect_uri: `${url.origin}/callback`, state });
-    if (GITHUB.pkce) { q.set('code_challenge', b64url(await subtle().digest('SHA-256', enc.encode(await verifierOf(n))))); q.set('code_challenge_method', 'S256'); }
+    if (GITHUB.pkce) { q.set('code_challenge', b64url(await subtle().digest('SHA-256', enc.encode(await verifierOf(k))))); q.set('code_challenge_method', 'S256'); }
     if (/^(1|true)$/.test(url.searchParams.get('select') ?? '')) q.set('prompt', GITHUB.selectAccount);
     const who = url.searchParams.get('login');
     if (who && LOGIN.test(who)) q.set('login', who);
-    return reply(302, null, { location: `${c.web}${GITHUB.authorize}?${q}`, 'set-cookie': cookie(state, TTL / 1000) });
+    return reply(302, null, { location: `${c.web}${GITHUB.authorize}?${q}`, 'set-cookie': cookie(kept, TTL / 1000) });
   }
   async function callback(url, req) {
     const clear = { 'set-cookie': cookie('', 0) }, state = url.searchParams.get('state') ?? '', s = await openState(state);
@@ -120,15 +137,21 @@ export function handler(env, { fetchImpl = (...a) => globalThis.fetch(...a), now
     const back = returnOf(s.r);
     if (!back) return reply(400, { error: 'return' }, clear);
     const go = (part) => reply(302, null, { ...clear, location: handTo(back, part) });
-    // (the cookie set when this browser began: a callback address made elsewhere and sent to someone signs nobody in)
-    if (cookieOf(req) !== state) return go('bdslab-auth-error=cookie');
+    // (the cookie set when this browser began, its k matching the state's h: a callback address made elsewhere and sent to
+    //  someone signs nobody in. A cookie this service did not sign was made outside a browser — the state's own value, say,
+    //  copied from a callback address seen on the way: 400, nothing followed)
+    const raw = cookieOf(req);
+    if (!raw) return go('bdslab-auth-error=cookie');
+    const k = await openCookie(raw);
+    if (!k) return reply(400, { error: 'cookie' }, clear);
+    if (!(await macOk('bind', k, s.h))) return go('bdslab-auth-error=cookie');
     const age = now() - s.t;
     if (!(age <= TTL && age >= -60_000)) return go('bdslab-auth-error=expired');
     const err = url.searchParams.get('error');
     if (err) return go(`bdslab-auth-error=${err === 'access_denied' ? 'denied' : 'github'}`);
     const code = url.searchParams.get('code') ?? '';
     if (!/^[\x21-\x7e]{1,512}$/.test(code)) return go('bdslab-auth-error=code');
-    const t = await exchange({ code, redirect_uri: `${url.origin}/callback`, ...(GITHUB.pkce ? { code_verifier: await verifierOf(s.n) } : {}) });
+    const t = await exchange({ code, redirect_uri: `${url.origin}/callback`, ...(GITHUB.pkce ? { code_verifier: await verifierOf(k) } : {}) });
     if (!t.ok) return go(`bdslab-auth-error=${t.error}`);
     return go(`bdslab-auth=${b64url(enc.encode(JSON.stringify(t.tokens)))}`);
   }
@@ -162,7 +185,7 @@ export function handler(env, { fetchImpl = (...a) => globalThis.fetch(...a), now
       return allowed && path !== '/login' && path !== '/callback' ? reply(204, null, { ...cors, 'access-control-allow-methods': 'GET, POST', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '600' }) : reply(403, { error: 'origin' }, { vary: 'Origin' });
     }
     if (req.method !== want) return reply(405, { error: 'method' }, { allow: `${want}, OPTIONS` });
-    if (path === '/health') return reply(c.missing.length ? 503 : 200, { ok: !c.missing.length, clientId: c.clientId || null, origins: c.origins, version: VERSION, ...(c.missing.length ? { missing: c.missing } : {}) }, cors);
+    if (path === '/health') return reply(c.missing.length ? 503 : 200, { ok: !c.missing.length, clientId: c.clientId || null, origins: c.origins, panels: c.panels.map((p) => p.href), version: VERSION, ...(c.missing.length ? { missing: c.missing } : {}) }, cors);
     if (c.missing.length) return reply(500, { error: 'config' }, cors);
     if (path === '/login') return login(url);
     if (path === '/callback') return callback(url, req);
