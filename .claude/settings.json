@@ -100,6 +100,18 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/no-repo-delete.mjs",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
