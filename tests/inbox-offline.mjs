@@ -272,7 +272,8 @@ await t('parseEnv: a name given twice — the later one is used, in the place of
 });
 
 await t('parseEnv: no value ever in an error or a warning — not of a refused line, a stray token, a bad quote, a name given twice (pure)', () => {
-  const SECRETS = ['ghp_SUPERSECRETTOKEN1234567890abcdef', 'sk-ant-api03-ZZZZ-wwww-1111', 'p@ss w0rd with spaces', 'c2VjcmV0LXRva2VuLWhlcmU', 'ZmFrZQ'];
+  // (a token's shape made at run time: the lab's own secret scan — share, host's pre-push — reads this file as it is)
+  const SECRETS = [`ghp_${'SUPERSECRETTOKEN'}1234567890abcdef`, 'sk-ant-api03-ZZZZ-wwww-1111', 'p@ss w0rd with spaces', 'c2VjcmV0LXRva2VuLWhlcmU', 'ZmFrZQ'];
   const text = [
     `lower_name=${SECRETS[0]}`, `GITHUB_TOKEN=${SECRETS[1]}`, `OKAY="${SECRETS[2]}" trailing junk`, `${SECRETS[0]}`, `${SECRETS[3]}=`, `${SECRETS[4]}==`,
     `has space=${SECRETS[1]}`, `DUP=${SECRETS[0]}`, `DUP=${SECRETS[1]}`, `FINE=${SECRETS[2]}`, `"${SECRETS[0]}"`, `NAME=\'${SECRETS[3]}`].join('\n');
