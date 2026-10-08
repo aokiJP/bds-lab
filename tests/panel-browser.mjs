@@ -353,7 +353,7 @@ try {
   await tab('設定');
   // debug: the last GitHub calls on this device, no token in them; an error on the page shown at once at the top
   check(/GET \/repos\/author1\/bds-lab/.test(await page.locator('#debuglog').innerText()) && !/tok-author/.test(await page.locator('#debug').innerText()), 'the debug card: the last calls, never the token', await page.locator('#debug').innerText());
-  await page.evaluate(() => window.dispatchEvent(new ErrorEvent('error', { message: 'boom ghp_abcdefghijklmnop1234', filename: 'x/panel.js', lineno: 9 })));
+  await page.evaluate(() => window.dispatchEvent(new globalThis.ErrorEvent('error', { message: 'boom ghp_abcdefghijklmnop1234', filename: 'x/panel.js', lineno: 9 })));
   check(await page.locator('#faults').innerText() === '⚠ 1', 'an error on the page: a mark at the top at once', await page.locator('#who').innerText());
   await page.locator('#debug button', { hasText: '読み直す' }).click();
   check(/boom \[消しました\] \(panel\.js:9\)/.test(await page.locator('#debuglog').innerText()), 'the error in the debug card, a token in it taken out', await page.locator('#debuglog').innerText());

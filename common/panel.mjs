@@ -26,7 +26,7 @@ const RULES = [
   [/^tests\/(panel-offline|panel-browser|governance-offline|setup-offline|session-offline|auth-offline|appci-offline)\.mjs$/, (f) => [f]],
 ];
 export const ALL = ['tests/panel-offline.mjs', 'tests/governance-offline.mjs', 'tests/setup-offline.mjs', 'tests/session-offline.mjs', 'tests/auth-offline.mjs', 'tests/appci-offline.mjs', BROWSER];
-const LINTABLE = /^(panel|auth)\/.*\.(m?js)$|^common\/(panel|panel-config|ghapp)\.mjs$/;
+const LINTABLE = /^(panel|auth)\/.*\.(m?js)$|^common\/(panel|panel-config|ghapp|hosts)\.mjs$|^tests\/(panel|governance|setup|session|auth|appci|host)-[a-z]+\.mjs$/;
 
 /** the changed files → { lint: [files], tests: [files] } (pure); quick leaves the browser out */
 export function plan(files, { quick = false } = {}) {
@@ -62,7 +62,7 @@ const eslint = (files) => (fs.existsSync(LOCAL_ESLINT) ? runOne(process.execPath
 
 /** the checks run → true when all passed; out: each one ✔/✘ with its time, a failure's lines */
 export function check({ files, quick = false, all = false, out = console.log } = {}) {
-  const p = all ? { lint: ['panel', 'auth', 'common/panel.mjs', 'common/panel-config.mjs', 'common/ghapp.mjs'], tests: ALL.filter((t) => !(quick && t === BROWSER)) } : plan(files ?? changed(), { quick });
+  const p = all ? { lint: ['panel', 'auth', 'common/panel.mjs', 'common/panel-config.mjs', 'common/ghapp.mjs', 'common/hosts.mjs', ...ALL], tests: ALL.filter((t) => !(quick && t === BROWSER)) } : plan(files ?? changed(), { quick });
   if (!p.lint.length && !p.tests.length) { out('panel: 変えたファイルに、パネルの試験の要るものはありません（--all ですべて）'); return true; }
   let ok = true;
   const say = (name, r) => { ok &&= r.ok; out(`${r.ok ? '✔' : '✘'} ${name}（${(r.ms / 1000).toFixed(1)} 秒）`); if (!r.ok) for (const x of failLines(r.out)) out(`    ${x}`); };
