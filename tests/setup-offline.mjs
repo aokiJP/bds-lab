@@ -2,8 +2,9 @@
 // where its form goes and the way back (?code= with this tab's state only), storeApp sealing the App's keys into secrets and
 // setting its variables with nothing kept (a fake GitHub on node:http that opens what it is sent), every check in each of its
 // states with the fix it offers and what that fix asks GitHub (Pages, the App, its installation, the sign-in service, putting
-// it on Cloudflare through auth-deploy.yml's notice, the workflows, a lender's link), and the 「準備」 tab on a small fake DOM
-// (fixes for administrators only, the App's real form, the code taken out of the address before anything else).
+// it on Cloudflare through auth-deploy.yml's notice of this person's own run, the workflows, a lender's link), and the 「準備」
+// tab on a small fake DOM (fixes for administrators the policy lets do them only, the App's real form, the code taken out of
+// the address before anything else and used only when it can be kept).
 // node tests/setup-offline.mjs
 import http from 'node:http';
 import path from 'node:path';
@@ -26,7 +27,7 @@ async function fakeGitHub(init = {}) {
   const sk = crypto.randomBytes(32), pk = SEAL.x25519Public(sk);
   const st = { secrets: new Map(), vars: new Map(Object.entries(init.vars ?? {})), pages: init.pages ?? null, pagesStatus: init.pagesStatus ?? 200, installs: init.installs ?? [], instRepos: init.instRepos ?? {},
     runs: [{ id: 1, status: 'completed', conclusion: 'success', event: 'workflow_dispatch', created_at: '2026-01-01T00:00:00Z' }], deployConclusion: init.deployConclusion ?? 'success', notice: init.notice ?? AUTH_URL,
-    health: init.health ?? { ok: true, clientId: 'Iv1.app', origins: ['https://o.github.io'], version: 1 }, seen: [], failSecret: init.failSecret ?? null, log: init.log ?? [] };
+    health: init.health ?? { ok: true, clientId: 'Iv1.app', origins: ['https://o.github.io'], version: 1 }, seen: [], failSecret: init.failSecret ?? null, log: init.log ?? [], intruders: init.intruders ?? false };
   const send = (res, code, j) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(j === null || j === undefined ? '' : JSON.stringify(j)); };
   const srv = http.createServer((req, res) => {
     let b = ''; req.setEncoding('utf8'); req.on('data', (d) => { b += d; });
@@ -49,7 +50,13 @@ async function fakeGitHub(init = {}) {
         if (m === 'PUT') { st.pages = { ...st.pages, build_type: body.build_type }; return send(res, 204, null); }
       }
       if ((x = /^\/repos\/o\/lab\/actions\/workflows\/([\w.-]+)\/dispatches$/.exec(u)) && m === 'POST') {
-        if (x[1] === 'auth-deploy.yml') st.runs.unshift({ id: 900 + st.runs.length, status: 'queued', conclusion: null, event: 'workflow_dispatch', created_at: '2020-01-01T00:00:00Z' });
+        if (x[1] === 'auth-deploy.yml') {
+          st.runs.unshift({ id: 900 + st.runs.length, status: 'queued', conclusion: null, event: 'workflow_dispatch', head_branch: body.ref, actor: { login: 'o' }, triggering_actor: { login: 'o' }, created_at: '2020-01-01T00:00:00Z' });
+          // (runs that are not this person's, newer than theirs: a fork's pull request, another branch, someone else)
+          if (st.intruders) st.runs.unshift({ id: 7001, status: 'queued', conclusion: null, event: 'pull_request', head_branch: 'main', actor: { login: 'mallory' }, triggering_actor: { login: 'mallory' } },
+            { id: 7002, status: 'queued', conclusion: null, event: 'workflow_dispatch', head_branch: 'evil', actor: { login: 'o' }, triggering_actor: { login: 'o' } },
+            { id: 7003, status: 'queued', conclusion: null, event: 'workflow_dispatch', head_branch: 'main', actor: { login: 'mallory' }, triggering_actor: { login: 'mallory' } });
+        }
         return send(res, 204, null);
       }
       if (/^\/repos\/o\/lab\/actions\/workflows\/auth-deploy\.yml\/runs\?/.test(u)) {
@@ -59,7 +66,7 @@ async function fakeGitHub(init = {}) {
         return send(res, 200, { workflow_runs: out });
       }
       if ((x = /^\/repos\/o\/lab\/actions\/runs\/(\d+)\/jobs\?/.exec(u))) return send(res, 200, { jobs: [{ name: 'deploy', check_run_url: `https://api.github.com/repos/o/lab/check-runs/${x[1]}1` }] });
-      if ((x = /^\/repos\/o\/lab\/check-runs\/(\d+)\/annotations\?/.exec(u))) return send(res, 200, st.notice ? [{ annotation_level: 'warning', title: 'auth-url', message: 'https://wrong.example' }, { annotation_level: 'notice', title: 'auth-url', message: ` ${st.notice}/ ` }] : []);
+      if ((x = /^\/repos\/o\/lab\/check-runs\/(\d+)\/annotations\?/.exec(u))) return send(res, 200, /^700\d1$/.test(x[1]) ? [{ annotation_level: 'notice', title: 'auth-url', message: 'https://evil.example' }] : st.notice ? [{ annotation_level: 'warning', title: 'auth-url', message: 'https://wrong.example' }, { annotation_level: 'notice', title: 'auth-url', message: ` ${st.notice}/ ` }] : []);
       if (u === '/user/installations?per_page=100') return send(res, 200, { total_count: st.installs.length, installations: st.installs });
       if ((x = /^\/user\/installations\/(\d+)\/repositories\?per_page=100&page=1$/.exec(u))) return send(res, 200, { repositories: (st.instRepos[x[1]] ?? []).map((full_name) => ({ full_name })) });
       send(res, 404, { message: `Not Found ${m} ${u}` });
@@ -82,14 +89,19 @@ const byKey = (cs) => Object.fromEntries(cs.map((c) => [c.key, c]));
 const QUICK = { sleep: async () => {}, every: 1, timeoutMs: 50 };
 
 await t('the App\'s manifest: no webhook, no events, public (a lender puts it on their own account), its way back to the panel and its sign-in to the service; the permissions the panel and the workflows use and no more (pure)', () => {
-  eq(S.APP_PERMISSIONS, { actions: 'write', contents: 'write', secrets: 'write', actions_variables: 'write', issues: 'write', workflows: 'write', pages: 'write', pull_requests: 'read', metadata: 'read' });
+  eq(S.APP_PERMISSIONS, { actions: 'write', contents: 'write', secrets: 'write', actions_variables: 'write', issues: 'write', workflows: 'write', pages: 'write', pull_requests: 'read', metadata: 'read', members: 'read' }, 'members: read, an organization\'s teams for the policy');
   ok(Object.isFrozen(S.APP_PERMISSIONS), 'one constant, not changed by anyone');
   const m = S.appManifest({ owner: 'aokiJP', repo: 'bds-lab', panelUrl: 'https://aokijp.github.io/bds-lab/#runs', authUrl: 'https://bds-lab-auth.aoki.workers.dev/' });
   eq(m, { name: 'bds-lab-aokiJP', url: 'https://aokijp.github.io/bds-lab/', hook_attributes: { active: false }, redirect_url: 'https://aokijp.github.io/bds-lab/#setup', callback_urls: ['https://bds-lab-auth.aoki.workers.dev/callback'], setup_url: 'https://aokijp.github.io/bds-lab/#setup',
     public: true, default_permissions: S.APP_PERMISSIONS, default_events: [], request_oauth_on_install: false });
-  for (const k of ['administration', 'members', 'organization_administration', 'emails', 'checks']) ok(!(k in m.default_permissions), `no ${k}`);
+  for (const k of ['administration', 'organization_administration', 'emails', 'checks']) ok(!(k in m.default_permissions), `no ${k}`);
+  eq(m.default_permissions.members, 'read', 'teams read, never written');
   eq(S.appManifest({ owner: 'o', repo: 'lab', panelUrl: 'https://o.github.io/lab/' }).callback_urls, [], 'no service yet: no callback (the check \'callback\' says to set it)');
   eq(S.appManifest({ owner: 'o', repo: 'lab', panelUrl: 'https://o.github.io/lab/', authUrl: 'http://plain.example' }).callback_urls, [], 'only an https service');
+  eq(S.appManifest({ owner: 'o', repo: 'lab', panelUrl: 'https://o.github.io/lab/', authUrl: 'https://example.com/auth' }).callback_urls, [], 'a service under a path: none (it answers at its origin\'s /callback)');
+  // the service's address: the root of an https origin only (the panel signs in at <origin>/…, the service's redirect_uri is <origin>/callback)
+  eq(['https://auth.example', 'https://auth.example/', 'https://auth.example:8443', ' https://a-b.workers.dev// '].map(S.cleanAuthUrl), ['https://auth.example', 'https://auth.example', 'https://auth.example:8443', 'https://a-b.workers.dev']);
+  eq(['https://example.com/auth', 'https://example.com/auth/', 'https://x.example/?a=1', 'https://x.example/#h', 'http://x.example', 'javascript:alert(1)', 'https://user@x.example', ''].map(S.cleanAuthUrl), Array(8).fill(null));
   ok(S.appManifest({ owner: 'a-very-long-organization-name-x', repo: 'bds-lab', panelUrl: 'https://x.github.io/y/' }).name.length <= 34, 'a name GitHub takes (34 at most)');
   eq(S.appManifest({ owner: 'o', repo: 'lab', panelUrl: 'https://o.github.io/lab/', name: 'Our <lab>' }).name, 'Our -lab', 'a given name, made safe');
   ok(S.appManifest({ owner: 'o', repo: 'lab', panelUrl: 'https://o.github.io/lab/' }).default_permissions !== S.APP_PERMISSIONS, 'a copy: the constant stays as it is');
@@ -166,6 +178,10 @@ await t('checks, a new lab: Pages off (its fix turns it on built by pages.yml), 
     eq(c.auth.fix.inputs.map((i) => i.name), ['url']);
     await throws(() => c.auth.fix.run({ url: 'http://plain.example' }), /https:\/\//, 'not https');
     await throws(() => c.auth.fix.run({ url: 'https://x.example/?a=1' }), /https:\/\//, 'a query');
+    await throws(() => c.auth.fix.run({ url: 'https://example.com/auth' }), /origin の \/ に（auth\/README\.md）/, 'a path: the service is at its origin\'s /');
+    ok(!f.st.vars.has('LAB_AUTH_URL'), 'nothing set for a wrong one');
+    ok(/サービスは origin の \/ に（auth\/README\.md）/.test(c.auth.need), c.auth.need);
+    eq([c.pages.fix.needs, c.auth.fix.needs, c.app.fix.needs], [['dispatch'], ['variables', 'dispatch'], ['secrets.put', 'variables']], 'each fix says what it does, in the policy\'s words');
     ok(/LAB_AUTH_URL を https:\/\/auth\.mine\.example にしました/.test(await c.auth.fix.run({ url: 'https://auth.mine.example/' })), 'the slash trimmed');
     eq(f.st.vars.get('LAB_AUTH_URL'), 'https://auth.mine.example');
     const later = byKey(await S.checks(ctx));
@@ -184,10 +200,12 @@ await t('checks, the App made: it is there; installed (only an App\'s sign-in ca
     ok(tok.installed.ok === null && tok.installed.need === 'App でサインインすると分かります' && tok.installed.fix.link === 'https://github.com/apps/lab-o/installations/new', JSON.stringify(tok.installed));
     ok(!f.st.seen.some((s) => s.u.startsWith('/user/installations')), 'a token: installations not asked');
     ok(tok['host:lender/host'].ok === null && tok['host:lender/host'].fix.link === 'https://github.com/apps/lab-o/installations/new' && /貸し手/.test(tok['host:lender/host'].fix.label), JSON.stringify(tok['host:lender/host']));
+    ok(/Only select repositories」でホストのリポジトリだけ/.test(tok['host:lender/host'].need) && /contents・actions・workflows だけ（hostrun）/.test(tok['host:lender/host'].need), `the lender told to give it the host alone: ${tok['host:lender/host'].need}`);
     ok(tok.workflows.ok === true && tok.workflows.need === '', 'APP_ID and APP_PRIVATE_KEY: no personal token for hostrun or secrets');
     ok(tok.callback.ok === null && /https:\/\/auth\.test\/callback/.test(tok.callback.need) && tok.callback.fix.link === 'https://github.com/settings/apps/lab-o', JSON.stringify(tok.callback));
     const app = byKey(await S.checks({ ...base, signedInWithApp: true }));
     eq([app.installed.ok, app['host:lender/host'].ok, app['host:friend/host2'].ok, app.callback.ok], [true, true, false, true], 'this App\'s installations only; any case');
+    ok(/Only select repositories/.test(app['host:friend/host2'].need), app['host:friend/host2'].need);
     ok(!f.st.seen.some((s) => s.u.startsWith('/user/installations/8/')), 'another App\'s installation not read');
     // the lab not among them
     f.st.instRepos[7] = ['Lender/Host'];
@@ -225,14 +243,25 @@ await t('checks, the sign-in service: answering with this App\'s client id for t
   ok(moved.c.auth.ok === false && /LAB_AUTH_URL（https:\/\/new\.example）が、このページの設定/.test(moved.c.auth.need) && /pages\.yml/.test(moved.c.auth.fix.label), JSON.stringify(moved.c.auth));
   const noapp = await run({ vars: { APP_SLUG: 'lab-o' } });
   ok(noapp.c.auth.ok === false && /APP_CLIENT_ID/.test(noapp.c.auth.need), JSON.stringify(noapp.c.auth));
+  // a service that names the panels' addresses (path and all): this panel's must begin with one — its origins no longer enough
+  const panels = await run({ health: { ok: true, clientId: 'Iv1.app', origins: ['https://o.github.io'], panels: ['https://o.github.io/lab/'] } });
+  ok(panels.c.auth.ok === true, JSON.stringify(panels.c.auth));
+  const otherPanel = await run({ health: { ok: true, clientId: 'Iv1.app', origins: ['https://o.github.io'], panels: 'https://o.github.io/other/' } });
+  ok(otherPanel.c.auth.ok === false && /PANEL_ORIGINS にこのパネルのアドレス（パス付き: https:\/\/o\.github\.io\/lab\/）/.test(otherPanel.c.auth.need) && /o\.github\.io\/other/.test(otherPanel.c.auth.need) && otherPanel.c.auth.fix, JSON.stringify(otherPanel.c.auth));
+  eq((await run({ health: { ok: true, clientId: 'Iv1.app', origins: ['https://elsewhere.example'], panels: ['https://o.github.io/lab/'] } })).c.auth.ok, true, 'panels said: they decide');
+  eq((await run({ health: { ok: true, clientId: 'Iv1.app', origins: ['https://o.github.io'], panels: [] } })).c.auth.ok, false, 'no panel allowed: none');
+  // the page's own setting under a path: not a service the panel can sign in at, said so
+  const pathed = await run({}, { ctx: { config: { authUrl: 'https://example.com/auth' } } });
+  ok(pathed.c.auth.ok === false && /https の origin の根ではありません: サービスは origin の \/ に（auth\/README\.md）/.test(pathed.c.auth.need) && pathed.c.auth.fix.inputs && !pathed.f.st.seen.some((s) => s.u === '/auth/health'), JSON.stringify(pathed.c.auth));
 });
 
 await t('checks, putting the service on Cloudflare: its token and account sealed into secrets, auth-deploy.yml started and waited for (the new run, not an old one), its notice 「auth-url」 into LAB_AUTH_URL, pages.yml started; a failed run said (fake GitHub)', async () => {
   const vars = { APP_ID: '4242', APP_SLUG: 'lab-o', APP_CLIENT_ID: 'Iv1.app' }, secrets = ['APP_PRIVATE_KEY', 'APP_CLIENT_SECRET', 'AUTH_STATE_SECRET'];
   const f = await fakeGitHub({ vars, pages: { build_type: 'workflow' } });
   try {
-    const ctx = { api: f.api, lab: LAB({ secrets }), config: {}, panelUrl: 'https://o.github.io/lab/', fetchImpl: f.fetchImpl, wait: QUICK };
+    const ctx = { api: f.api, lab: LAB({ secrets }), me: { login: 'o' }, config: {}, panelUrl: 'https://o.github.io/lab/', fetchImpl: f.fetchImpl, wait: QUICK };
     const c = byKey(await S.checks(ctx));
+    eq(c.deploy.fix.needs, ['secrets.put', 'dispatch', 'variables'], 'what it does, in the policy\'s words');
     ok(c.deploy.ok === false && /Cloudflare の API トークンとアカウント ID/.test(c.deploy.need) && c.deploy.fix.inputs.map((i) => `${i.name}:${Boolean(i.secret)}`).join() === 'token:true,account:false', JSON.stringify(c.deploy));
     await throws(() => c.deploy.fix.run({ token: CF_TOKEN, account: 'not-hex' }), /32 文字/, 'an account id of another form');
     await throws(() => c.deploy.fix.run({ token: 'short', account: CF_ACCOUNT }), /トークンの形/, 'a token of another form');
@@ -256,13 +285,25 @@ await t('checks, putting the service on Cloudflare: its token and account sealed
     ok(/auth-deploy\.yml がありません/.test(byKey(await S.checks({ ...ctx, lab: LAB({ secrets, workflows: [] }) })).deploy.need), 'no workflow to put it with');
   } finally { f.close(); }
   const bad = await fakeGitHub({ vars, deployConclusion: 'failure' });
-  try { await throws(() => S.deployAuth(bad.api, 'o/lab', { ...QUICK }), /failure で終わりました/, 'a failed deploy'); ok(!bad.st.vars.has('LAB_AUTH_URL'), 'nothing set'); } finally { bad.close(); }
+  try { await throws(() => S.deployAuth(bad.api, 'o/lab', { me: 'o', ...QUICK }), /failure で終わりました/, 'a failed deploy'); ok(!bad.st.vars.has('LAB_AUTH_URL'), 'nothing set'); } finally { bad.close(); }
   const mute = await fakeGitHub({ vars, notice: '' });
-  try { await throws(() => S.deployAuth(mute.api, 'o/lab', { ...QUICK }), /注釈 auth-url/, 'no notice'); } finally { mute.close(); }
+  try { await throws(() => S.deployAuth(mute.api, 'o/lab', { me: 'o', ...QUICK }), /注釈 auth-url/, 'no notice'); } finally { mute.close(); }
   const slow = await fakeGitHub({ vars });
-  try { await throws(() => S.deployAuth(slow.api, 'o/lab', { sleep: async () => {}, every: 10, timeoutMs: 5 }), /時間内に終わりません/, 'too long'); } finally { slow.close(); }
+  try { await throws(() => S.deployAuth(slow.api, 'o/lab', { me: 'o', sleep: async () => {}, every: 10, timeoutMs: 5 }), /時間内に終わりません/, 'too long'); } finally { slow.close(); }
   const evil = await fakeGitHub({ vars, notice: 'javascript:alert(1)' });
-  try { await throws(() => S.deployAuth(evil.api, 'o/lab', { ...QUICK }), /注釈 auth-url/, 'an address that is not https'); } finally { evil.close(); }
+  try { await throws(() => S.deployAuth(evil.api, 'o/lab', { me: 'o', ...QUICK }), /注釈 auth-url/, 'an address that is not https'); } finally { evil.close(); }
+  const pathed = await fakeGitHub({ vars, notice: 'https://bds-lab-auth.o.workers.dev/auth' });
+  try { await throws(() => S.deployAuth(pathed.api, 'o/lab', { me: 'o', ...QUICK }), /注釈 auth-url: https の origin の根/, 'an address under a path'); ok(!pathed.st.vars.has('LAB_AUTH_URL'), 'nothing set'); } finally { pathed.close(); }
+  // nobody known to start it: nothing started
+  const anon = await fakeGitHub({ vars });
+  try { await throws(() => S.deployAuth(anon.api, 'o/lab', { ...QUICK }), /始める人/, 'no login'); ok(!anon.st.seen.some((s) => s.m !== 'GET'), 'nothing sent'); } finally { anon.close(); }
+  // newer runs that are not this person's own (a fork's pull request, another branch, someone else's): never read; theirs is
+  const crowd = await fakeGitHub({ vars, intruders: true });
+  try {
+    eq(await S.deployAuth(crowd.api, 'o/lab', { me: 'O', ...QUICK }), AUTH_URL, 'this person\'s run on this branch, any case');
+    eq(crowd.st.vars.get('LAB_AUTH_URL'), AUTH_URL);
+    ok(!crowd.st.seen.some((s) => /runs\/700\d\/jobs|check-runs\/700\d1\//.test(s.u)), `the others' runs not read: ${crowd.st.seen.filter((s) => /700\d/.test(s.u)).map((s) => s.u)}`);
+  } finally { crowd.close(); }
 });
 
 await t('checks, Pages on another source (its fix switches it to the workflow) or not readable (cannot tell); variables not readable (cannot tell) (fake GitHub)', async () => {
@@ -273,6 +314,16 @@ await t('checks, Pages on another source (its fix switches it to the workflow) o
     await c.pages.fix.run();
     ok(f.st.seen.some((s) => s.m === 'PUT' && s.u === '/repos/o/lab/pages' && JSON.parse(s.body).build_type === 'workflow') && f.st.pages.build_type === 'workflow', 'switched');
   } finally { f.close(); }
+  // signed in with the App (no administration permission): GitHub's own Pages settings, no button
+  const a = await fakeGitHub({});
+  try {
+    const off = byKey(await S.checks({ api: a.api, lab: LAB(), config: {}, panelUrl: 'https://o.github.io/lab/', signedInWithApp: true })).pages;
+    ok(off.ok === false && off.fix.link === 'https://github.com/o/lab/settings/pages' && !off.fix.run && /Source を GitHub Actions に/.test(off.fix.label) && /Source を「GitHub Actions」に/.test(off.need), JSON.stringify(off));
+    a.st.pages = { build_type: 'legacy' };
+    const legacy = byKey(await S.checks({ api: a.api, lab: LAB(), config: {}, panelUrl: 'https://o.github.io/lab/', signedInWithApp: true })).pages;
+    ok(legacy.ok === false && legacy.fix.link === 'https://github.com/o/lab/settings/pages' && !legacy.fix.run, JSON.stringify(legacy));
+    ok(!a.st.seen.some((s) => s.m !== 'GET'), 'nothing asked of GitHub');
+  } finally { a.close(); }
   const g = await fakeGitHub({ pagesStatus: 403 });
   try {
     g.api.variable = async () => { throw new G.GhError(403, 'no', '/x'); };
@@ -342,7 +393,7 @@ await t('the 「準備」 tab: the list for anyone; fixes for the lab\'s adminis
     await UI.setupTab(wrong, { ...base, ...nav('?code=c0de1&state=nope') });
     ok(f.st.log.join() === 'replace /lab/#setup' && !f.st.seen.some((s) => /conversions/.test(s.u)) && /このタブで始めたものではない/.test(wrong.textContent), `${f.st.log.join()} ${wrong.textContent}`);
     // the way back with this tab's state: the address cleaned first, then the App's keys sealed into secrets
-    base.storage.setItem('bdslab.setup.manifest', JSON.stringify({ state: 'abc', lab: 'o/lab', at: Date.now() }));
+    base.storage.setItem('bdslab.setup.manifest', JSON.stringify({ state: 'abc', lab: 'o/lab', owner: 'o', isOrg: false, at: Date.now() }));
     f.st.log.length = 0; reloads = 0; recs.length = 0;
     const back = new E('div');
     await UI.setupTab(back, { ...base, ...nav('?code=c0de2&state=abc'), reload: () => { reloads++; }, record: (a, d) => recs.push([a, d]) });
@@ -358,13 +409,14 @@ await t('the 「準備」 tab: the list for anyone; fixes for the lab\'s adminis
     eq(f.st.log, ['replace /lab/#setup'], 'once only');
     // panel.js may take it first, before any request: the address cleaned at once, the answer handed to the tab (used once;
     // another lab's not used; older than GitHub's hour not used)
-    base.storage.setItem('bdslab.setup.manifest', JSON.stringify({ state: 'def', lab: 'o/other', at: Date.now() }));
+    base.storage.setItem('bdslab.setup.manifest', JSON.stringify({ state: 'def', lab: 'o/other', owner: 'o', isOrg: false, at: Date.now() }));
     f.st.log.length = 0;
     const early = UI.takeAppReturn({ ...nav('?code=c0de3&state=def'), storage: base.storage });
-    eq([early, f.st.log], [{ code: 'c0de3', lab: 'o/other' }, ['replace /lab/#setup']]);
+    eq([early, f.st.log], [{ code: 'c0de3', lab: 'o/other', owner: 'o', isOrg: false }, ['replace /lab/#setup']]);
     const el = new E('div');
     await UI.setupTab(el, { ...base, ...nav(), appReturn: early });
     ok(/別のラボ（o\/other）/.test(el.textContent) && !f.st.log.includes('convert') && early.used === true, el.textContent);
+    ok(/App は GitHub にできています: App の設定で鍵/.test(el.textContent) && /App を消して/.test(el.textContent) && el.all((e) => e.tagName === 'A' && e.attrs.href === 'https://github.com/settings/apps').length === 1, `what to do with the App made: ${el.textContent}`);
     eq(UI.takeAppReturn({ ...nav('', '#setup'), storage: base.storage }), null, 'no code: nothing');
     base.storage.setItem('bdslab.setup.manifest', JSON.stringify({ state: 'old', lab: 'o/lab', at: Date.now() - 2 * 3_600_000 }));
     ok(/古い/.test(UI.takeAppReturn({ ...nav('?code=c0de4&state=old'), storage: base.storage }).error), 'older than an hour');
@@ -376,11 +428,62 @@ await t('the 「準備」 tab: the list for anyone; fixes for the lab\'s adminis
     ok(a.length >= 2 && a.every((x) => x.attrs.rel === 'noopener noreferrer'), 'the install links');
     const pw = later.all((e) => e.tagName === 'INPUT' && e.attrs.type === 'password');
     eq(pw.length, 1, 'Cloudflare\'s token as a password field');
+    eq(pw[0].attrs.autocomplete, 'off', 'not offered to the browser\'s password manager');
     const acct = later.all((e) => e.tagName === 'INPUT' && e.attrs.type === 'text' && /CLOUDFLARE_ACCOUNT_ID/.test(e.attrs['aria-label']))[0];
     pw[0].value = CF_TOKEN; acct.value = CF_ACCOUNT;
     await later.all((e) => e.tagName === 'BUTTON' && /封じて登録し、置く/.test(e.textContent))[0].click();
     eq([f.open('CLOUDFLARE_API_TOKEN'), f.st.vars.get('LAB_AUTH_URL'), pw[0].value, acct.value], [CF_TOKEN, AUTH_URL, '', ''], 'sealed, put there, the fields emptied');
     ok(!later.textContent.includes(CF_TOKEN) && !toast.textContent.includes(CF_TOKEN), 'the token not shown');
+  } finally { f.close(); }
+});
+
+await t('the 「準備」 tab and the policy: a fix only for a GitHub administrator whose role the policy lets do all it does (secrets, variables, starting a workflow), else why — the role and the policy — in place of its button; the App\'s form the same, and its way back looked at before the code is used (fake DOM, fake GitHub)', async () => {
+  const { E } = fakeDom();
+  const UI = await imp('panel/ui/setup.mjs'), P = await imp('panel/lib/policy.mjs');
+  const f = await fakeGitHub();
+  try {
+    const nav = (search = '', hash = '#setup') => ({ location: { search, hash, pathname: '/lab/' }, history: { replaceState: () => {} } });
+    const base = { api: f.api, lab: LAB(), hosts: [], me: { login: 'o' }, config: {}, panelUrl: 'https://o.github.io/lab/', signedInWithApp: false, fetchImpl: f.fetchImpl, storage: AC.memoryStorage() };
+    const buttons = (b) => b.all((e) => e.tagName === 'BUTTON' && e.textContent !== 'コピー'), rowOf = (b, k) => b.all((e) => e.attrs['data-check'] === k)[0];
+    // an administrator whose role may start workflows only: Pages' button (it starts pages.yml); not the App (secrets and
+    // variables) nor the service's address (a variable): why, in place of them
+    const dispatchOnly = P.checkPolicy({ roles: { admin: ['dispatch'], write: [] } }).policy;
+    const b1 = new E('div');
+    await UI.setupTab(b1, { ...base, ...nav(), policy: dispatchOnly, role: P.roleFor({ repoRole: 'admin', policy: dispatchOnly }) });
+    eq(buttons(b1).map((x) => x.textContent), ['Pages を有効に（GitHub Actions で）']);
+    ok(!b1.all((e) => e.tagName === 'FORM').length, 'no App form');
+    ok(/役割「admin」には、ポリシー（\.github\/bds-lab-panel\.json の roles）が「秘密を登録する・変数を変える」を許していません/.test(rowOf(b1, 'app').textContent), rowOf(b1, 'app').textContent);
+    ok(/「変数を変える」を許していません/.test(rowOf(b1, 'auth').textContent) && !b1.all((e) => e.tagName === 'INPUT').length, rowOf(b1, 'auth').textContent);
+    // a policy that allows nothing (or a broken file): no button, no form, no field
+    for (const policy of [P.checkPolicy({ roles: { admin: [] } }).policy, P.LOCKED_POLICY]) {
+      const b = new E('div');
+      await UI.setupTab(b, { ...base, ...nav(), policy, role: 'admin' });
+      ok(!buttons(b).length && !b.all((e) => e.tagName === 'FORM').length && /ワークフローを始める/.test(rowOf(b, 'pages').textContent), b.textContent);
+    }
+    // a writer given everything by the policy: still not GitHub's administrator
+    const all = P.checkPolicy({ roles: { admin: ['*'], write: ['*'] } }).policy, w = new E('div');
+    await UI.setupTab(w, { ...base, lab: LAB({ role: 'write' }), ...nav(), policy: all, role: P.roleFor({ repoRole: 'write', policy: all }) });
+    ok(!buttons(w).length && !w.all((e) => e.tagName === 'FORM').length && /管理者が直せます/.test(w.textContent), w.textContent);
+    // the policy's role read from a team: said by the role's name
+    const teamed = P.checkPolicy({ roles: { admin: ['*'], ops: ['dispatch'] }, teams: { ops: 'ops' } }).policy, tm = new E('div');
+    await UI.setupTab(tm, { ...base, ...nav(), policy: teamed, role: P.roleFor({ repoRole: 'admin', teams: ['ops'], policy: teamed }) });
+    ok(/役割「ops」/.test(rowOf(tm, 'app').textContent) && !tm.all((e) => e.tagName === 'FORM').length, rowOf(tm, 'app').textContent);
+    // the way back while the policy does not let this role keep the App's keys: the code not used, what to do said
+    // (an organization's App: its Apps' page)
+    for (const [over, re] of [[{ policy: dispatchOnly, role: 'admin' }, /秘密を登録する・変数を変える/], [{ lab: LAB({ role: 'write' }) }, /管理者が直せます/]]) {
+      base.storage.setItem('bdslab.setup.manifest', JSON.stringify({ state: 'xyz', lab: 'o/lab', owner: 'acme', isOrg: true, at: Date.now() }));
+      f.st.log.length = 0;
+      const b = new E('div');
+      await UI.setupTab(b, { ...base, ...nav('?code=c0de9&state=xyz'), ...over });
+      ok(!f.st.log.includes('convert') && !f.st.secrets.size && !f.st.seen.some((s) => /conversions/.test(s.u)), 'the code not used');
+      ok(/戻ってきた App の code は使いません/.test(b.textContent) && re.test(b.textContent) && /App は GitHub にできています/.test(b.textContent) && /APP_PRIVATE_KEY・APP_CLIENT_SECRET/.test(b.textContent), b.textContent);
+      eq(b.all((e) => e.tagName === 'A' && e.attrs.href === 'https://github.com/organizations/acme/settings/apps').length, 1, 'the organization\'s Apps');
+    }
+    // the policy allowing it: the keys kept as before
+    base.storage.setItem('bdslab.setup.manifest', JSON.stringify({ state: 'ok1', lab: 'o/lab', owner: 'o', isOrg: false, at: Date.now() }));
+    const keep = P.checkPolicy({ roles: { admin: ['secrets.put', 'variables'] } }).policy, b2 = new E('div');
+    await UI.setupTab(b2, { ...base, ...nav('?code=c0dea&state=ok1'), policy: keep, role: 'admin' });
+    ok(/App lab-o を作り/.test(b2.textContent) && f.st.vars.get('APP_SLUG') === 'lab-o', b2.textContent);
   } finally { f.close(); }
 });
 
