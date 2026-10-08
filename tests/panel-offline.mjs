@@ -155,6 +155,44 @@ await t('where a job runs: this lab or a lender\'s host — hostrun.yml\'s input
   ok(M.DISCORD_ID.test('123456789012345678') && !M.DISCORD_ID.test('12345') && !M.DISCORD_ID.test('1234567890123456789x'));
 });
 
+await t('members: GitHub\'s roles read and changed (never the owner, never oneself), an unknown name said before anything is sent; the policy as a grid and back, checked, admin always all (pure + a fake GitHub)', async () => {
+  const MB = await imp('panel/lib/members.mjs'), P = await imp('panel/lib/policy.mjs');
+  eq(MB.memberOf({ login: 'a', role_name: 'write', avatar_url: 'javascript:x' }), { login: 'a', avatar: '', permission: 'push', role: 'write' });
+  eq(MB.memberOf({ login: 'b', permissions: { admin: true } }).permission, 'admin');
+  ok(!MB.canChange({ login: 'Owner' }, { owner: 'owner', me: 'x' }).ok && !MB.canChange({ login: 'me' }, { owner: 'o', me: 'ME' }).ok && MB.canChange({ login: 'c' }, { owner: 'o', me: 'me' }).ok, 'the owner and oneself are not changed here');
+  const calls = [], api = { call: async (m, path, body) => { calls.push(`${m} ${path}${body ? ' ' + JSON.stringify(body) : ''}`);
+    if (path === '/users/ghost') throw Object.assign(new Error('nf'), { status: 404 });
+    if (m === 'PUT' && path.endsWith('/newbie')) return { id: 77 };
+    if (m === 'GET' && path.includes('/collaborators')) return [{ login: 'o', permissions: { admin: true } }, { login: 'w', role_name: 'write' }];
+    if (m === 'GET' && path.includes('/invitations')) return [{ id: 5, invitee: { login: 'newbie' }, permissions: 'write', created_at: 'x' }];
+    return null; } };
+  eq(await MB.setMember(api, 'o/lab', 'newbie', 'admin'), 'invited'); eq(await MB.setMember(api, 'o/lab', 'w', 'pull'), 'changed');
+  let e = ''; try { await MB.setMember(api, 'o/lab', 'ghost', 'push'); } catch (x) { e = x.message; } ok(/いません/.test(e) && !calls.some((c) => c.startsWith('PUT') && c.includes('ghost')), `unknown: nothing sent\n${calls.join('\n')}`);
+  e = ''; try { await MB.setMember(api, 'o/lab', '../x', 'push'); } catch (x) { e = x.message; } ok(/ユーザー名/.test(e), e);
+  ok(calls.includes('PUT /repos/o/lab/collaborators/newbie {"permission":"admin"}'), calls.join('\n'));
+  const m = await MB.readMembers(api, 'o/lab', { owner: { login: 'o' } });
+  eq([m.owner, m.members.map((x) => x.permission), m.invitations[0]], ['o', ['admin', 'push'], { id: 5, login: 'newbie', permission: 'push', at: 'x' }]);
+  // the grid and back: admin always '*', the roles a team names kept, the checked file
+  const pol = P.checkPolicy({ roles: { admin: ['*'], write: ['dispatch'], auditor: ['audit.read'] }, teams: { aud: 'auditor' }, confirm: ['dispatch'], idleMinutes: 30, audit: 'issue' }).policy;
+  const g = MB.gridOf(pol);
+  eq([g.roles.admin.length, g.roles.write, g.confirm, g.extra], [P.ACTIONS.length, ['dispatch'], ['dispatch'], { auditor: ['audit.read'] }]);
+  g.roles.write = ['dispatch', 'run.cancel']; g.roles.admin = [];
+  const back = MB.policyOf(g);
+  eq([back.errors, back.json.roles, back.json.teams], [[], { auditor: ['audit.read'], write: ['dispatch', 'run.cancel'], admin: ['*'] }, { aud: 'auditor' }]);
+  ok(P.can(P.checkPolicy(back.json).policy, 'write', 'run.cancel') && !P.can(P.checkPolicy(back.json).policy, 'write', 'members') && P.can(P.checkPolicy(back.json).policy, 'admin', 'members'), 'members: admins only');
+  ok(!P.can(P.DEFAULT_POLICY, 'write', 'members'), 'GitHub first: no writer changes members, whatever a policy says');
+  const lab = JSON.parse(fs.readFileSync(path.join(TOP, '.github', 'bds-lab-panel.json'), 'utf8')), lp = P.checkPolicy(lab);
+  ok(!lp.errors.length && P.can(lp.policy, 'admin', 'members') && !P.can(lp.policy, 'write', 'dispatch') && !P.can(lp.policy, 'maintain', 'secrets.put'), `this lab: its owner alone ${JSON.stringify(lp.errors)}`);
+});
+
+await t('runs found as typed (name, title, branch, who), failed / going / mine; a run that ended since the last look (pure)', () => {
+  const rs = [{ id: 1, name: 'verify', head_branch: 'main', status: 'completed', conclusion: 'failure', triggering_actor: { login: 'me' } }, { id: 2, name: 'app', display_title: 'hold 60', head_branch: 'dev', status: 'in_progress', actor: { login: 'you' } }, { id: 3, name: 'notify', head_branch: 'main', status: 'completed', conclusion: 'success', actor: { login: 'me' } }];
+  eq(M.filterRuns(rs, { q: 'HOLD' }).map((r) => r.id), [2]); eq(M.filterRuns(rs, { q: 'main' }).map((r) => r.id), [1, 3]);
+  eq([M.filterRuns(rs, { show: 'failed' }).map((r) => r.id), M.filterRuns(rs, { show: 'going' }).map((r) => r.id), M.filterRuns(rs, { show: 'mine', me: 'me' }).map((r) => r.id)], [[1], [2], [1, 3]]);
+  const was = new Map([[1, 'completed'], [2, 'in_progress']]);
+  eq(M.endedSince(was, [{ ...rs[1], status: 'completed', conclusion: 'success' }, rs[0], { id: 9, status: 'completed' }]).map((r) => r.id), [2], 'only one seen going and ended now');
+});
+
 await t('the secret sealed as libsodium seals it (crypto_box_seal; vectors from libsodium) and its parts against Node\'s own X25519 and BLAKE2b', () => {
   // (made with libsodium-wrappers 0.7.15: seed keypair from 32 bytes of i+1, ephemeral secret 32 bytes of 100+i; sha256 of the box)
   const V = [['', '1b1b58dd50ea14b60da17b790cd02754d970c9bab864ebb3c0f3016fe51d3f57', '138d5a94edadcd0cb3573cbbad620463cd344c38f5017230d1a0d5eb53a52b7b'],
@@ -246,7 +284,7 @@ await t('the GitHub client: the token as a bearer, workflow dispatch and secret 
 await t('the page: its CSP allows GitHub\'s API alone (and its own config; pages.yml adds the sign-in service), its own scripts, a form to GitHub only; no inline script or style; text is never parsed as HTML', () => {
   const html = fs.readFileSync(path.join(TOP, 'panel', 'index.html'), 'utf8'), js = fs.readFileSync(path.join(TOP, 'panel', 'panel.js'), 'utf8');
   const csp = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(html)?.[1] ?? '';
-  ok(/default-src 'none'/.test(csp) && /script-src 'self';/.test(csp) && /connect-src 'self' https:\/\/api\.github\.com;/.test(csp) && /form-action https:\/\/github\.com$/.test(csp) && !/unsafe/.test(csp), csp);
+  ok(/default-src 'none'/.test(csp) && /script-src 'self';/.test(csp) && /connect-src 'self' https:\/\/api\.github\.com;/.test(csp) && /form-action https:\/\/github\.com; manifest-src 'self'$/.test(csp) && !/unsafe/.test(csp), csp);
   ok(!/<script>(?!\s*<\/script>)/.test(html) && !/ style="/.test(html) && !/ on\w+="/.test(html), 'no inline script, style or handler in the page');
   for (const f of ['panel.js', ...['lib', 'ui'].flatMap((d) => (fs.existsSync(path.join(TOP, 'panel', d)) ? fs.readdirSync(path.join(TOP, 'panel', d)).map((x) => `${d}/${x}`) : []))]) {
     const src = fs.readFileSync(path.join(TOP, 'panel', f), 'utf8');

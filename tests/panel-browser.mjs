@@ -47,6 +47,7 @@ const G = {
     [`${CORP}:.github/bds-lab-panel.json`]: JSON.stringify(POLICY) },
   // (the organization's lab: its own secrets, variables, Pages, issues; the App made from its manifest)
   corp: { secrets: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID']), vars: {}, pages: null, pagesPut: [], issues: [], comments: {}, labels: [], locks: [], manifests: [], conversions: [] },
+  members: [['author1', 'admin'], ['helper1', 'write']], invites: [], membersPut: [],
   dispatched: [], secretsPut: [], filesPut: [], posted: [], secretNames: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID', 'GOOGLE_EMAIL']), vars: { LAB_NOTIFY: 'failures' }, varsPut: [],
   artifacts: [{ id: 31, name: 'bds-addons', size_in_bytes: 1_234_567, expired: false, created_at: iso(now - 3_000_000), workflow_run: { id: 100, head_branch: 'main' } },
     { id: 30, name: 'old-addons', size_in_bytes: 99, expired: true, created_at: iso(now - 90 * 86_400_000), workflow_run: { id: 90, head_branch: 'main' } }],
@@ -79,6 +80,7 @@ async function api(route) {
   if (/^\/orgs\/acme\/teams\/[^/]+\/memberships\//.test(p)) return send(404, { message: 'Not Found' });
   if (p === '/user') return send(200, { login: who.login, avatar_url: 'https://avatars.githubusercontent.com/u/1' });
   if (p === '/user/repos') return send(200, Object.entries(who.repos).map(([s, perm]) => repoJson(s, perm)));
+  if (/^\/users\/[^/]+$/.test(p)) return /ghost/.test(p) ? send(404, { message: 'Not Found' }) : send(200, { login: p.split('/').pop() });
   const m = /^\/repos\/([^/]+\/[^/]+)(\/.*)?$/.exec(p);
   if (!m) return send(404, { message: 'Not Found' });
   const [, slug, rest = ''] = m, perm = who.repos[slug];
@@ -91,6 +93,15 @@ async function api(route) {
     const f = decodeURIComponent(rest.slice('/contents/'.length)), key = `${slug}:${f}`;
     if (req.method() === 'PUT') { if (!perm.push) return send(403, { message: 'no' }); G.filesPut.push({ slug, f, body }); G.files[key] = Buffer.from(body.content, 'base64').toString('utf8'); return send(200, {}); }
     return G.files[key] !== undefined ? send(200, { content: Buffer.from(G.files[key]).toString('base64'), sha: 'sha-' + key.length }) : send(404, { message: 'Not Found' });
+  }
+  // (the lab's people: the owner, a writer, an invitation; invited, changed, removed)
+  if (rest.startsWith('/collaborators') || rest.startsWith('/invitations')) {
+    const m = req.method(), name = decodeURIComponent(rest.split('/')[2] ?? '');
+    if (!perm.admin && m !== 'GET') return send(403, { message: 'Must have admin rights' });
+    if (rest.startsWith('/collaborators') && m === 'GET') return send(200, G.members.map(([login, role_name]) => ({ login, role_name, avatar_url: 'https://avatars.githubusercontent.com/u/2' })));
+    if (rest.startsWith('/invitations') && m === 'GET') return send(200, G.invites);
+    if (m === 'PUT') { G.membersPut.push(`${name}=${body.permission}`); const had = G.members.find(([l]) => l === name); if (had) { had[1] = body.permission === 'push' ? 'write' : body.permission; return send(204, null); } G.invites.push({ id: 60 + G.invites.length, invitee: { login: name }, permissions: body.permission, created_at: iso(now) }); return send(201, { id: 60 }); }
+    if (m === 'DELETE') { G.membersPut.push(`-${name}`); G.members = G.members.filter(([l]) => l !== name); G.invites = G.invites.filter((i) => String(i.id) !== name); return send(204, null); }
   }
   if (rest === '/actions/secrets') return perm.admin ? send(200, { secrets: [...G.secretNames].map((name) => ({ name, updated_at: iso(now - 86_400_000) })) }) : send(403, { message: 'Resource not accessible' });
   if (rest === '/actions/secrets/public-key') return send(200, { key_id: 'KID1', key: SEAL.toB64(PK) });
@@ -147,7 +158,7 @@ async function corpApi(req, u, rest, body, who, perm, send) {
 }
 
 // ---- the page, served as GitHub Pages serves panel/: its files, with the page's own policy as a header too ----
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json' };
+const TYPES = { '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json' };
 /** a folder served as Pages serves it, its page's own CSP sent as a header too → { srv, url } */
 async function serve(root) {
   const csp = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[1];
@@ -334,6 +345,24 @@ try {
   await page.waitForTimeout(500);
   check(G.dispatched.some((x) => x.workflow === 'notify.yml' && x.body.inputs.run === '' && /管理パネルから試しに送りました/.test(x.body.inputs.message)), 'a test message through notify', JSON.stringify(G.dispatched));
 
+  // members: someone invited as an administrator (asked first), a writer made a reader, the owner and oneself untouchable
+  await tab('メンバー');
+  check(await waitText(/helper1/) && await page.locator('[data-member="author1"] select').isDisabled() && /持ち主/.test(await text()), 'the lab\'s people: the owner (not changeable here), a writer', await text());
+  await page.locator('#tabbody input[aria-label="招く人"]').fill('friend1');
+  await page.selectOption('#tabbody select[aria-label="役割"]', 'admin');
+  await page.locator('#tabbody button', { hasText: '招く' }).click();
+  await waitText(/friend1/, 5000);
+  await page.selectOption('[data-member="helper1"] select', 'pull');
+  await page.waitForTimeout(600);
+  check(JSON.stringify(G.membersPut) === JSON.stringify(['friend1=admin', 'helper1=pull']) && /招待中/.test(await text()), 'invited as an administrator (pending until they accept); a writer made a reader', JSON.stringify(G.membersPut));
+  check(await page.locator('table input[aria-label="admin: dispatch"]').isDisabled() && await page.locator('table input[aria-label="write: dispatch"]').isChecked(), 'the roles as a grid: administrators always everything', '');
+  // the runs found as typed
+  await tab('進み具合');
+  await page.fill('input[aria-label="実行を探す"]', 'verify');
+  await page.waitForTimeout(800);
+  check(/verify/.test(await text()) && !/hold/.test(await page.locator('#tabbody').innerText()), 'the runs narrowed as typed', await text());
+  await page.fill('input[aria-label="実行を探す"]', '');
+
   // a link from Discord's message: the run it names, opened with its reasons
   await page.goto('about:blank');
   await page.goto(`${URL0}#runs?repo=${encodeURIComponent(LAB)}&run=100`);
@@ -359,7 +388,7 @@ try {
   // back to the author with a tap: their own settings (the host they borrow, the vault key) as they left them
   await page.selectOption('#acct', 'author1');
   await waitText(/管理者/);
-  check(JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()) === JSON.stringify(['概要', '進み具合', '実行', '成果物', 'Discord', '秘密', '端末', '貸し借り', '準備', '監査', '設定']), 'switched: the author\'s tabs', JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()));
+  check(JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()) === JSON.stringify(['概要', '進み具合', '実行', '成果物', 'Discord', '秘密', '端末', '貸し借り', 'メンバー', '準備', '監査', '設定']), 'switched: the author\'s tabs', JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()));
   check(await waitText(/期限（\d{4}-\d\d-\d\d）を過ぎました/) && /借り手/.test(await text()), 'the host the author borrows (their own list), now stopped by its lender', await text());
   await tab('設定');
   check((await page.locator('#tabbody input[type=password]').inputValue()) === VKEY && /lender1/.test(await text()) && /author1\/bds-lab・ホスト 1/.test(await text()), 'the author\'s vault key kept for the author; both accounts listed with their own settings', await text());

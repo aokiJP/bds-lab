@@ -1,0 +1,12 @@
+{
+  "name": "bds-lab 管理パネル",
+  "short_name": "bds-lab",
+  "description": "bds-lab の実行・成果物・秘密・貸し借りを、スマホから",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#11151c",
+  "theme_color": "#2f6fde",
+  "lang": "ja",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

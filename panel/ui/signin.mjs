@@ -7,13 +7,13 @@ import { SLUG } from '../lib/model.mjs';
 
 function tokenLink(owner) {
   // (GitHub's fine-grained token page, the panel's needs written in; GitHub ignores what it does not take)
-  const q = new URLSearchParams({ name: 'bds-lab panel', description: 'bds-lab の管理パネル（このブラウザだけ）', target_name: owner, expires_in: '90', metadata: 'read', actions: 'write', contents: 'write', secrets: 'write', variables: 'write', issues: 'write', pages: 'write', pull_requests: 'read' });
+  const q = new URLSearchParams({ name: 'bds-lab panel', description: 'bds-lab の管理パネル（このブラウザだけ）', target_name: owner, expires_in: '90', metadata: 'read', actions: 'write', contents: 'write', secrets: 'write', variables: 'write', issues: 'write', pages: 'write', administration: 'write', pull_requests: 'read' });
   return `https://github.com/settings/personal-access-tokens/new?${q}`;
 }
 const CLASSIC = 'https://github.com/settings/tokens/new?scopes=repo,workflow&description=bds-lab%20panel';
 /** where to make a token, and which (the same words as the settings tab's) */
 export const tokenHelp = (owner) => h('div', {},
-  h('p', {}, link(tokenLink(owner), 'トークンを作る（Fine-grained）'), ' — 対象のリポジトリ: ラボと、貸し借りのホスト。権限: Actions・Contents・Secrets・Variables・Issues・Pages は Read and write、Pull requests は Read'),
+  h('p', {}, link(tokenLink(owner), 'トークンを作る（Fine-grained）'), ' — 対象のリポジトリ: ラボと、貸し借りのホスト。権限: Actions・Contents・Secrets・Variables・Issues・Pages・Administration（メンバー）は Read and write、Pull requests は Read'),
   h('p', { class: 'muted' }, 'Fine-grained トークンが選べるのは 1 つの持ち主（自分か、入っている組織）のリポジトリだけです。ほかの人の個人アカウントにあるホストを借りるときは ', link(CLASSIC, 'Classic トークン（repo・workflow）'), ' を使ってください。'));
 
 /** the sign-in card → an element. authUrl: the service's address (none: tokens only); err: why the last try failed;

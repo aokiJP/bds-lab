@@ -22,7 +22,8 @@ const allowed = (policy, role) => P.ACTIONS.filter((a) => P.can(policy, role, a)
 await t('no policy file: the panel as it was — writers and admins do what GitHub lets them (lending: a host\'s admin), readers nothing; deleting a secret asks first; never signed out for idling; the audit log kept when the lab is not public (pure)', () => {
   eq(P.checkPolicy(null), { policy: P.DEFAULT_POLICY, errors: [] });
   eq(allowed(P.DEFAULT_POLICY, 'admin'), P.ACTIONS);
-  const writer = P.ACTIONS.filter((a) => a !== 'lend');
+  // (lending: a host's admin; members: the lab's admin — GitHub's own rule for both)
+  const writer = P.ACTIONS.filter((a) => a !== 'lend' && a !== 'members');
   eq([allowed(P.DEFAULT_POLICY, 'maintain'), allowed(P.DEFAULT_POLICY, 'write')], [writer, writer]);
   eq([allowed(P.DEFAULT_POLICY, 'triage'), allowed(P.DEFAULT_POLICY, 'read'), allowed(P.DEFAULT_POLICY, null), allowed(null, 'write')], [[], [], [], writer], 'no policy at all: the default');
   // (the panel's own idea of who uses the lab: write or admin — the same people)
@@ -61,7 +62,7 @@ await t('can: GitHub first — whatever a policy says, nothing past what the per
   const everything = P.checkPolicy({ roles: { admin: ['*'], maintain: ['*'], write: ['*'], triage: ['*'], read: ['*'] } }).policy;
   eq(allowed(everything, 'read'), ['audit.read'], 'a reader given everything: only reading (GitHub lets a reader read issues)');
   eq(allowed(everything, 'triage'), ['audit.read']);
-  eq(allowed(everything, 'write'), P.ACTIONS.filter((a) => a !== 'lend'), 'a writer given everything: not a host\'s admin');
+  eq(allowed(everything, 'write'), P.ACTIONS.filter((a) => a !== 'lend' && a !== 'members'), 'a writer given everything: not a host\'s admin, not the lab\'s members');
   for (const a of P.ACTIONS) ok(P.GITHUB_ROLES.includes(P.GITHUB_NEEDS[a]), `${a}: GitHub's least role said`);
   const narrow = P.checkPolicy({ roles: { admin: ['dispatch'], write: [] } }).policy;
   eq([allowed(narrow, 'admin'), allowed(narrow, 'write')], [['dispatch'], []], 'narrowed: even an admin only what is listed');

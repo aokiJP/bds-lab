@@ -189,7 +189,15 @@ export function hostRunInputs({ host, job, unit = '', wait = true, rules }) {
 export const bestHost = (list) => [...list].filter((x) => x.now?.ok).sort((a, b) => b.now.remaining - a.now.remaining || a.slug.localeCompare(b.slug))[0] ?? null;
 
 // ---- the address: #<tab>, or #runs?repo=<owner/repo>&run=<id> (Discord's 「管理パネル」 button opens that run) ----
-export const TAB_KEYS = ['overview', 'runs', 'start', 'files', 'discord', 'secrets', 'live', 'hosts', 'setup', 'audit', 'settings'];
+export const TAB_KEYS = ['overview', 'runs', 'start', 'files', 'discord', 'secrets', 'live', 'hosts', 'members', 'setup', 'audit', 'settings'];
+/** runs narrowed (pure): q in the name, title, branch or who started it; show: all · failed · going · mine (me: the login) */
+export function filterRuns(rs, { q = '', show = 'all', me = '' } = {}) {
+  const w = String(q).trim().toLowerCase();
+  return rs.filter((r) => (show === 'failed' ? ['failure', 'timed_out', 'startup_failure'].includes(r.conclusion) : show === 'going' ? r.status !== 'completed' : show === 'mine' ? (r.triggering_actor?.login ?? r.actor?.login) === me : true)
+    && (!w || [r.name, r.display_title, r.head_branch, r.triggering_actor?.login, r.actor?.login, r.event].some((x) => String(x ?? '').toLowerCase().includes(w))));
+}
+/** runs that were going at the last look and have ended now (pure) → the ended runs; `was`: id → status */
+export const endedSince = (was, rs) => rs.filter((r) => r.status === 'completed' && was.has(r.id) && was.get(r.id) !== 'completed');
 /** location.hash → { tab, repo, run } (pure; anything unknown → nulls) */
 export function parseHash(hash) {
   const [k, q = ''] = String(hash ?? '').replace(/^#/, '').split('?');
