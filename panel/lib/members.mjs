@@ -59,6 +59,20 @@ export function policyOf(grid) {
   const json = { version: 1, roles, ...(Object.keys(grid.teams ?? {}).length ? { teams: grid.teams } : {}), confirm: ACTIONS.filter((a) => grid.confirm.includes(a)), idleMinutes: Math.max(0, Math.min(1440, Math.round(Number(grid.idleMinutes) || 0))), audit: grid.audit };
   return { json, errors: checkPolicy(json).errors };
 }
+/** ready-made grids (the GitHub roles below admin; admin always has everything): the owner alone, writers who run, a
+ *  trusted team that does all but secrets and members */
+export const POLICY_PRESETS = {
+  owner: { label: '管理者だけ', roles: {} },
+  runners: { label: '書ける人は実行・止めるも', roles: { write: ['dispatch', 'run.cancel'], maintain: ['dispatch', 'hostrun', 'run.cancel', 'audit.read'] } },
+  team: { label: '保守の人は秘密とメンバーのほか全部', roles: { write: ['dispatch', 'hostrun', 'run.cancel'], maintain: ACTIONS.filter((a) => !a.startsWith('secrets.') && a !== 'members') } },
+};
+/** a grid with a preset's roles (pure): what is asked first, idle minutes, the log and the teams' roles stay */
+export function applyPreset(grid, id) {
+  const p = POLICY_PRESETS[id]; if (!p) throw new Error(`no preset ${id}`);
+  return { ...grid, roles: Object.fromEntries(GITHUB_ROLES.map((r) => [r, r === 'admin' ? [...ACTIONS] : ACTIONS.filter((a) => (p.roles[r] ?? []).includes(a))])) };
+}
+/** where someone invited takes their invitation (GitHub sends it too; this is to pass along) */
+export const invitationUrl = (slug) => `https://github.com/${slug}/invitations`;
 /** the policy file written on the lab's default branch (checked first; its sha kept so another's change is not overwritten) */
 export async function savePolicy(api, slug, grid) {
   const { json, errors } = policyOf(grid);

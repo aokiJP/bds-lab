@@ -193,6 +193,29 @@ await t('runs found as typed (name, title, branch, who), failed / going / mine; 
   eq(M.endedSince(was, [{ ...rs[1], status: 'completed', conclusion: 'success' }, rs[0], { id: 9, status: 'completed' }]).map((r) => r.id), [2], 'only one seen going and ended now');
 });
 
+await t('each workflow\'s health, a secret\'s age, the keys, the role presets and the invitation\'s address (pure)', async () => {
+  const MB = await imp('panel/lib/members.mjs'), P = await imp('panel/lib/policy.mjs');
+  const at = (m) => `2026-10-0${m}T00:00:00Z`, run = (id, path, conclusion, d = 1, mins = 2) => ({ id, name: path.split('.')[0], path, status: 'completed', conclusion, run_started_at: at(d), created_at: at(d), updated_at: new Date(Date.parse(at(d)) + mins * 60_000).toISOString() });
+  const rs = [run(1, 'verify.yml', 'failure', 5, 4), run(2, 'verify.yml', 'timed_out', 4, 60), run(3, 'verify.yml', 'success', 3, 3), run(4, 'go.yml', 'success', 5, 10), run(5, 'go.yml', 'cancelled', 4), { id: 6, path: 'go.yml', name: 'go', status: 'in_progress' }, run(7, 'notify.yml', 'cancelled')];
+  const hs = M.workflowHealth(rs), v = hs[0], g = hs.find((x) => x.path === 'go.yml');
+  ok(v.path === 'verify.yml' && v.streak === 2 && v.ok === 1 && v.bad === 2 && Math.abs(v.rate - 1 / 3) < 1e-9 && v.ms === 4 * 60_000 && v.last.id === 1, JSON.stringify(v));
+  ok(g.rate === 1 && g.ok === 1 && g.streak === 0 && hs.find((x) => x.path === 'notify.yml').rate === null, JSON.stringify(hs));
+  const now = Date.parse('2026-10-08T00:00:00Z');
+  ok(M.secretAge('2026-10-01T00:00:00Z', now).days === 7 && !M.secretAge('2026-10-01T00:00:00Z', now).stale && M.secretAge('2026-01-01T00:00:00Z', now).stale && M.secretAge(undefined, now).days === null);
+  const tabs = ['overview', 'runs', 'secrets'];
+  eq([M.shortcut('2', tabs), M.shortcut('4', tabs), M.shortcut('/', tabs), M.shortcut('r', tabs), M.shortcut('?', tabs), M.shortcut('x', tabs)], [{ tab: 'runs' }, null, { search: true }, { reload: true }, { help: true }, null]);
+  const base = MB.gridOf(P.checkPolicy({ version: 1, roles: { admin: ['*'], ops: ['dispatch'] }, teams: { oncall: 'ops' }, confirm: ['dispatch'], idleMinutes: 30, audit: 'issue' }).policy);
+  for (const id of Object.keys(MB.POLICY_PRESETS)) {
+    const grid = MB.applyPreset(base, id), back = MB.policyOf(grid);
+    ok(!back.errors.length && grid.idleMinutes === 30 && grid.confirm.join() === 'dispatch' && back.json.teams.oncall === 'ops' && back.json.roles.ops.join() === 'dispatch' && back.json.roles.admin.join() === '*', `${id}: ${JSON.stringify(back)}`);
+  }
+  const team = P.checkPolicy(MB.policyOf(MB.applyPreset(base, 'team')).json).policy;
+  ok(P.can(team, 'maintain', 'variables') && !P.can(team, 'maintain', 'secrets.put') && !P.can(team, 'maintain', 'members') && P.can(team, 'write', 'dispatch') && !P.can(team, 'write', 'variables'), 'team: all but secrets and members');
+  const only = P.checkPolicy(MB.policyOf(MB.applyPreset(base, 'owner')).json).policy;
+  ok(P.ACTIONS.every((a) => !P.can(only, 'maintain', a) && !P.can(only, 'write', a)), 'owner: nobody else');
+  eq(MB.invitationUrl('o/lab'), 'https://github.com/o/lab/invitations');
+});
+
 await t('the secret sealed as libsodium seals it (crypto_box_seal; vectors from libsodium) and its parts against Node\'s own X25519 and BLAKE2b', () => {
   // (made with libsodium-wrappers 0.7.15: seed keypair from 32 bytes of i+1, ephemeral secret 32 bytes of 100+i; sha256 of the box)
   const V = [['', '1b1b58dd50ea14b60da17b790cd02754d970c9bab864ebb3c0f3016fe51d3f57', '138d5a94edadcd0cb3573cbbad620463cd344c38f5017230d1a0d5eb53a52b7b'],

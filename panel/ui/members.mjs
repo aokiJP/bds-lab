@@ -25,6 +25,7 @@ export function membersTab(body, ctx) {
           sel, admin && c.ok ? h('button', { class: 'danger', onclick: () => confirm(`${x.login} をこのラボから外しますか`) && ctx.guarded('members', { user: x.login, permission: 'none' }, () => MB.removeMember(api, lab.slug, x.login), `${x.login} を外しました`).then(load) }, '外す') : null);
       }),
       m.invitations.map((i) => h('li', { class: 'row' }, h('span', { class: 'grow' }, h('strong', {}, i.login), ' ', h('span', { class: 'chip' }, '招待中'), h('div', { class: 'muted' }, `${MB.PERMISSION_WORDS[i.permission] ?? i.permission}・相手が GitHub の通知かメールで受けると入ります`)),
+        h('button', { title: '相手に渡すアドレス（GitHub の通知とメールにも届きます）', onclick: () => copy(MB.invitationUrl(lab.slug), '招待を受けるアドレスを写しました') }, '🔗 アドレス'),
         admin ? h('button', { onclick: () => ctx.guarded('members', { user: i.login, permission: 'none' }, () => MB.cancelInvitation(api, lab.slug, i.id), `${i.login} への招待を取り消しました`).then(load) }, '取り消す') : null))));
   });
   body.append(h('div', { class: 'card' }, h('h2', {}, `メンバー（${lab.slug}）`),
@@ -41,6 +42,9 @@ export function membersTab(body, ctx) {
   load();
 }
 
+/** text to the clipboard (shown to copy by hand where the browser will not) */
+const copy = (text, done) => navigator.clipboard?.writeText(text).then(() => toast(done), () => prompt('写してください', text)) ?? prompt('写してください', text);
+
 /** the policy as a grid: which GitHub role may do which action in the panel, what is asked first, idle minutes, the log */
 function policyCard(ctx, admin) {
   const g = MB.gridOf(ctx.policy), boxes = {}, ask = {};
@@ -51,6 +55,12 @@ function policyCard(ctx, admin) {
   const idle = h('input', { type: 'number', min: 0, max: 1440, value: g.idleMinutes, disabled: !admin }), audit = h('select', { disabled: !admin }, ['auto', 'issue', 'off'].map((v) => h('option', { value: v, selected: v === g.audit ? 'selected' : null }, { auto: 'auto（非公開なら残す）', issue: '残す', off: '残さない' }[v])));
   return h('div', { class: 'card' }, h('h2', {}, '役割（パネルでできること）'),
     h('p', { class: 'muted' }, `${P.POLICY_FILE} に書きます。GitHub の役割ごとに、パネルで許す操作を選びます（GitHub が許さないことはここで選んでもできません。管理者はいつも全部）。${ctx.policyErrors?.length ? ' いまのファイルは正しくありません: 保存すると直ります。' : ''}`),
+    // (a ready-made grid in one tap; nothing is written until 「役割を保存」)
+    admin ? h('div', { class: 'row' }, h('span', { class: 'muted' }, 'ひな形:'), Object.entries(MB.POLICY_PRESETS).map(([id, p]) => h('button', { 'data-preset': id, onclick: () => {
+      const n = MB.applyPreset(g, id);
+      for (const r of P.GITHUB_ROLES) for (const a of P.ACTIONS) boxes[r][a].checked = n.roles[r].includes(a);
+      toast(`「${p.label}」にしました（まだ保存していません）`);
+    } }, p.label))) : null,
     h('table', {}, h('thead', {}, head), h('tbody', {}, rows)),
     h('label', {}, '操作がなければサインアウトする分（0: しない）'), idle, h('label', {}, '監査ログ'), audit,
     admin ? h('div', { class: 'row' }, h('button', { class: 'primary', onclick: () => {
