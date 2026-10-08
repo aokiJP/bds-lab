@@ -189,7 +189,38 @@ export function hostRunInputs({ host, job, unit = '', wait = true, rules }) {
 export const bestHost = (list) => [...list].filter((x) => x.now?.ok).sort((a, b) => b.now.remaining - a.now.remaining || a.slug.localeCompare(b.slug))[0] ?? null;
 
 // ---- the address: #<tab>, or #runs?repo=<owner/repo>&run=<id> (Discord's 「管理パネル」 button opens that run) ----
-export const TAB_KEYS = ['overview', 'runs', 'start', 'files', 'discord', 'secrets', 'live', 'hosts', 'setup', 'audit', 'settings'];
+export const TAB_KEYS = ['overview', 'runs', 'start', 'files', 'discord', 'secrets', 'live', 'hosts', 'members', 'setup', 'audit', 'settings'];
+/** runs narrowed (pure): q in the name, title, branch or who started it; show: all · failed · going · mine (me: the login) */
+export function filterRuns(rs, { q = '', show = 'all', me = '' } = {}) {
+  const w = String(q).trim().toLowerCase();
+  return rs.filter((r) => (show === 'failed' ? ['failure', 'timed_out', 'startup_failure'].includes(r.conclusion) : show === 'going' ? r.status !== 'completed' : show === 'mine' ? (r.triggering_actor?.login ?? r.actor?.login) === me : true)
+    && (!w || [r.name, r.display_title, r.head_branch, r.triggering_actor?.login, r.actor?.login, r.event].some((x) => String(x ?? '').toLowerCase().includes(w))));
+}
+/** runs that were going at the last look and have ended now (pure) → the ended runs; `was`: id → status */
+export const endedSince = (was, rs) => rs.filter((r) => r.status === 'completed' && was.has(r.id) && was.get(r.id) !== 'completed');
+/** each workflow's health over the runs given (pure): how often it passed (cancelled and skipped runs aside), how long it
+ *  took (the middle run), how many failed in a row up to the newest → [{ name, path, ok, bad, rate, ms, streak, last }],
+ *  the failing first. rs: newest first, as GitHub lists them */
+export function workflowHealth(rs) {
+  const by = new Map();
+  for (const r of rs) { if (r.status !== 'completed') continue; const k = r.path ?? r.name; if (!by.has(k)) by.set(k, []); by.get(k).push(r); }
+  const BAD = ['failure', 'timed_out', 'startup_failure'];
+  return [...by.entries()].map(([path, l]) => {
+    const ok = l.filter((r) => r.conclusion === 'success').length, bad = l.filter((r) => BAD.includes(r.conclusion)).length;
+    const ms = l.map((r) => Date.parse(r.updated_at) - Date.parse(r.run_started_at ?? r.created_at)).filter((x) => x >= 0).sort((a, b) => a - b);
+    let streak = 0; for (const r of l) { if (BAD.includes(r.conclusion)) streak++; else if (r.conclusion === 'success') break; }
+    return { name: l[0].name, path, ok, bad, rate: ok + bad ? ok / (ok + bad) : null, ms: ms.length ? ms[Math.floor(ms.length / 2)] : 0, streak, last: l[0] };
+  }).sort((a, b) => b.streak - a.streak || (a.rate ?? 1) - (b.rate ?? 1) || a.name.localeCompare(b.name));
+}
+/** a secret's age (pure) → { days, stale }: one not set again for STALE_DAYS is worth renewing (a key, a password) */
+export const STALE_DAYS = 180;
+export function secretAge(iso, nowMs = Date.now()) { const t = Date.parse(iso); if (!Number.isFinite(t)) return { days: null, stale: false }; const days = Math.floor((nowMs - t) / 86_400_000); return { days, stale: days >= STALE_DAYS }; }
+/** a key pressed outside a text box → what it asks (pure): 1–9, 0 the tabs shown, / search, r read again, ? the keys */
+export function shortcut(key, tabs) {
+  if (/^[1-9]$/.test(key)) return tabs[Number(key) - 1] ? { tab: tabs[Number(key) - 1] } : null;
+  if (key === '0') return tabs[9] ? { tab: tabs[9] } : null;
+  return ({ '/': { search: true }, r: { reload: true }, '?': { help: true } })[key] ?? null;
+}
 /** location.hash → { tab, repo, run } (pure; anything unknown → nulls) */
 export function parseHash(hash) {
   const [k, q = ''] = String(hash ?? '').replace(/^#/, '').split('?');

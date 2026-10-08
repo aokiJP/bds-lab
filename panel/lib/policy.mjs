@@ -17,13 +17,13 @@
 
 export const POLICY_FILE = '.github/bds-lab-panel.json';
 /** what a policy may allow or ask to confirm */
-export const ACTIONS = ['dispatch', 'hostrun', 'secrets.put', 'secrets.delete', 'variables', 'run.cancel', 'lend', 'audit.read'];
-export const ACTION_WORDS = { dispatch: 'ワークフローを始める', hostrun: '貸し手の Actions で走らせる', 'secrets.put': '秘密を登録する', 'secrets.delete': '秘密を消す', variables: '変数を変える', 'run.cancel': '実行を止める', lend: '貸す条件を変える', 'audit.read': '監査ログを見る' };
+export const ACTIONS = ['dispatch', 'hostrun', 'secrets.put', 'secrets.delete', 'variables', 'run.cancel', 'lend', 'audit.read', 'members'];
+export const ACTION_WORDS = { dispatch: 'ワークフローを始める', hostrun: '貸し手の Actions で走らせる', 'secrets.put': '秘密を登録する', 'secrets.delete': '秘密を消す', variables: '変数を変える', 'run.cancel': '実行を止める', lend: '貸す条件を変える', 'audit.read': '監査ログを見る', members: 'メンバーと役割を変える' };
 /** GitHub's roles on a repository, least first */
 export const GITHUB_ROLES = ['read', 'triage', 'write', 'maintain', 'admin'];
 /** the least GitHub role on the repository acted on that could allow each action (the lab; for lend, the lender's host) —
  *  no policy goes below it */
-export const GITHUB_NEEDS = { dispatch: 'write', hostrun: 'write', 'secrets.put': 'write', 'secrets.delete': 'write', variables: 'write', 'run.cancel': 'write', lend: 'admin', 'audit.read': 'read' };
+export const GITHUB_NEEDS = { dispatch: 'write', hostrun: 'write', 'secrets.put': 'write', 'secrets.delete': 'write', variables: 'write', 'run.cancel': 'write', lend: 'admin', 'audit.read': 'read', members: 'admin' };
 const rank = (r) => GITHUB_ROLES.indexOf(r);
 const freeze = (o) => { for (const v of Object.values(o)) if (v && typeof v === 'object') freeze(v); return Object.freeze(o); };
 /** no file: what the panel did before policies — writers and admins do everything GitHub lets them (lending: a host's

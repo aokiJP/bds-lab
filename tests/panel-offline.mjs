@@ -155,6 +155,67 @@ await t('where a job runs: this lab or a lender\'s host — hostrun.yml\'s input
   ok(M.DISCORD_ID.test('123456789012345678') && !M.DISCORD_ID.test('12345') && !M.DISCORD_ID.test('1234567890123456789x'));
 });
 
+await t('members: GitHub\'s roles read and changed (never the owner, never oneself), an unknown name said before anything is sent; the policy as a grid and back, checked, admin always all (pure + a fake GitHub)', async () => {
+  const MB = await imp('panel/lib/members.mjs'), P = await imp('panel/lib/policy.mjs');
+  eq(MB.memberOf({ login: 'a', role_name: 'write', avatar_url: 'javascript:x' }), { login: 'a', avatar: '', permission: 'push', role: 'write' });
+  eq(MB.memberOf({ login: 'b', permissions: { admin: true } }).permission, 'admin');
+  ok(!MB.canChange({ login: 'Owner' }, { owner: 'owner', me: 'x' }).ok && !MB.canChange({ login: 'me' }, { owner: 'o', me: 'ME' }).ok && MB.canChange({ login: 'c' }, { owner: 'o', me: 'me' }).ok, 'the owner and oneself are not changed here');
+  const calls = [], api = { call: async (m, path, body) => { calls.push(`${m} ${path}${body ? ' ' + JSON.stringify(body) : ''}`);
+    if (path === '/users/ghost') throw Object.assign(new Error('nf'), { status: 404 });
+    if (m === 'PUT' && path.endsWith('/newbie')) return { id: 77 };
+    if (m === 'GET' && path.includes('/collaborators')) return [{ login: 'o', permissions: { admin: true } }, { login: 'w', role_name: 'write' }];
+    if (m === 'GET' && path.includes('/invitations')) return [{ id: 5, invitee: { login: 'newbie' }, permissions: 'write', created_at: 'x' }];
+    return null; } };
+  eq(await MB.setMember(api, 'o/lab', 'newbie', 'admin'), 'invited'); eq(await MB.setMember(api, 'o/lab', 'w', 'pull'), 'changed');
+  let e = ''; try { await MB.setMember(api, 'o/lab', 'ghost', 'push'); } catch (x) { e = x.message; } ok(/いません/.test(e) && !calls.some((c) => c.startsWith('PUT') && c.includes('ghost')), `unknown: nothing sent\n${calls.join('\n')}`);
+  e = ''; try { await MB.setMember(api, 'o/lab', '../x', 'push'); } catch (x) { e = x.message; } ok(/ユーザー名/.test(e), e);
+  ok(calls.includes('PUT /repos/o/lab/collaborators/newbie {"permission":"admin"}'), calls.join('\n'));
+  const m = await MB.readMembers(api, 'o/lab', { owner: { login: 'o' } });
+  eq([m.owner, m.members.map((x) => x.permission), m.invitations[0]], ['o', ['admin', 'push'], { id: 5, login: 'newbie', permission: 'push', at: 'x' }]);
+  // the grid and back: admin always '*', the roles a team names kept, the checked file
+  const pol = P.checkPolicy({ roles: { admin: ['*'], write: ['dispatch'], auditor: ['audit.read'] }, teams: { aud: 'auditor' }, confirm: ['dispatch'], idleMinutes: 30, audit: 'issue' }).policy;
+  const g = MB.gridOf(pol);
+  eq([g.roles.admin.length, g.roles.write, g.confirm, g.extra], [P.ACTIONS.length, ['dispatch'], ['dispatch'], { auditor: ['audit.read'] }]);
+  g.roles.write = ['dispatch', 'run.cancel']; g.roles.admin = [];
+  const back = MB.policyOf(g);
+  eq([back.errors, back.json.roles, back.json.teams], [[], { auditor: ['audit.read'], write: ['dispatch', 'run.cancel'], admin: ['*'] }, { aud: 'auditor' }]);
+  ok(P.can(P.checkPolicy(back.json).policy, 'write', 'run.cancel') && !P.can(P.checkPolicy(back.json).policy, 'write', 'members') && P.can(P.checkPolicy(back.json).policy, 'admin', 'members'), 'members: admins only');
+  ok(!P.can(P.DEFAULT_POLICY, 'write', 'members'), 'GitHub first: no writer changes members, whatever a policy says');
+  const lab = JSON.parse(fs.readFileSync(path.join(TOP, '.github', 'bds-lab-panel.json'), 'utf8')), lp = P.checkPolicy(lab);
+  ok(!lp.errors.length && P.can(lp.policy, 'admin', 'members') && !P.can(lp.policy, 'write', 'dispatch') && !P.can(lp.policy, 'maintain', 'secrets.put'), `this lab: its owner alone ${JSON.stringify(lp.errors)}`);
+});
+
+await t('runs found as typed (name, title, branch, who), failed / going / mine; a run that ended since the last look (pure)', () => {
+  const rs = [{ id: 1, name: 'verify', head_branch: 'main', status: 'completed', conclusion: 'failure', triggering_actor: { login: 'me' } }, { id: 2, name: 'app', display_title: 'hold 60', head_branch: 'dev', status: 'in_progress', actor: { login: 'you' } }, { id: 3, name: 'notify', head_branch: 'main', status: 'completed', conclusion: 'success', actor: { login: 'me' } }];
+  eq(M.filterRuns(rs, { q: 'HOLD' }).map((r) => r.id), [2]); eq(M.filterRuns(rs, { q: 'main' }).map((r) => r.id), [1, 3]);
+  eq([M.filterRuns(rs, { show: 'failed' }).map((r) => r.id), M.filterRuns(rs, { show: 'going' }).map((r) => r.id), M.filterRuns(rs, { show: 'mine', me: 'me' }).map((r) => r.id)], [[1], [2], [1, 3]]);
+  const was = new Map([[1, 'completed'], [2, 'in_progress']]);
+  eq(M.endedSince(was, [{ ...rs[1], status: 'completed', conclusion: 'success' }, rs[0], { id: 9, status: 'completed' }]).map((r) => r.id), [2], 'only one seen going and ended now');
+});
+
+await t('each workflow\'s health, a secret\'s age, the keys, the role presets and the invitation\'s address (pure)', async () => {
+  const MB = await imp('panel/lib/members.mjs'), P = await imp('panel/lib/policy.mjs');
+  const at = (m) => `2026-10-0${m}T00:00:00Z`, run = (id, path, conclusion, d = 1, mins = 2) => ({ id, name: path.split('.')[0], path, status: 'completed', conclusion, run_started_at: at(d), created_at: at(d), updated_at: new Date(Date.parse(at(d)) + mins * 60_000).toISOString() });
+  const rs = [run(1, 'verify.yml', 'failure', 5, 4), run(2, 'verify.yml', 'timed_out', 4, 60), run(3, 'verify.yml', 'success', 3, 3), run(4, 'go.yml', 'success', 5, 10), run(5, 'go.yml', 'cancelled', 4), { id: 6, path: 'go.yml', name: 'go', status: 'in_progress' }, run(7, 'notify.yml', 'cancelled')];
+  const hs = M.workflowHealth(rs), v = hs[0], g = hs.find((x) => x.path === 'go.yml');
+  ok(v.path === 'verify.yml' && v.streak === 2 && v.ok === 1 && v.bad === 2 && Math.abs(v.rate - 1 / 3) < 1e-9 && v.ms === 4 * 60_000 && v.last.id === 1, JSON.stringify(v));
+  ok(g.rate === 1 && g.ok === 1 && g.streak === 0 && hs.find((x) => x.path === 'notify.yml').rate === null, JSON.stringify(hs));
+  const now = Date.parse('2026-10-08T00:00:00Z');
+  ok(M.secretAge('2026-10-01T00:00:00Z', now).days === 7 && !M.secretAge('2026-10-01T00:00:00Z', now).stale && M.secretAge('2026-01-01T00:00:00Z', now).stale && M.secretAge(undefined, now).days === null);
+  const tabs = ['overview', 'runs', 'secrets'];
+  eq([M.shortcut('2', tabs), M.shortcut('4', tabs), M.shortcut('/', tabs), M.shortcut('r', tabs), M.shortcut('?', tabs), M.shortcut('x', tabs)], [{ tab: 'runs' }, null, { search: true }, { reload: true }, { help: true }, null]);
+  const base = MB.gridOf(P.checkPolicy({ version: 1, roles: { admin: ['*'], ops: ['dispatch'] }, teams: { oncall: 'ops' }, confirm: ['dispatch'], idleMinutes: 30, audit: 'issue' }).policy);
+  for (const id of Object.keys(MB.POLICY_PRESETS)) {
+    const grid = MB.applyPreset(base, id), back = MB.policyOf(grid);
+    ok(!back.errors.length && grid.idleMinutes === 30 && grid.confirm.join() === 'dispatch' && back.json.teams.oncall === 'ops' && back.json.roles.ops.join() === 'dispatch' && back.json.roles.admin.join() === '*', `${id}: ${JSON.stringify(back)}`);
+  }
+  const team = P.checkPolicy(MB.policyOf(MB.applyPreset(base, 'team')).json).policy;
+  ok(P.can(team, 'maintain', 'variables') && !P.can(team, 'maintain', 'secrets.put') && !P.can(team, 'maintain', 'members') && P.can(team, 'write', 'dispatch') && !P.can(team, 'write', 'variables'), 'team: all but secrets and members');
+  const only = P.checkPolicy(MB.policyOf(MB.applyPreset(base, 'owner')).json).policy;
+  ok(P.ACTIONS.every((a) => !P.can(only, 'maintain', a) && !P.can(only, 'write', a)), 'owner: nobody else');
+  eq(MB.invitationUrl('o/lab'), 'https://github.com/o/lab/invitations');
+});
+
 await t('the secret sealed as libsodium seals it (crypto_box_seal; vectors from libsodium) and its parts against Node\'s own X25519 and BLAKE2b', () => {
   // (made with libsodium-wrappers 0.7.15: seed keypair from 32 bytes of i+1, ephemeral secret 32 bytes of 100+i; sha256 of the box)
   const V = [['', '1b1b58dd50ea14b60da17b790cd02754d970c9bab864ebb3c0f3016fe51d3f57', '138d5a94edadcd0cb3573cbbad620463cd344c38f5017230d1a0d5eb53a52b7b'],
@@ -246,7 +307,7 @@ await t('the GitHub client: the token as a bearer, workflow dispatch and secret 
 await t('the page: its CSP allows GitHub\'s API alone (and its own config; pages.yml adds the sign-in service), its own scripts, a form to GitHub only; no inline script or style; text is never parsed as HTML', () => {
   const html = fs.readFileSync(path.join(TOP, 'panel', 'index.html'), 'utf8'), js = fs.readFileSync(path.join(TOP, 'panel', 'panel.js'), 'utf8');
   const csp = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(html)?.[1] ?? '';
-  ok(/default-src 'none'/.test(csp) && /script-src 'self';/.test(csp) && /connect-src 'self' https:\/\/api\.github\.com;/.test(csp) && /form-action https:\/\/github\.com$/.test(csp) && !/unsafe/.test(csp), csp);
+  ok(/default-src 'none'/.test(csp) && /script-src 'self';/.test(csp) && /connect-src 'self' https:\/\/api\.github\.com;/.test(csp) && /form-action https:\/\/github\.com; manifest-src 'self'$/.test(csp) && !/unsafe/.test(csp), csp);
   ok(!/<script>(?!\s*<\/script>)/.test(html) && !/ style="/.test(html) && !/ on\w+="/.test(html), 'no inline script, style or handler in the page');
   for (const f of ['panel.js', ...['lib', 'ui'].flatMap((d) => (fs.existsSync(path.join(TOP, 'panel', d)) ? fs.readdirSync(path.join(TOP, 'panel', d)).map((x) => `${d}/${x}`) : []))]) {
     const src = fs.readFileSync(path.join(TOP, 'panel', f), 'utf8');
@@ -321,10 +382,11 @@ await t('app notify: a finished run told as a DM with link buttons and its .mcad
     let b = ''; req.setEncoding('utf8'); req.on('data', (d) => { b += d; });
     req.on('end', () => {
       const send = (code, j) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(j)); };
-      if (/^\/gh\/repos\/o\/r\/actions\/runs\/(5|6|8)\/artifacts/.test(req.url)) return send(200, arts(req.url.split('/')[7]));
+      if (/^\/gh\/repos\/o\/r\/actions\/runs\/(5|6|8|9)\/artifacts/.test(req.url)) return send(200, arts(req.url.split('/')[7]));
       if (/^\/gh\/repos\/o\/r\/actions\/artifacts\/\d+\/zip$/.test(req.url)) { res.writeHead(200, { 'content-type': 'application/zip' }); return res.end(zip); }
       if (req.url === '/gh/repos/o/r/actions/runs/8') return send(200, { id: 8, status: 'completed', conclusion: 'success', event: 'pull_request', name: 'verify', head_branch: 'patch-1', html_url: 'https://github.com/o/r/actions/runs/8', run_started_at: '2026-10-08T00:00:00Z', updated_at: '2026-10-08T00:03:00Z', actor: { login: 'someone' }, head_repository: { full_name: 'someone/r' } });
-      if (/^\/gh\/repos\/o\/r\/actions\/runs\/(6|8)\/jobs/.test(req.url)) return send(200, { jobs: [] });
+      if (req.url === '/gh/repos/o/r/actions/runs/9') return send(200, { id: 9, status: 'completed', conclusion: 'success', event: 'workflow_dispatch', name: 'hostrun', path: '.github/workflows/hostrun.yml', head_branch: 'main', html_url: 'https://github.com/o/r/actions/runs/9', run_started_at: '2026-10-08T00:00:00Z', updated_at: '2026-10-08T00:03:00Z', actor: { login: 'me' } });
+      if (/^\/gh\/repos\/o\/r\/actions\/runs\/(6|8|9)\/jobs/.test(req.url)) return send(200, { jobs: [] });
       if (req.url === '/gh/repos/o/r/actions/runs/5') return send(200, { id: 5, status: 'completed', conclusion: 'failure', event: 'push', name: 'verify', head_branch: 'main', html_url: 'https://github.com/o/r/actions/runs/5', run_started_at: '2026-10-08T00:00:00Z', updated_at: '2026-10-08T00:03:00Z', actor: { login: 'me' } });
       if (req.url === '/gh/repos/o/r/actions/runs/6') return send(200, { id: 6, status: 'completed', conclusion: 'success', event: 'push', name: 'verify', head_branch: 'main', html_url: 'https://github.com/o/r/actions/runs/6', run_started_at: '2026-10-08T00:00:00Z', updated_at: '2026-10-08T00:03:00Z' });
       if (/^\/gh\/repos\/o\/r\/actions\/runs\/5\/jobs/.test(req.url)) return send(200, { jobs: [{ name: 'offline', conclusion: 'failure', check_run_url: 'https://api/x/check-runs/77', steps: [{ name: 'every offline test', conclusion: 'failure' }] }] });
@@ -351,6 +413,8 @@ await t('app notify: a finished run told as a DM with link buttons and its .mcad
   ok(forced.code === 0 && got.dm.length === 2 && /✅ \*\*verify\*\* 通りました/.test(got.dm[1].body.content) && got.dm[1].files.length === 1, `--force (the panel's 「Discord に送る」) tells it anyway\n${forced.o}`);
   const fork = await run(['--run', '8', '--force'], dc);
   ok(fork.code === 0 && got.dm.length === 3 && !got.dm[2].files.length && /成果物は添えません（someone\/r の変更から/.test(fork.o) && !/📦/.test(got.dm[2].body.content), `a fork's pull request: told, its files never handed on\n${fork.o}`);
+  const lent = await run(['--run', '9'], dc);
+  ok(lent.code === 0 && !got.dm.at(-1).files.length && /貸し手のランナーで作ったもの/.test(lent.o) && !/📦/.test(got.dm.at(-1).body.content), `a hostrun's files (made on a lender's runner) are never handed on\n${lent.o}`);
   const off = await run(['--run', '5'], { ...dc, LAB_NOTIFY_FILES: 'off' });
   ok(off.code === 0 && !got.dm.at(-1).files.length && /成果物（1）/.test(JSON.stringify(got.dm.at(-1).body.components)), 'LAB_NOTIFY_FILES=off: no file, the button still');
   const dhook = await run(['--run', '5'], { LAB_NOTIFY_WEBHOOK: `http://127.0.0.1:${port}/discord.com/api/webhooks/1/abc` });

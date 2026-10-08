@@ -56,3 +56,8 @@ details > summary { cursor: pointer; margin: 10px 0 4px; color: var(--muted); }
 table { width: 100%; border-collapse: collapse; font-size: 13px; display: block; overflow-x: auto; }
 th, td { border-top: 1px solid var(--line); padding: 5px 6px; text-align: left; vertical-align: top; }
 th { color: var(--muted); font-weight: normal; }
+img.avatar { width: 28px; height: 28px; border-radius: 50%; }
+input[type=search] { flex: 1 1 160px; width: auto; font: inherit; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg); }
+button.linkish { border: 0; background: none; color: var(--accent); padding: 0; min-height: 0; text-decoration: underline; }
+.chip.bad { background: none; border: 1px solid var(--bad); color: var(--bad); }
+#health table { width: 100%; }

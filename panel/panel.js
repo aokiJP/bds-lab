@@ -21,6 +21,7 @@ import { h, $, main, toast, act, link } from './ui/dom.mjs';
 import { signInCard, tokenHelp } from './ui/signin.mjs';
 import { setupTab, takeAppReturn } from './ui/setup.mjs';
 import { auditTab } from './ui/audit.mjs';
+import { membersTab } from './ui/members.mjs';
 
 // ---- the browser's storage (one that refuses it — a private window may — still works for the tab) ----
 const storage = (name) => { try { const s = window[name]; s.setItem('bdslab.probe', '1'); s.removeItem('bdslab.probe'); return s; } catch { return memoryStorage(); } };
@@ -263,15 +264,15 @@ const capsOf = () => Object.fromEntries((st.lab?.caps ?? []).map((c) => [c.key, 
 const hasWf = (f) => (st.lab?.workflows ?? []).some((w) => String(w.path).endsWith(`/${f}`));
 
 // ---- the frame: tabs ----
-const TABS = [['overview', '概要'], ['runs', '進み具合'], ['start', '実行'], ['files', '成果物'], ['discord', 'Discord'], ['secrets', '秘密'], ['live', '端末'], ['hosts', '貸し借り'], ['setup', '準備'], ['audit', '監査'], ['settings', '設定']];
+const TABS = [['overview', '概要'], ['runs', '進み具合'], ['start', '実行'], ['files', '成果物'], ['discord', 'Discord'], ['secrets', '秘密'], ['live', '端末'], ['hosts', '貸し借り'], ['members', 'メンバー'], ['setup', '準備'], ['audit', '監査'], ['settings', '設定']];
 function render() {
   clearInterval(st.timer);
   renderWho();
   const tabs = TABS.filter(([k]) => (k === 'audit' ? may('audit.read') : canLab() || ['overview', 'hosts', 'settings'].includes(k)));
   if (!tabs.some(([k]) => k === st.tab)) st.tab = tabs[0][0];
   const body = h('div', { id: 'tabbody' });
-  main().replaceChildren(h('nav', { class: 'tabs' }, tabs.map(([k, label]) => h('button', { class: st.tab === k ? 'on' : '', onclick: () => go(k) }, label))), body);
-  ({ overview, runs, start, files, discord, secrets, live, hosts, setup, audit, settings: settingsTab })[st.tab](body);
+  main().replaceChildren(h('nav', { class: 'tabs' }, tabs.map(([k, label], i) => h('button', { class: st.tab === k ? 'on' : '', 'data-tab': k, title: i < 10 ? `キー ${(i + 1) % 10}` : null, onclick: () => go(k) }, label))), body);
+  ({ overview, runs, start, files, discord, secrets, live, hosts, members, setup, audit, settings: settingsTab })[st.tab](body);
 }
 /** another tab (the address follows: a reload or a shared link opens the same tab) */
 function go(tab) { st.tab = tab; history.replaceState(null, '', `#${tab}`); render(); }
@@ -284,6 +285,40 @@ function setup(body) {
     reload: async () => { await loadEnv(st.lab); if (st.tab === 'setup') render(); }, record: (action, detail) => record(action, detail) });
 }
 function audit(body) { auditTab(body, { api: st.api, lab: st.lab, policy: st.policy, role: st.role }); }
+function members(body) { membersTab(body, { api: st.api, lab: st.lab, me: st.me, policy: st.policy, role: st.role, policyErrors: st.policyErrors, may, guarded, reload: async () => { await loadPolicy(); render(); } }); }
+
+// ---- runs that end while the panel is open: told on this device (a notification when allowed, else a toast) and counted
+// in the tab's title — opt-in in 「設定」, kept per browser ----
+const NOTIFY_KEY = 'bdslab.panel.notify', BASE_TITLE = document.title, watched = new Map();
+const notifyOn = () => LOCAL.getItem(NOTIFY_KEY) === '1';
+setInterval(async () => {
+  if (!st.lab || !st.api || !canLab() || document.hidden && !notifyOn()) return;
+  let rs; try { rs = await st.api.runs(st.lab.slug, { per: 20 }); } catch { return; }
+  const ended = watched.size ? M.endedSince(watched, rs) : [];
+  watched.clear(); for (const r of rs) watched.set(r.id, r.status);
+  const going = rs.filter((r) => r.status !== 'completed').length;
+  document.title = going ? `(${going}) ${BASE_TITLE}` : BASE_TITLE;
+  for (const r of ended) {
+    const say = `${M.STATE_ICON[r.conclusion] ?? '•'} ${r.name}: ${r.conclusion}（${r.head_branch}）`;
+    if (notifyOn() && globalThis.Notification?.permission === 'granted') {
+      try { const n = new globalThis.Notification('bds-lab', { body: say, tag: `run-${r.id}` }); n.onclick = () => { window.focus(); st.focus = { run: r.id }; go('runs'); }; continue; } catch { /* a phone's browser makes them only from a service worker */ }
+    }
+    toast(say, r.conclusion !== 'success');
+  }
+}, 45_000);
+
+// ---- keys (outside a text box): 1–9, 0 the tabs shown, / search the runs, r read again, ? which keys ----
+const shownTabs = () => [...document.querySelectorAll('nav.tabs button')].map((b) => b.dataset.tab);
+const KEYS_HELP = '1〜9・0: タブ　/: 実行を探す　r: 読み直す　?: この知らせ';
+window.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing || !st.lab || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? '') || document.activeElement?.isContentEditable) return;
+  const k = M.shortcut(e.key, shownTabs()); if (!k) return;
+  e.preventDefault();
+  if (k.tab) go(k.tab);
+  else if (k.reload) render();
+  else if (k.help) toast(KEYS_HELP);
+  else if (k.search) { if (st.tab !== 'runs') go('runs'); document.querySelector('input[type=search]')?.focus(); }
+});
 
 // ---- 概要 ----
 function overview(body) {
@@ -300,10 +335,16 @@ function overview(body) {
       h('ul', { class: 'plain' }, st.lab.caps.map((c) => h('li', {}, c.ok === null ? '❔ ' : c.ok ? '✅ ' : '⚠️ ', c.label, c.need ? h('div', { class: 'muted' }, c.need) : null))),
       h('div', { id: 'ovruns' }, h('p', { class: 'muted' }, '実行を読んでいます…'))));
     act(async () => {
-      const [rs, prs] = await Promise.all([st.api.runs(st.lab.slug, { per: 20 }), st.api.pulls(st.lab.slug).catch(() => [])]);
+      const [all, prs] = await Promise.all([st.api.runs(st.lab.slug, { per: 50 }), st.api.pulls(st.lab.slug).catch(() => [])]), rs = all.slice(0, 20);
       const going = rs.filter((r) => r.status !== 'completed'), bad = rs.filter((r) => r.conclusion === 'failure');
+      const last = bad[0];
       $('ovruns')?.replaceChildren(h('h3', {}, '最近'), h('p', {}, `動いている ${going.length}・失敗 ${bad.length}（最近 ${rs.length} 件）・開いている PR ${prs.length}`),
-        h('ul', { class: 'plain' }, rs.slice(0, 5).map((r) => h('li', {}, M.STATE_ICON[r.status === 'completed' ? r.conclusion : r.status] ?? '•', ' ', link(r.html_url, r.name), ' ', h('span', { class: 'muted' }, `${r.head_branch} · ${M.ago(r.created_at)}`)))));
+        // (one tap for what is wanted most: the last failure again, what runs now, what failed)
+        h('div', { class: 'row' }, last ? h('button', { ...gate('dispatch'), onclick: () => guarded('dispatch', { run: String(last.id), workflow: String(last.path ?? '').split('/').pop() }, () => st.api.rerunFailed(st.lab.slug, last.id), `${last.name} の落ちたジョブをやり直します`) }, `🔁 ${last.name} をやり直す`) : null,
+          going.length ? h('button', { onclick: () => { st.runsShow = 'going'; go('runs'); } }, `🔄 動いている ${going.length} 件を見る`) : null,
+          bad.length ? h('button', { onclick: () => { st.runsShow = 'failed'; go('runs'); } }, '❌ 落ちたものを見る') : null),
+        h('ul', { class: 'plain' }, rs.slice(0, 5).map((r) => h('li', {}, M.STATE_ICON[r.status === 'completed' ? r.conclusion : r.status] ?? '•', ' ', link(r.html_url, r.name), ' ', h('span', { class: 'muted' }, `${r.head_branch} · ${M.ago(r.created_at)}`)))),
+        healthTable(M.workflowHealth(all), all.length));
     });
   } else if (st.lab) body.append(h('div', { class: 'card' }, h('h2', {}, st.lab.slug), h('p', { class: 'muted' }, `このリポジトリは ${M.ROLE_NAMES[st.lab.role] ?? '見えない'} です: 実行・秘密・端末は、書き込める人だけ`)));
   for (const x of st.hosts) body.append(hostCard(x, true));
@@ -311,6 +352,16 @@ function overview(body) {
   const others = A.list().filter((e) => e.login !== st.login);
   if (others.length) body.append(h('div', { class: 'card' }, h('h2', {}, 'このブラウザのほかのアカウント'),
     h('ul', { class: 'plain' }, others.map((e) => h('li', { class: 'row' }, h('span', { class: 'grow' }, e.login, ' ', h('span', { class: 'muted' }, `${A.cfg(e.login).lab}・ホスト ${A.cfg(e.login).hosts.length}`)), h('button', { onclick: () => switchTo(e.login) }, '切り替える'))))));
+}
+
+/** each workflow over the last runs: how often it passes, how long it takes, failing in a row — a tap shows its runs */
+function healthTable(hs, n) {
+  if (!hs.length) return null;
+  return h('div', { id: 'health' }, h('h3', {}, `ワークフローの調子（最近 ${n} 件）`), h('table', {}, h('thead', {}, h('tr', {}, ['', '通った', 'かかる', ''].map((t) => h('th', {}, t)))),
+    h('tbody', {}, hs.map((x) => h('tr', { 'data-health': x.path },
+      h('td', {}, x.streak ? '❌ ' : x.rate === 1 ? '✅ ' : '➖ ', h('button', { class: 'linkish', onclick: () => { st.runsQ = x.name; st.runsShow = 'all'; go('runs'); } }, x.name)),
+      h('td', {}, x.rate === null ? '—' : `${Math.round(x.rate * 100)}%（${x.ok}/${x.ok + x.bad}）`), h('td', {}, x.ms ? M.fmtMs(x.ms) : '—'),
+      h('td', {}, x.streak ? h('span', { class: 'chip bad' }, `${x.streak} 回続けて失敗`) : null))))));
 }
 
 // ---- 進み具合 (the lab's runs, or a host's: where the jobs ran) ----
@@ -322,10 +373,24 @@ function runs(body) {
   const list = h('div', {}, h('p', { class: 'muted' }, '読んでいます…')), open = new Set(), shut = new Set();
   const focus = st.focus; st.focus = null;
   if (focus && isLab) open.add(focus.run);
+  // (narrowed as typed: a word in its name, title, branch or who started it; failed, going or mine)
+  const q = h('input', { type: 'search', placeholder: '探す（名前・枝・人）', value: st.runsQ ?? '', 'aria-label': '実行を探す', oninput: () => { st.runsQ = q.value; load(); } });
+  const show = h('select', { 'aria-label': 'どの実行', onchange: () => { st.runsShow = show.value; load(); } }, [['all', 'すべて'], ['failed', '落ちたもの'], ['going', '動いているもの'], ['mine', '自分の']].map(([v, t]) => h('option', { value: v, selected: v === (st.runsShow ?? 'all') ? 'selected' : null }, t)));
+  const stopAll = h('button', { class: 'danger', hidden: true, ...gate('run.cancel') });
   const load = () => act(async () => {
-    const rs = await st.api.runs(from, { per: 25 });
+    const all = await st.api.runs(from, { per: 50 }), rs = M.filterRuns(all, { q: q.value, show: show.value, me: st.me.login });
     for (const r of rs) if (r.status !== 'completed' && !shut.has(r.id)) open.add(r.id);
-    list.replaceChildren(...rs.map((r) => {
+    const going = rs.filter((r) => r.status !== 'completed');
+    stopAll.hidden = !isLab || going.length < 2; stopAll.textContent = `⏹ 動いている ${going.length} 件を全部止める`;
+    // (asked once for all of them; each one kept in the audit log as its own; one that ended meanwhile is no error: 409)
+    stopAll.onclick = async () => {
+      if (!may('run.cancel')) return toast(notMine('run.cancel'), true);
+      if (!confirm(`動いている ${going.length} 件を全部止めますか`)) return;
+      for (const r of going) if (await act(() => st.api.cancel(from, r.id).then(() => true, (e) => { if (e.status !== 409) throw e; return true; }))) record('run.cancel', { run: String(r.id), workflow: String(r.path ?? '').split('/').pop() });
+      toast(`${going.length} 件を止めるよう頼みました`); load();
+    };
+    if (!rs.length) list.replaceChildren(h('p', { class: 'muted' }, all.length ? '当てはまる実行がありません（最近の 50 件）' : 'まだ実行がありません'));
+    else list.replaceChildren(...rs.map((r) => {
       const state = r.status === 'completed' ? r.conclusion : r.status, box = h('div', { class: 'jobs' });
       const row = h('div', { class: 'card', 'data-run': r.id },
         h('div', { class: 'row' }, h('strong', {}, `${M.STATE_ICON[state] ?? '•'} ${r.name}`), h('span', { class: 'chip' }, r.event), h('span', { class: 'muted grow' }, `${r.head_branch} · ${r.triggering_actor?.login ?? r.actor?.login ?? ''} · ${M.ago(r.created_at)}`),
@@ -339,7 +404,7 @@ function runs(body) {
     if (focus && isLab) { const c = list.querySelector(`[data-run="${focus.run}"]`); if (c) c.scrollIntoView({ block: 'start' }); else toast(`実行 ${focus.run} は最近の 25 件にありません`, true); }
   });
   const pick = sources.length > 1 ? h('select', { 'aria-label': 'どこの実行', onchange: (e) => { st.runsFrom = e.target.value; render(); } }, sources.map((s) => h('option', { value: s, selected: s === from ? 'selected' : null }, s === st.lab.slug ? `ラボ: ${s}` : `ホスト: ${s}`))) : null;
-  body.append(h('div', { class: 'row' }, pick, h('button', { onclick: load }, '読み直す'), h('span', { class: 'muted' }, `（${settings().refresh} 秒ごとに読み直します）`)), list);
+  body.append(h('div', { class: 'row' }, pick, q, show, h('button', { onclick: load }, '読み直す'), h('span', { class: 'muted' }, `（${settings().refresh} 秒ごと）`), stopAll), list);
   load(); every(load);
 }
 async function detail(slug, r, box, show) {
@@ -506,10 +571,13 @@ function secrets(body) {
   const name = h('input', { type: 'text', list: 'known', placeholder: 'MS_EMAIL', autocapitalize: 'characters', value: st.prefill ?? '' }), value = h('input', { type: 'password', autocomplete: 'new-password' });
   st.prefill = null;
   const load = () => act(async () => {
-    const have = await st.api.secrets(st.lab.slug), names = new Set(have.map((s) => s.name));
-    list.replaceChildren(h('ul', { class: 'plain' },
-      Object.entries(M.KNOWN_SECRETS).map(([n, what]) => h('li', {}, names.has(n) ? '✅ ' : '・ ', h('strong', {}, n), ' ', h('span', { class: 'muted' }, what), names.has(n) ? h('button', { class: 'danger', ...gate('secrets.delete'), onclick: () => guarded('secrets.delete', { name: n }, () => st.api.deleteSecret(st.lab.slug, n), `${n} を消しました`).then(load) }, '消す') : null)),
-      have.filter((s) => !M.KNOWN_SECRETS[s.name]).map((s) => h('li', {}, '✅ ', h('strong', {}, s.name), ' ', h('span', { class: 'muted' }, `（${M.ago(s.updated_at)}に更新）`), h('button', { class: 'danger', ...gate('secrets.delete'), onclick: () => guarded('secrets.delete', { name: s.name }, () => st.api.deleteSecret(st.lab.slug, s.name), `${s.name} を消しました`).then(load) }, '消す')))));
+    const have = await st.api.secrets(st.lab.slug), names = new Set(have.map((s) => s.name)), at = new Map(have.map((s) => [s.name, s.updated_at]));
+    // (when each was set: one not set again for half a year is said — a key or a password worth renewing)
+    const age = (n) => { const a = M.secretAge(at.get(n)); return a.days === null ? null : h('span', { class: a.stale ? 'warn' : 'muted' }, a.stale ? ` ⚠️ ${a.days} 日前に登録（新しくするとよい）` : `（${M.ago(at.get(n))}に更新）`); };
+    const stale = have.filter((s) => M.secretAge(s.updated_at).stale);
+    list.replaceChildren(stale.length ? h('p', { class: 'warn' }, `${M.STALE_DAYS} 日以上そのままの秘密が ${stale.length} 個: ${stale.map((s) => s.name).join('・')}（上で同じ名前で登録し直すと新しくなります）`) : '', h('ul', { class: 'plain' },
+      Object.entries(M.KNOWN_SECRETS).map(([n, what]) => h('li', {}, names.has(n) ? '✅ ' : '・ ', h('strong', {}, n), ' ', h('span', { class: 'muted' }, what), names.has(n) ? age(n) : null, names.has(n) ? h('button', { class: 'danger', ...gate('secrets.delete'), onclick: () => guarded('secrets.delete', { name: n }, () => st.api.deleteSecret(st.lab.slug, n), `${n} を消しました`).then(load) }, '消す') : null)),
+      have.filter((s) => !M.KNOWN_SECRETS[s.name]).map((s) => h('li', {}, '✅ ', h('strong', {}, s.name), ' ', age(s.name), h('button', { class: 'danger', ...gate('secrets.delete'), onclick: () => guarded('secrets.delete', { name: s.name }, () => st.api.deleteSecret(st.lab.slug, s.name), `${s.name} を消しました`).then(load) }, '消す')))));
   });
   body.append(h('div', { class: 'card' }, h('h2', {}, '秘密を登録する'),
     h('p', { class: 'muted' }, '値はこのブラウザの中でリポジトリの公開鍵で封じてから GitHub に送ります（GitHub の Actions だけが開けます。このパネルも GitHub も値を表示しません）。'),
@@ -652,6 +720,14 @@ function settingsTab(body) {
     A.session(st.login)?.kind === 'oauth' ? h('p', { class: 'muted' }, 'ラボの GitHub App でサインインしています: できることは、App が入っているリポジトリで GitHub があなたに許すことだけです。「出る」でこのトークンを GitHub で取り消します。') : tokenHelp(s.lab.split('/')[0]),
     st.lab ? h('p', { class: 'muted' }, `役割: ${roleName()}（${P.POLICY_FILE}${st.policyErrors.length ? ': 正しくありません' : ''}）・できること: ${P.ACTIONS.filter((x) => may(x)).map((x) => P.ACTION_WORDS[x]).join('・') || 'なし'}${P.idleMinutes(st.policy) ? `・${P.idleMinutes(st.policy)} 分操作がないとサインアウト` : ''}・監査ログ: ${st.audit === 'issue' ? '残す' : '残さない'}`) : null,
     h('p', { class: 'muted' }, '権限が足りないと、その操作だけ「権限がありません」と出ます（秘密の一覧: Secrets: Read、登録: Read and write、実行: Actions: Read and write、知らせ方: Variables: Read and write、貸す条件: Contents: Read and write、端末: Issues: Read and write）')));
+  // (this device: a notification when a run of the lab ends while the panel is open)
+  const on = h('input', { type: 'checkbox', checked: notifyOn() });
+  on.addEventListener('change', async () => {
+    if (on.checked && globalThis.Notification && globalThis.Notification.permission !== 'granted') { const p = await globalThis.Notification.requestPermission().catch(() => 'denied'); if (p !== 'granted') toast('ブラウザが知らせを許していません（パネルの中の知らせだけになります）', true); }
+    if (on.checked) LOCAL.setItem(NOTIFY_KEY, '1'); else LOCAL.removeItem(NOTIFY_KEY);
+  });
+  body.append(h('div', { class: 'card' }, h('h2', {}, 'この端末'), h('label', {}, on, ' 実行が終わったら知らせる（パネルを開いている間。タブの題に動いている数）'),
+    h('p', { class: 'muted' }, 'スマホではブラウザのメニューの「ホーム画面に追加」で、アプリのように開けます。'), h('p', { class: 'muted' }, `キー: ${KEYS_HELP}`)));
 }
 
 if (FRAMED) main().replaceChildren(h('p', { class: 'bad' }, 'このパネルは、ほかのページの中では開きません（そのページのアドレスではなく、パネルのアドレスで開いてください）。'));

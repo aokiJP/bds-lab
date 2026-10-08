@@ -35,9 +35,12 @@ const DETAIL = {
   until: (v) => /^\d{4}-\d\d-\d\d$/.test(v),
   status: (v) => /^\d{3}$/.test(v),
   result: (v) => v === 'ok' || v === 'fail',
+  // (a member added, changed or removed: their login and GitHub's role for them)
+  user: (v) => /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(v),
+  permission: (v) => /^(admin|maintain|push|triage|pull|none)$/.test(v),
 };
 export const DETAIL_KEYS = Object.keys(DETAIL);
-export const AUDIT_WORDS = { dispatch: 'ワークフローを始めた', hostrun: '貸し手の Actions で走らせた', 'secrets.put': '秘密を登録した', 'secrets.delete': '秘密を消した', variables: '変数を変えた', 'run.cancel': '実行を止めた', 'run.rerun': '失敗したジョブをやり直した', lend: '貸す条件を変えた',
+export const AUDIT_WORDS = { dispatch: 'ワークフローを始めた', hostrun: '貸し手の Actions で走らせた', 'secrets.put': '秘密を登録した', 'secrets.delete': '秘密を消した', variables: '変数を変えた', 'run.cancel': '実行を止めた', 'run.rerun': '失敗したジョブをやり直した', lend: '貸す条件を変えた', members: 'メンバーを変えた', policy: '役割（ポリシー）を変えた',
   'setup.app': 'App を作った', 'setup.pages': 'Pages を有効にした', 'setup.auth': 'サインインのサービスの URL を変えた', 'setup.deploy': 'サインインのサービスを置いた' };
 
 /** an entry as it is kept (pure): { v, at, actor, action, target, detail } with only the detail's fixed keys of their forms.

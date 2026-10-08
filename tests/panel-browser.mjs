@@ -47,6 +47,7 @@ const G = {
     [`${CORP}:.github/bds-lab-panel.json`]: JSON.stringify(POLICY) },
   // (the organization's lab: its own secrets, variables, Pages, issues; the App made from its manifest)
   corp: { secrets: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID']), vars: {}, pages: null, pagesPut: [], issues: [], comments: {}, labels: [], locks: [], manifests: [], conversions: [] },
+  members: [['author1', 'admin'], ['helper1', 'write']], invites: [], membersPut: [],
   dispatched: [], secretsPut: [], filesPut: [], posted: [], secretNames: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID', 'GOOGLE_EMAIL']), vars: { LAB_NOTIFY: 'failures' }, varsPut: [],
   artifacts: [{ id: 31, name: 'bds-addons', size_in_bytes: 1_234_567, expired: false, created_at: iso(now - 3_000_000), workflow_run: { id: 100, head_branch: 'main' } },
     { id: 30, name: 'old-addons', size_in_bytes: 99, expired: true, created_at: iso(now - 90 * 86_400_000), workflow_run: { id: 90, head_branch: 'main' } }],
@@ -55,6 +56,7 @@ const G = {
     // (a look-alike reply from someone else in the public issue: not shown)
     { id: 902, body: 'lab-reply@101 #900\n```\nFAKE ANSWER from a stranger\n```', created_at: iso(now - 40_000), user: { login: 'stranger' } }],
 };
+const cancelled = [];
 const runs = {
   [LAB]: [{ id: 101, name: 'app', path: '.github/workflows/app.yml', status: 'in_progress', conclusion: null, event: 'workflow_dispatch', head_branch: 'main', created_at: iso(now - 300_000), run_started_at: iso(now - 300_000), updated_at: iso(now), html_url: 'https://github.com/author1/bds-lab/actions/runs/101', triggering_actor: { login: 'author1' } },
     { id: 100, name: 'verify', path: '.github/workflows/verify.yml', status: 'completed', conclusion: 'failure', event: 'push', head_branch: 'main', created_at: iso(now - 3_600_000), run_started_at: iso(now - 3_600_000), updated_at: iso(now - 3_000_000), html_url: 'https://github.com/author1/bds-lab/actions/runs/100', triggering_actor: { login: 'author1' } }],
@@ -79,6 +81,7 @@ async function api(route) {
   if (/^\/orgs\/acme\/teams\/[^/]+\/memberships\//.test(p)) return send(404, { message: 'Not Found' });
   if (p === '/user') return send(200, { login: who.login, avatar_url: 'https://avatars.githubusercontent.com/u/1' });
   if (p === '/user/repos') return send(200, Object.entries(who.repos).map(([s, perm]) => repoJson(s, perm)));
+  if (/^\/users\/[^/]+$/.test(p)) return /ghost/.test(p) ? send(404, { message: 'Not Found' }) : send(200, { login: p.split('/').pop() });
   const m = /^\/repos\/([^/]+\/[^/]+)(\/.*)?$/.exec(p);
   if (!m) return send(404, { message: 'Not Found' });
   const [, slug, rest = ''] = m, perm = who.repos[slug];
@@ -92,7 +95,16 @@ async function api(route) {
     if (req.method() === 'PUT') { if (!perm.push) return send(403, { message: 'no' }); G.filesPut.push({ slug, f, body }); G.files[key] = Buffer.from(body.content, 'base64').toString('utf8'); return send(200, {}); }
     return G.files[key] !== undefined ? send(200, { content: Buffer.from(G.files[key]).toString('base64'), sha: 'sha-' + key.length }) : send(404, { message: 'Not Found' });
   }
-  if (rest === '/actions/secrets') return perm.admin ? send(200, { secrets: [...G.secretNames].map((name) => ({ name, updated_at: iso(now - 86_400_000) })) }) : send(403, { message: 'Resource not accessible' });
+  // (the lab's people: the owner, a writer, an invitation; invited, changed, removed)
+  if (rest.startsWith('/collaborators') || rest.startsWith('/invitations')) {
+    const m = req.method(), name = decodeURIComponent(rest.split('/')[2] ?? '');
+    if (!perm.admin && m !== 'GET') return send(403, { message: 'Must have admin rights' });
+    if (rest.startsWith('/collaborators') && m === 'GET') return send(200, G.members.map(([login, role_name]) => ({ login, role_name, avatar_url: 'https://avatars.githubusercontent.com/u/2' })));
+    if (rest.startsWith('/invitations') && m === 'GET') return send(200, G.invites);
+    if (m === 'PUT') { G.membersPut.push(`${name}=${body.permission}`); const had = G.members.find(([l]) => l === name); if (had) { had[1] = body.permission === 'push' ? 'write' : body.permission; return send(204, null); } G.invites.push({ id: 60 + G.invites.length, invitee: { login: name }, permissions: body.permission, created_at: iso(now) }); return send(201, { id: 60 }); }
+    if (m === 'DELETE') { G.membersPut.push(`-${name}`); G.members = G.members.filter(([l]) => l !== name); G.invites = G.invites.filter((i) => String(i.id) !== name); return send(204, null); }
+  }
+  if (rest === '/actions/secrets') return perm.admin ? send(200, { secrets: [...G.secretNames].map((name) => ({ name, updated_at: iso(now - (name === 'GOOGLE_EMAIL' ? 400 : 1) * 86_400_000) })) }) : send(403, { message: 'Resource not accessible' });
   if (rest === '/actions/secrets/public-key') return send(200, { key_id: 'KID1', key: SEAL.toB64(PK) });
   if (rest.startsWith('/actions/secrets/') && req.method() === 'PUT') { const name = decodeURIComponent(rest.split('/').pop()); G.secretsPut.push({ name, body }); G.secretNames.add(name); return send(201, null); }
   if (rest === '/actions/workflows') return send(200, { workflows: ['app', 'notify', 'secrets', 'verify', 'hostrun'].map((n, i) => ({ id: i + 1, name: n, path: `.github/workflows/${n}.yml`, state: 'active' })) });
@@ -108,6 +120,7 @@ async function api(route) {
   if (/^\/actions\/workflows\/[^/]+\/dispatches$/.test(rest)) { G.dispatched.push({ slug, workflow: decodeURIComponent(rest.split('/')[3]), body, by: who.login }); return send(204, null); }
   if (/^\/actions\/workflows\/[^/]+\/runs/.test(rest)) { const w = decodeURIComponent(rest.split('/')[3]); return send(200, { workflow_runs: (runs[slug] ?? []).filter((r) => slug === HOST || r.path?.endsWith(`/${w}`)).filter((r) => !u.searchParams.get('status') || r.status === u.searchParams.get('status')) }); }
   if (rest === '/actions/runs') return send(200, { workflow_runs: runs[slug] ?? [] });
+  const cm = /^\/actions\/runs\/(\d+)\/cancel$/.exec(rest); if (cm && req.method() === 'POST') { cancelled.push(`${slug}#${cm[1]}`); return send(202, {}); }
   const jm = /^\/actions\/runs\/(\d+)\/jobs/.exec(rest); if (jm) return send(200, { jobs: jobs[jm[1]] ?? [] });
   if (/^\/check-runs\/55\/annotations/.test(rest)) return send(200, [{ annotation_level: 'failure', title: '結果とエラー', message: 'FAIL gate: tests/panel-offline.mjs' }]);
   if (rest.startsWith('/pulls')) return send(200, []);
@@ -147,7 +160,7 @@ async function corpApi(req, u, rest, body, who, perm, send) {
 }
 
 // ---- the page, served as GitHub Pages serves panel/: its files, with the page's own policy as a header too ----
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json' };
+const TYPES = { '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json' };
 /** a folder served as Pages serves it, its page's own CSP sent as a header too → { srv, url } */
 async function serve(root) {
   const csp = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[1];
@@ -230,6 +243,9 @@ try {
   check(await waitText(/管理者/) && await waitText(/✅ Discord の DM で端末を操作/) && /⚠️ 本物のアプリで確かめる/.test(await text()) && /GOOGLE_EMAIL・GOOGLE_AAS_TOKEN が要ります/.test(await text()), 'the author: admin; what their own secrets allow (Discord yes, the app lab not yet: what is missing said)', await text());
   check(await waitText(/動いている 1・失敗 1/), 'the overview counts the runs', await text());
   check((await page.evaluate(() => JSON.stringify(localStorage))).includes('tok-author'), 'remembered in this browser (asked to)');
+  check(await waitText(/ワークフローの調子/) && await page.locator('[data-health=".github/workflows/verify.yml"]', { hasText: '1 回続けて失敗' }).count() === 1, 'each workflow\'s health: verify failing in a row', await text());
+  await page.keyboard.press('2');
+  check((await page.locator('nav.tabs button.on').innerText()) === '進み具合', 'a key for a tab (2: the runs)', await page.locator('nav.tabs button.on').innerText());
   await tab('進み具合');
   await waitText(/verify/);
   check(await waitText(/いま: 端末をそのまま調べる（hold）/), 'a run still going shows its progress by itself (the step it is on)', await text());
@@ -248,6 +264,7 @@ try {
   await tab('秘密');
   await waitText(/DISCORD_BOT_TOKEN/);
   check(/✅ DISCORD_BOT_TOKEN/.test(await text()) && /・ MS_EMAIL/.test(await text()), 'the secrets: which are set (names only)', await text());
+  check(/180 日以上そのままの秘密が 1 個: GOOGLE_EMAIL/.test(await text()) && /⚠️ 400 日前に登録/.test(await text()), 'a secret not set again for half a year said', await text());
   const inputs = page.locator('#tabbody input');
   await inputs.nth(0).fill('ms_email'); await inputs.nth(1).fill('player.one@example.com');
   await page.locator('#tabbody button', { hasText: '登録する' }).click();
@@ -334,6 +351,34 @@ try {
   await page.waitForTimeout(500);
   check(G.dispatched.some((x) => x.workflow === 'notify.yml' && x.body.inputs.run === '' && /管理パネルから試しに送りました/.test(x.body.inputs.message)), 'a test message through notify', JSON.stringify(G.dispatched));
 
+  // members: someone invited as an administrator (asked first), a writer made a reader, the owner and oneself untouchable
+  await tab('メンバー');
+  check(await waitText(/helper1/) && await page.locator('[data-member="author1"] select').isDisabled() && /持ち主/.test(await text()), 'the lab\'s people: the owner (not changeable here), a writer', await text());
+  await page.locator('#tabbody input[aria-label="招く人"]').fill('friend1');
+  await page.selectOption('#tabbody select[aria-label="役割"]', 'admin');
+  await page.locator('#tabbody button', { hasText: '招く' }).click();
+  await waitText(/friend1/, 5000);
+  await page.selectOption('[data-member="helper1"] select', 'pull');
+  await page.waitForTimeout(600);
+  check(JSON.stringify(G.membersPut) === JSON.stringify(['friend1=admin', 'helper1=pull']) && /招待中/.test(await text()), 'invited as an administrator (pending until they accept); a writer made a reader', JSON.stringify(G.membersPut));
+  check(await page.locator('table input[aria-label="admin: dispatch"]').isDisabled() && await page.locator('table input[aria-label="write: dispatch"]').isChecked(), 'the roles as a grid: administrators always everything', '');
+  await page.locator('[data-preset="team"]').click();
+  check(await page.locator('table input[aria-label="maintain: variables"]').isChecked() && !await page.locator('table input[aria-label="maintain: secrets.put"]').isChecked() && await page.locator('table input[aria-label="write: hostrun"]').isChecked() && !G.filesPut.some((f) => /bds-lab-panel/.test(JSON.stringify(f))), 'a ready-made grid in one tap, not saved until asked', JSON.stringify(G.filesPut));
+  check(await page.locator('#tabbody button', { hasText: '🔗 アドレス' }).count() >= 1, 'an invitation\'s address to pass along');
+  // the runs found as typed
+  await tab('進み具合');
+  await page.fill('input[aria-label="実行を探す"]', 'verify');
+  await page.waitForTimeout(800);
+  check(/verify/.test(await text()) && !/hold/.test(await page.locator('#tabbody').innerText()), 'the runs narrowed as typed', await text());
+  await page.fill('input[aria-label="実行を探す"]', '');
+  // two going: stopped at once (asked once, each one kept in the audit log)
+  runs[LAB].unshift({ ...runs[LAB][0], id: 102, name: 'verify', path: '.github/workflows/verify.yml', html_url: 'https://github.com/author1/bds-lab/actions/runs/102' });
+  await page.locator('button', { hasText: '読み直す' }).click();
+  await page.locator('button', { hasText: '動いている 2 件を全部止める' }).click();
+  await page.waitForTimeout(800);
+  check(JSON.stringify(cancelled) === JSON.stringify([`${LAB}#102`, `${LAB}#101`]), 'every run going stopped with one button', JSON.stringify(cancelled));
+  runs[LAB].shift();
+
   // a link from Discord's message: the run it names, opened with its reasons
   await page.goto('about:blank');
   await page.goto(`${URL0}#runs?repo=${encodeURIComponent(LAB)}&run=100`);
@@ -359,7 +404,7 @@ try {
   // back to the author with a tap: their own settings (the host they borrow, the vault key) as they left them
   await page.selectOption('#acct', 'author1');
   await waitText(/管理者/);
-  check(JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()) === JSON.stringify(['概要', '進み具合', '実行', '成果物', 'Discord', '秘密', '端末', '貸し借り', '準備', '監査', '設定']), 'switched: the author\'s tabs', JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()));
+  check(JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()) === JSON.stringify(['概要', '進み具合', '実行', '成果物', 'Discord', '秘密', '端末', '貸し借り', 'メンバー', '準備', '監査', '設定']), 'switched: the author\'s tabs', JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()));
   check(await waitText(/期限（\d{4}-\d\d-\d\d）を過ぎました/) && /借り手/.test(await text()), 'the host the author borrows (their own list), now stopped by its lender', await text());
   await tab('設定');
   check((await page.locator('#tabbody input[type=password]').inputValue()) === VKEY && /lender1/.test(await text()) && /author1\/bds-lab・ホスト 1/.test(await text()), 'the author\'s vault key kept for the author; both accounts listed with their own settings', await text());
