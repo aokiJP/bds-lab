@@ -1,7 +1,9 @@
-// audit: who did what in the panel, kept as comments on one issue of the lab (title 「bds-lab 監査ログ」, label
-// bds-lab-audit; made with its label the first time) — each comment a line for people and the entry itself as JSON in an
-// HTML comment. Only fixed keys go in, each of a fixed form: a secret's or a variable's name may, its value never (nor
-// anything shaped like a token or a key). An entry counts only when the comment's author — GitHub says who — is the actor
+// audit: who did what in the panel, kept as comments on an issue of the lab (title 「bds-lab 監査ログ」, label
+// bds-lab-audit; made with its label the first time, and locked: only the repository's collaborators may comment, so nobody
+// else pushes the log out) — each comment a line for people and the entry itself as JSON in an HTML comment. An issue holds
+// ROTATE_AT comments at most: then it is closed and the next is made (「bds-lab 監査ログ 2」 …), and every one is read.
+// Only fixed keys go in, each of a fixed form: a secret's or a variable's name may, its value never (nor anything shaped
+// like a token or a key). An entry counts only when the comment's author — GitHub says who — is the actor
 // it names (nobody can write one as someone else), its time is GitHub's (when the comment was made, not what it says), and
 // one changed after it was written is marked edited. An issue is not a record nobody can change (the repository's
 // administrators may edit or delete comments): GitHub Enterprise's own audit log is that. CSV for a spreadsheet: quoted as
@@ -10,6 +12,9 @@ import { SLUG } from './model.mjs';
 
 export const AUDIT_TITLE = 'bds-lab 監査ログ';
 export const AUDIT_LABEL = 'bds-lab-audit';
+/** the comments an issue of the log holds before the next is made (readAudit reads 1000 of each: never reached) */
+export const ROTATE_AT = 900;
+const TITLE = /^bds-lab 監査ログ(?: \d{1,6})?$/;
 const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const ACTION = /^[a-z]+(?:\.[a-z]+){0,3}$/;
 // (whatever its key, a value shaped like a token, a key or a sealed line never goes in)
@@ -57,31 +62,54 @@ export const line = (e) => `${e.at} \`${e.actor}\` ${AUDIT_WORDS[e.action] ?? e.
  *  entry as JSON in an HTML comment (< and > escaped: nothing ends it early) */
 export const commentBody = (e) => { const x = entry(e); return `${line(x)}\n<!-- bdslab-audit ${JSON.stringify(x).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')} -->`; };
 
-/** the issues that hold the log (the label and the title both), the oldest first */
+/** the issues that hold the log (the label and the title, numbered or not), the oldest first */
 async function auditIssues(api, slug) {
-  return (await api.labeledIssues(slug, AUDIT_LABEL, 'all')).filter((x) => x.title === AUDIT_TITLE && !x.pull_request).sort((a, b) => a.number - b.number);
+  return (await api.labeledIssues(slug, AUDIT_LABEL, 'all')).filter((x) => TITLE.test(String(x.title ?? '')) && !x.pull_request).sort((a, b) => a.number - b.number);
 }
+const full = (x) => Number(x?.comments) >= ROTATE_AT;
+/** the issue written to now (pure): the oldest open one not full, else the newest open one (full: the next is made), else none */
+const current = (xs) => { const open = xs.filter((x) => x.state === 'open'); return open.find((x) => !full(x)) ?? open.at(-1) ?? null; };
 /** the log's issue number, null when there is none yet (never makes one) */
-export async function findAuditIssue(api, slug) { const xs = await auditIssues(api, slug); return (xs.find((x) => x.state === 'open') ?? xs[0])?.number ?? null; }
+export async function findAuditIssue(api, slug) { const xs = await auditIssues(api, slug); return (current(xs) ?? xs.at(-1))?.number ?? null; }
+/** a new issue of the log (its title numbered after the first), locked → { n, why } — why: words when it could not be locked
+ *  (the record goes on all the same) */
+async function makeIssue(api, slug, xs, prev) {
+  await api.createLabel(slug, { name: AUDIT_LABEL, color: '5319e7', description: 'bds-lab の管理パネルの監査ログ' });
+  const k = xs.length + 1;
+  const n = (await api.createIssue(slug, { title: k > 1 ? `${AUDIT_TITLE} ${k}` : AUDIT_TITLE, labels: [AUDIT_LABEL], body: `bds-lab の管理パネルが、誰が何をしたかをここにコメントで残します（パネルの「監査」で絞り込み・CSV）。\n\nコメントを書いた人と記録の人が違うものは数えません。後から編集されたものは「編集あり」と出ます。このコメントは消さないでください。ロックしてあるので、コメントできるのはリポジトリの協力者だけです。${ROTATE_AT} 件で次の issue に移ります。${prev ? `\n\n前の記録: #${prev}` : ''}` })).number;
+  try { await api.lockIssue(slug, n); return { n, why: '' }; } catch (e) { return { n, why: `監査の issue #${n} をロックできません（${e.message}）: 協力者でない人もコメントできます（GitHub の issue の画面で Lock conversation を）` }; }
+}
 const known = new WeakMap();
-/** the log's issue number: found, or made with its label (remembered for this client and lab) */
-export async function auditIssue(api, slug) {
+/** the log's issue to write to → { n, why }: remembered for this client and lab and looked at again before each record; found,
+ *  or made with its label and locked; one that is full (ROTATE_AT comments) or closed is left — a full one closed after the
+ *  next is made */
+async function logIssue(api, slug) {
   const m = known.get(api) ?? new Map();
   known.set(api, m);
-  if (m.has(slug)) return m.get(slug);
-  let n = await findAuditIssue(api, slug);
+  if (m.has(slug)) {
+    let x = null;
+    try { x = await api.issue(slug, m.get(slug)); } catch { /* gone or not readable: looked for again */ }
+    if (x?.state === 'open' && !full(x)) return { n: m.get(slug), why: '' };
+    m.delete(slug);
+  }
+  const xs = await auditIssues(api, slug), cur = current(xs);
+  let n = cur && !full(cur) ? cur.number : null, why = '';
   if (!n) {
-    await api.createLabel(slug, { name: AUDIT_LABEL, color: '5319e7', description: 'bds-lab の管理パネルの監査ログ' });
-    n = (await api.createIssue(slug, { title: AUDIT_TITLE, labels: [AUDIT_LABEL], body: 'bds-lab の管理パネルが、誰が何をしたかをここにコメントで残します（パネルの「監査」で絞り込み・CSV）。\n\nコメントを書いた人と記録の人が違うものは数えません。後から編集されたものは「編集あり」と出ます。このコメントは消さないでください。' })).number;
+    ({ n, why } = await makeIssue(api, slug, xs, cur?.number ?? xs.at(-1)?.number ?? null));
+    // (closed once the next is there: when it cannot be, the full one is never chosen again all the same)
+    if (cur) { try { await api.closeIssue(slug, cur.number); } catch { /* left open: current() passes it by */ } }
   }
   m.set(slug, n);
-  return n;
+  return { n, why };
 }
-/** an entry kept: made again with entry() (only its fixed keys go out) and posted as a comment by the person → the entry */
+/** the log's issue number to write to: found, or made with its label and locked (remembered for this client and lab) */
+export async function auditIssue(api, slug) { return (await logIssue(api, slug)).n; }
+/** an entry kept: made again with entry() (only its fixed keys go out) and posted as a comment by the person → the entry
+ *  (with why, in words, when the log's issue was made and could not be locked) */
 export async function record(api, slug, e) {
-  const x = entry(e);
-  await api.comment(slug, await auditIssue(api, slug), commentBody(x));
-  return x;
+  const x = entry(e), { n, why } = await logIssue(api, slug);
+  await api.comment(slug, n, commentBody(x));
+  return why ? { ...x, why } : x;
 }
 const MARK = /<!-- bdslab-audit (\{[\s\S]*?\}) -->/;
 /** the log's comments → its entries (pure): only those whose comment was written by the actor they name, at GitHub's time
@@ -101,11 +129,12 @@ export function parse(comments) {
   }
   return out;
 }
-/** the lab's log → { issue, entries } (no issue yet: none and nothing; every issue of the log read, in case two were made) */
+/** the lab's log → { issue, entries } (no issue yet: none and nothing; every issue of the log read — those closed when full,
+ *  and any two made at once) */
 export async function readAudit(api, slug, { since } = {}) {
   const xs = await auditIssues(api, slug), all = [];
   for (const x of xs) all.push(...parse(await api.allComments(slug, x.number, { since })));
-  return { issue: (xs.find((x) => x.state === 'open') ?? xs[0])?.number ?? null, entries: all.sort((a, b) => a.at.localeCompare(b.at)) };
+  return { issue: (current(xs) ?? xs.at(-1))?.number ?? null, entries: all.sort((a, b) => a.at.localeCompare(b.at)) };
 }
 
 /** entries narrowed (pure): by actor (any case), by action (that one or those under it: 'secrets' = secrets.put and

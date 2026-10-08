@@ -1,10 +1,10 @@
 // the panel's roles and audit log without a browser or a network: the policy file checked (a broken one allows nothing, never
 // the wider default), the default the same as the panel before policies, `can` asking GitHub's role first (no policy goes
 // past it), organization teams (the first listed; teams that cannot be read count every role they might give), the policy
-// read from the lab's default branch; audit entries with fixed keys only and never a secret's value, kept as comments on one
-// issue made with its label (a fake GitHub on node:http, one login per token) and read back — an entry written as someone
-// else is not counted, an edited one is marked, GitHub's time is the time — CSV quoted and never a formula, and the 「監査」
-// tab on a small fake DOM.
+// read from the lab's default branch; audit entries with fixed keys only and never a secret's value, kept as comments on an
+// issue made with its label and locked (a fake GitHub on node:http, one login per token) and read back — an entry written as
+// someone else is not counted, an edited one is marked, GitHub's time is the time; a full issue (ROTATE_AT comments) closed
+// and the next made, every one read — CSV quoted and never a formula, and the 「監査」 tab on a small fake DOM.
 // node tests/governance-offline.mjs
 import http from 'node:http';
 import path from 'node:path';
@@ -89,7 +89,8 @@ await t('teams: an organization\'s team names a role (the first team listed that
 
 // ---- a fake GitHub: a policy file, an organization's teams, issues, labels and comments; each token is one person ----
 async function fakeGitHub({ policyText = null, policyStatus = 200, teams = {} } = {}) {
-  const st = { issues: [], labels: new Set(), comments: {}, seen: [], clock: Date.parse('2026-10-08T00:00:00Z'), policyText, policyStatus, teams };
+  const st = { issues: [], labels: new Set(), comments: {}, seen: [], clock: Date.parse('2026-10-08T00:00:00Z'), policyText, policyStatus, teams, lockStatus: 204, closeStatus: 200 };
+  const withCount = (i) => ({ ...i, comments: (st.comments[i.number] ?? []).length });
   const who = (req) => ({ 'Bearer tok-alice': 'alice', 'Bearer tok-bob': 'bob', 'Bearer tok-mallory': 'mallory' })[req.headers.authorization] ?? null;
   const send = (res, code, j) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(j === null || j === undefined ? '' : JSON.stringify(j)); };
   const srv = http.createServer((req, res) => {
@@ -101,7 +102,14 @@ async function fakeGitHub({ policyText = null, policyStatus = 200, teams = {} } 
       let x;
       if (u === '/repos/o/lab/contents/.github/bds-lab-panel.json') return st.policyStatus !== 200 ? send(res, st.policyStatus, { message: 'Resource not accessible' }) : st.policyText === null ? send(res, 404, { message: 'Not Found' }) : send(res, 200, { content: Buffer.from(st.policyText).toString('base64'), sha: 'S' });
       if ((x = /^\/orgs\/acme\/teams\/([\w.-]+)\/memberships\/(\w+)$/.exec(u))) { const s = st.teams[x[1]]; return s === 403 ? send(res, 403, { message: 'Resource not accessible by integration' }) : s?.includes(x[2]) ? send(res, 200, { state: 'active', role: 'member' }) : send(res, 404, { message: 'Not Found' }); }
-      if (u === `/repos/o/lab/issues?labels=${AU.AUDIT_LABEL}&state=all&per_page=100`) return send(res, 200, st.issues.filter((i) => i.labels.some((l) => l.name === AU.AUDIT_LABEL)));
+      if (u === `/repos/o/lab/issues?labels=${AU.AUDIT_LABEL}&state=all&per_page=100`) return send(res, 200, st.issues.filter((i) => i.labels.some((l) => l.name === AU.AUDIT_LABEL)).map(withCount));
+      if ((x = /^\/repos\/o\/lab\/issues\/(\d+)(\/lock)?$/.exec(u))) {
+        const i = st.issues.find((y) => y.number === Number(x[1]));
+        if (!i) return send(res, 404, { message: 'Not Found' });
+        if (x[2] && m === 'PUT') { if (st.lockStatus !== 204) return send(res, st.lockStatus, { message: 'Resource not accessible by integration' }); i.locked = true; return send(res, 204, null); }
+        if (!x[2] && m === 'PATCH') { if (st.closeStatus !== 200) return send(res, st.closeStatus, { message: 'Resource not accessible by integration' }); Object.assign(i, { state: body.state }); return send(res, 200, withCount(i)); }
+        if (!x[2] && m === 'GET') return send(res, 200, withCount(i));
+      }
       if (u === '/repos/o/lab/labels' && m === 'POST') { if (st.labels.has(body.name)) return send(res, 422, { message: 'Validation Failed' }); st.labels.add(body.name); return send(res, 201, body); }
       if (u === '/repos/o/lab/issues' && m === 'POST') { const i = { number: 10 + st.issues.length, title: body.title, body: body.body, state: 'open', labels: body.labels.filter((l) => st.labels.has(l)).map((name) => ({ name })), user: { login: me } }; st.issues.push(i); return send(res, 201, i); }
       if ((x = /^\/repos\/o\/lab\/issues\/(\d+)\/comments$/.exec(u)) && m === 'POST') {
@@ -170,6 +178,7 @@ await t('the audit log on GitHub: its issue found, or made once with its label; 
     await AU.record(alice, 'o/lab', { actor: 'alice', action: 'secrets.put', target: 'o/lab', detail: { name: 'MS_PASSWORD', value: 'hunter2' } });
     await AU.record(alice, 'o/lab', { actor: 'alice', action: 'dispatch', target: 'o/lab', detail: { workflow: 'app.yml', ref: 'main' } });
     eq([f.st.issues.length, [...f.st.labels], f.st.issues[0].title, f.st.issues[0].labels], [1, [AU.AUDIT_LABEL], AU.AUDIT_TITLE, [{ name: AU.AUDIT_LABEL }]], 'one issue, with its label');
+    ok(f.st.issues[0].locked === true && f.st.seen.filter((s) => s.m === 'PUT' && s.u === '/repos/o/lab/issues/10/lock' && s.body === '').length === 1, 'locked once, no reason given: only collaborators comment');
     eq(f.st.seen.slice(looked).filter((s) => s.m === 'GET' && /labels=/.test(s.u)).length, 1, 'found once, then remembered');
     await AU.record(bob, 'o/lab', { actor: 'bob', action: 'run.cancel', target: 'o/lab', detail: { run: 77 } });
     eq(f.st.issues.length, 1, 'another person finds the same issue');
@@ -195,6 +204,43 @@ await t('the audit log on GitHub: its issue found, or made once with its label; 
     // a title look-alike without the label is not the log
     f.st.issues.push({ number: 99, title: AU.AUDIT_TITLE, state: 'open', labels: [], user: { login: 'mallory' } });
     eq(await AU.findAuditIssue(f.as('bob'), 'o/lab'), 10);
+  } finally { f.close(); }
+});
+
+await t('the log\'s issues: at ROTATE_AT comments the full one is closed and the next made (its title numbered, locked, pointing back), anyone then finds the new one; a close refused never sends a record back to the full one; a lock refused said, the record kept; every issue read (fake GitHub)', async () => {
+  const f = await fakeGitHub();
+  try {
+    const alice = f.as('alice'), seed = (n, count) => {
+      for (let i = 0; i < count; i++) { const at = new Date(f.st.clock += 1000).toISOString(); (f.st.comments[n] ??= []).push({ id: 5000 + i, body: AU.commentBody(AU.entry({ actor: 'alice', action: 'dispatch', target: 'o/lab', detail: { run: i } })), user: { login: 'alice' }, created_at: at, updated_at: at }); }
+    };
+    eq(AU.ROTATE_AT, 900);
+    await AU.record(alice, 'o/lab', { actor: 'alice', action: 'dispatch', target: 'o/lab' });
+    seed(10, AU.ROTATE_AT - 2);
+    await AU.record(alice, 'o/lab', { actor: 'alice', action: 'dispatch', target: 'o/lab' });
+    eq([f.st.comments[10].length, f.st.issues.length], [AU.ROTATE_AT, 1], 'up to ROTATE_AT in one issue (looked at again before each record)');
+    const r = await AU.record(alice, 'o/lab', { actor: 'alice', action: 'run.cancel', target: 'o/lab', detail: { run: 5 } });
+    ok(!r.why, 'locked: nothing to say');
+    const [old, next] = f.st.issues;
+    eq([old.state, next.number, next.title, next.state, next.locked, next.labels, f.st.comments[11].length, f.st.comments[10].length], ['closed', 11, `${AU.AUDIT_TITLE} 2`, 'open', true, [{ name: AU.AUDIT_LABEL }], 1, AU.ROTATE_AT], 'the full one closed, the next made and written to');
+    ok(/前の記録: #10/.test(next.body), next.body);
+    const made = f.st.seen.map((s, i) => (s.m === 'POST' && s.u === '/repos/o/lab/issues' ? i : -1)).filter((i) => i >= 0), closed = f.st.seen.findIndex((s) => s.m === 'PATCH' && s.u === '/repos/o/lab/issues/10');
+    ok(made.length === 2 && closed > made[1] && JSON.parse(f.st.seen[closed].body).state === 'closed', 'closed only once the next is there');
+    eq(await AU.findAuditIssue(f.as('bob'), 'o/lab'), 11, 'anyone finds the new one');
+    await AU.record(f.as('bob'), 'o/lab', { actor: 'bob', action: 'variables', target: 'o/lab', detail: { name: 'LAB_NOTIFY' } });
+    eq(f.st.comments[11].length, 2);
+    const all = await AU.readAudit(alice, 'o/lab');
+    eq([all.issue, all.entries.length, all.entries.at(-1).actor, all.entries.filter((e) => e.action === 'run.cancel').length], [11, AU.ROTATE_AT + 2, 'bob', 1], 'every issue read, the full one to its end');
+    // the next one full too, its close and the new one's lock refused: the record kept, said why; the full one passed by
+    seed(11, AU.ROTATE_AT - 2);
+    f.st.closeStatus = 403; f.st.lockStatus = 403;
+    const carol = f.as('mallory');
+    const r2 = await AU.record(carol, 'o/lab', { actor: 'mallory', action: 'dispatch', target: 'o/lab' });
+    ok(/監査の issue #12 をロックできません/.test(r2.why) && !/tok-|Bearer/.test(r2.why), r2.why);
+    eq([f.st.issues.map((i) => [i.number, i.state, i.title]), f.st.comments[12].length], [[[10, 'closed', AU.AUDIT_TITLE], [11, 'open', `${AU.AUDIT_TITLE} 2`], [12, 'open', `${AU.AUDIT_TITLE} 3`]], 1], 'the record in the new one; the full one left open');
+    eq(await AU.findAuditIssue(f.as('bob'), 'o/lab'), 12, 'a full one left open is never chosen again');
+    await AU.record(f.as('bob'), 'o/lab', { actor: 'bob', action: 'dispatch', target: 'o/lab' });
+    eq([f.st.comments[11].length, f.st.comments[12].length, f.st.issues.length], [AU.ROTATE_AT, 2, 3], 'not back to the full one, no other made');
+    eq((await AU.readAudit(alice, 'o/lab')).entries.length, 2 * AU.ROTATE_AT + 2);
   } finally { f.close(); }
 });
 

@@ -77,6 +77,11 @@ export function gh({ token, base = 'https://api.github.com', fetchImpl = (...a) 
     /** the issues (and pull requests: GitHub lists both) with a label, open and closed */
     labeledIssues: (r, label, state = 'all') => call('GET', `/repos/${r}/issues?labels=${encodeURIComponent(label)}&state=${state}&per_page=100`),
     createIssue: (r, { title, body = '', labels = [] }) => call('POST', `/repos/${r}/issues`, { title, body, labels }),
+    /** one issue as it is now: { number, state, comments (how many), locked, … } */
+    issue: (r, n) => call('GET', `/repos/${r}/issues/${encodeURIComponent(n)}`),
+    /** an issue locked, no reason given: only the repository's collaborators may comment on it */
+    lockIssue: (r, n) => call('PUT', `/repos/${r}/issues/${encodeURIComponent(n)}/lock`),
+    closeIssue: (r, n) => call('PATCH', `/repos/${r}/issues/${encodeURIComponent(n)}`, { state: 'closed' }),
     /** a label made; null when it is there already (422) */
     async createLabel(r, { name, color = 'ededed', description = '' }) { try { return await call('POST', `/repos/${r}/labels`, { name, color, description }); } catch (e) { if (e.status === 422) return null; throw e; } },
     /** the App made from its manifest: the code GitHub gave back (an hour) → { id, slug, client_id, client_secret, pem, … }.

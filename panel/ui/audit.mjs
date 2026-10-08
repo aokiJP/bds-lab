@@ -33,7 +33,7 @@ export function auditTab(body, ctx) {
     toast('CSV を作りました');
   };
   body.append(h('div', { class: 'card' }, h('h2', {}, `監査ログ（${lab.slug}）`),
-    h('p', { class: 'muted' }, mode === 'issue' ? `パネルでの操作を、issue「${AU.AUDIT_TITLE}」（ラベル ${AU.AUDIT_LABEL}）にコメントで残しています。書いた人と記録の人が違うものは数えず、後から編集されたものは「編集あり」と出ます。issue はリポジトリの管理者なら消せます: 消せない記録が要るなら GitHub Enterprise の監査ログを。`
+    h('p', { class: 'muted' }, mode === 'issue' ? `パネルでの操作を、issue「${AU.AUDIT_TITLE}」（ラベル ${AU.AUDIT_LABEL}。ロックしてコメントはリポジトリの協力者だけ、${AU.ROTATE_AT} 件ごとに番号付きの次の issue へ）にコメントで残しています。書いた人と記録の人が違うものは数えず、後から編集されたものは「編集あり」と出ます。issue はリポジトリの管理者なら消せます: 消せない記録が要るなら GitHub Enterprise の監査ログを。`
       : '記録していません（公開リポジトリの既定。.github/bds-lab-panel.json の "audit": "issue" で残します）。前の記録があれば下に出ます。'),
     h('div', { class: 'row' }, who, what, since, h('button', { onclick: () => load() }, '読み直す'), h('button', { class: 'primary', onclick: csv }, 'CSV で取り出す')), h('div', { class: 'row' }, count)), list);
   const load = () => act(async () => {
