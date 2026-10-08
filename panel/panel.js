@@ -11,29 +11,7 @@ import * as LF from './lib/livefmt.mjs';
 import { PAGES } from './lib/pages.mjs';
 import { vaultKey } from './lib/vault.mjs';
 import { accounts, memoryStorage } from './lib/accounts.mjs';
-
-// ---- small helpers: the DOM built by hand (text is always text: never parsed as HTML) ----
-const h = (tag, attrs = {}, ...kids) => {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs ?? {})) {
-    if (v === undefined || v === null || v === false) continue;
-    if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.slice(2), v);
-    else if (k === 'class') e.className = v;
-    else if (k === 'value') e.value = v;
-    else if (k === 'checked') e.checked = Boolean(v);
-    // (styles through the CSSOM: the page's CSP allows no inline style attribute)
-    else if (k === 'style' && typeof v === 'object') Object.assign(e.style, v);
-    else e.setAttribute(k, v === true ? '' : String(v));
-  }
-  for (const c of kids.flat(Infinity)) if (c !== null && c !== undefined && c !== false) e.append(c instanceof Node ? c : document.createTextNode(String(c)));
-  return e;
-};
-const $ = (id) => document.getElementById(id);
-const main = () => $('main');
-const toast = (text, bad = false) => { const d = h('div', { class: bad ? 'bad' : '' }, text); $('toast').append(d); setTimeout(() => d.remove(), bad ? 9000 : 4500); };
-const act = async (fn, done) => { try { const r = await fn(); if (done) toast(done); return r; } catch (e) { toast(e.message ?? String(e), true); return undefined; } };
-// (an address from GitHub's answers: only https:// ones become links, anything else stays words)
-const link = (href, text) => (/^https:\/\//.test(String(href ?? '')) ? h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, text) : h('span', {}, text));
+import { h, $, main, toast, act, link } from './ui/dom.mjs';
 
 // ---- the accounts of this browser, each with its own token and settings ----
 // (a browser that refuses storage — a private window may — still works for the tab)

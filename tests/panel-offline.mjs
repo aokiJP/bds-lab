@@ -248,7 +248,7 @@ await t('the page: its CSP allows GitHub\'s API alone and its own scripts; no in
   const csp = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(html)?.[1] ?? '';
   ok(/default-src 'none'/.test(csp) && /script-src 'self';/.test(csp) && /connect-src https:\/\/api\.github\.com;/.test(csp) && !/unsafe/.test(csp), csp);
   ok(!/<script>(?!\s*<\/script>)/.test(html) && !/ style="/.test(html) && !/ on\w+="/.test(html), 'no inline script, style or handler in the page');
-  for (const f of ['panel.js', ...fs.readdirSync(path.join(TOP, 'panel', 'lib')).map((x) => `lib/${x}`)]) {
+  for (const f of ['panel.js', ...['lib', 'ui'].flatMap((d) => (fs.existsSync(path.join(TOP, 'panel', d)) ? fs.readdirSync(path.join(TOP, 'panel', d)).map((x) => `${d}/${x}`) : []))]) {
     const src = fs.readFileSync(path.join(TOP, 'panel', f), 'utf8');
     ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/.test(src), `${f}: no HTML parsing, no eval`);
     ok(![...src.matchAll(/https?:\/\/[\w.-]+/g)].map((m) => m[0]).some((u) => !/^https:\/\/(api\.github\.com|github\.com|avatars\.githubusercontent\.com)$/.test(u)), `${f}: no other address`);
