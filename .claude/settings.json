@@ -1,5 +1,5 @@
 {
-  "$comment": "bds-lab: an AI here needs only Bash (node lab.mjs ...), Read, Write, Edit, Glob, Grep. Every other tool's definition is resent on every turn (measured: 33,065 → 6,146 tokens per turn with the same AGENTS.md). Newer Claude Code tools (tasks, plan mode, questions, cron, worktrees, monitor, LSP, ...) are listed too; a name a version does not have matches nothing. Background commands stay (node lab.mjs bg/wait does the same). The lab's own commands, git and the GitHub CLI run without asking. To get the other tools back in this folder, delete this file.",
+  "$comment": "bds-lab: an AI here needs only Bash (node lab.mjs ...), Read, Write, Edit, Glob, Grep. Every other tool's definition is resent on every turn (measured: 33,065 → 6,146 tokens per turn with the same AGENTS.md). Newer Claude Code tools (tasks, plan mode, questions, cron, worktrees, monitor, LSP, ...) are listed too; a name a version does not have matches nothing. Background commands stay (node lab.mjs bg/wait does the same). The lab's own commands, git and the GitHub CLI run without asking. MCP: none (mcp__*), to keep the tokens down; a GitHub repository is never deleted from here (the PreToolUse hook). To get the other tools back in this folder, delete this file.",
   "permissions": {
     "allow": [
       "Bash(node lab.mjs:*)",
@@ -28,6 +28,11 @@
       "SlashCommand",
       "Workflow",
       "mcp__*",
+      "Bash(gh repo delete:*)",
+      "Bash(gh api -X DELETE repos/:*)",
+      "Bash(gh api -X DELETE /repos/:*)",
+      "Bash(gh api --method DELETE repos/:*)",
+      "Bash(gh api --method DELETE /repos/:*)",
       "EnterPlanMode",
       "ExitPlanMode",
       "CronCreate",
@@ -86,6 +91,18 @@
             "type": "command",
             "command": "node lab.mjs panel hook",
             "timeout": 120
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/no-repo-delete.mjs",
+            "timeout": 10
           }
         ]
       }
