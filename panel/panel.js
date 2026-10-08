@@ -466,7 +466,7 @@ const sendToDiscord = (runId) => guarded('dispatch', { workflow: 'notify.yml', r
 
 // ---- 実行 (where: this lab's own Actions, or a lender's host) ----
 function start(body) {
-  const caps = capsOf(), hosts = st.hosts.filter((x) => x.rules && (x.role === 'borrower' || x.role === 'lender'));
+  const caps = capsOf(), hosts = st.hosts.filter((x) => M.canBorrow(x, st.lab.slug));
   if (!hosts.some((x) => x.slug === st.target)) st.target = 'lab';
   const where = h('div', { class: 'card' }, h('h2', {}, 'どこの Actions で走らせる'),
     h('ul', { class: 'plain targets' }, [
@@ -683,7 +683,7 @@ async function controller(body, run) {
 // ---- 貸し借り ----
 function hostCard(x, brief = false) {
   if (x.error) return h('div', { class: 'card' }, h('h2', {}, x.slug), h('p', { class: 'bad' }, x.error));
-  const card = h('div', { class: 'card' }, h('h2', {}, x.slug, h('span', { class: 'chip' }, M.ROLE_NAMES[x.role] ?? '見るだけ'), h('span', { class: 'chip' }, x.repo.visibility), link(x.repo.html_url, 'GitHub')));
+  const card = h('div', { class: 'card' }, h('h2', {}, x.slug, h('span', { class: 'chip' }, M.ROLE_NAMES[x.role] ?? '見るだけ'), h('span', { class: 'chip' }, x.repo.visibility), M.forkOf(x.repo) ? h('span', { class: 'chip' }, `${M.forkOf(x.repo)} のフォーク`) : null, link(x.repo.html_url, 'GitHub')));
   if (!x.rules) { card.append(h('p', { class: 'bad' }, x.errors.join(' / '))); return card; }
   const use = h('div', {}, h('p', { class: 'muted' }, '今月の分を数えています…'));
   card.append(h('p', {}, `1 か月 ${x.rules.minutesPerMonth} 分（${Math.floor(x.rules.minutesPerMonth * M.STOP_AT)} 分で止まる）・仕事 ${x.rules.jobs.join(' ')}・${x.rules.hours} ${x.rules.timezone}${x.rules.until ? `・${x.rules.until} まで` : ''}`), use);
@@ -693,9 +693,17 @@ function hostCard(x, brief = false) {
     use.replaceChildren(h('div', { class: 'bar' + (pct >= 100 ? ' bad' : pct >= 75 ? ' warn' : '') }, h('i', { style: { width: `${pct}%` } })),
       h('div', {}, `今月 ${used} 分 / 止まる ${now.stopAt} 分（${month}）`), now.ok ? h('div', { class: 'ok' }, '✅ いま使えます') : h('div', { class: 'warn' }, now.why.map((w) => `⏸ ${w}`).join(' / ')),
       brief ? null : h('ul', { class: 'plain' }, rs.slice(0, 6).map((r) => h('li', {}, M.STATE_ICON[r.status === 'completed' ? r.conclusion : r.status] ?? '•', ' ', link(r.html_url, r.display_title || r.name), ' ', h('span', { class: 'muted' }, `${r.triggering_actor?.login ?? ''} · ${M.ago(r.created_at)}`)))),
-      !brief && x.role === 'borrower' && canLab() ? h('div', { class: 'row' }, h('button', { onclick: () => { st.target = x.slug; go('start'); } }, `${x.slug.split('/')[0]} さんの Actions で走らせる`)) : null);
+      !brief && x.role !== 'lender' && canLab() && M.canBorrow(x, st.lab.slug) ? h('div', { class: 'row' }, h('button', { onclick: () => { st.target = x.slug; go('start'); } }, `${x.slug.split('/')[0]} さんの Actions で走らせる`)) : null);
   });
   if (!brief && x.role === 'lender') card.append(lenderForm(x));
+  // (a lender's fork: brought up to the lab, host.yml alone on — what 「フォークで貸す」 did, again)
+  if (!brief && x.role === 'lender' && M.forkOf(x.repo)) card.append(h('div', { class: 'row' }, h('button', { onclick: () => act(async () => {
+    await st.api.syncFork(x.slug, x.repo.default_branch);
+    const w = M.forkWorkflows(await st.api.workflows(x.slug));
+    for (const id of w.enable) await st.api.enableWorkflow(x.slug, id);
+    for (const id of w.disable) await st.api.disableWorkflow(x.slug, id);
+    const i = st.hosts.findIndex((y) => y.slug === x.slug); st.hosts[i] = await loadHost(x.slug); render();
+  }, 'ラボの新しい版に合わせました（動くのは host.yml だけ）') }, '🔄 ラボに合わせる')));
   return card;
 }
 function lenderForm(x) {

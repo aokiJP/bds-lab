@@ -173,23 +173,34 @@ export function hostNow(rules, used, now = new Date(), running = false) {
   return { ok: !why.length, why, used, limit: rules.minutesPerMonth, stopAt, remaining: Math.max(0, stopAt - used) };
 }
 // ---- where a job runs: this lab's own Actions, or a lender's (a host) through hostrun.yml ----
-/** may this repository become this person's host (pure) → { ok, errors, warns }: their own (admin), not a fork, not archived;
- *  public is allowed but said (the jobs pushed there are public then) */
-export function newHostCheck(repo, me) {
-  const errors = [], warns = [];
-  if (!repo) return { ok: false, errors: ['そのリポジトリが見えません（まだ作っていないか、ラボの App をそこに入れていません）'], warns };
-  if (roleOf(repo.permissions) !== 'admin' || String(repo.owner?.login ?? '').toLowerCase() !== String(me ?? '').toLowerCase()) errors.push('あなた自身のリポジトリだけをホストにできます（持ち主として）');
-  if (repo.fork) errors.push('フォークはホストにできません: 新しいリポジトリを作ってください');
+/** the lab a fork came from (pure): its parent's (or source's) owner/name, null when it is not a fork */
+export const forkOf = (repo) => (repo?.fork ? repo.parent?.full_name ?? repo.source?.full_name ?? null : null);
+const same = (a, b) => String(a ?? '').toLowerCase() === String(b ?? '').toLowerCase();
+/** may this repository become this person's host (pure) → { ok, errors }: their own fork of this lab (public, the same
+ *  code: GitHub's standard runners cost a public repository no minutes), not archived */
+export function forkHostCheck(repo, me, lab) {
+  const errors = [];
+  if (!repo) return { ok: false, errors: ['そのフォークが見えません（まだフォークしていないか、ラボの App をそこに入れていません）'] };
+  if (!same(forkOf(repo), lab)) errors.push(`ラボ（${lab}）のフォークだけをホストにできます`);
+  if (roleOf(repo.permissions) !== 'admin' || !same(repo.owner?.login, me)) errors.push('あなた自身のフォークだけをホストにできます（持ち主として）');
   if (repo.archived) errors.push('アーカイブされています');
-  if (!repo.private && repo.visibility !== 'private' && repo.visibility !== 'internal') warns.push('公開リポジトリです: 押し込まれた試験も公開になります（private がおすすめ）');
-  return { ok: !errors.length, errors, warns };
+  if (repo.private || repo.visibility === 'private') errors.push('private です: ラボと同じ public のフォークにしてください');
+  return { ok: !errors.length, errors };
 }
-/** the files a new host gets (pure): the template's README and host.yml as they are, .lab-host.json from the lender's rules */
-export function newHostFiles(template, rules) {
+/** the lender's rules as .lab-host.json (pure) → { text, errors } */
+export function hostRulesText(rules) {
   const c = checkRules(rules);
-  if (c.errors.length) return { files: null, errors: c.errors };
-  return { files: { ...template, '.lab-host.json': JSON.stringify({ lab: 1, ...rules }, null, 2) + '\n' }, errors: [] };
+  return c.errors.length ? { text: null, errors: c.errors } : { text: JSON.stringify({ lab: 1, ...rules }, null, 2) + '\n', errors: [] };
 }
+/** a fork's workflows set for lending (pure) → { enable: [ids], disable: [ids] }: host.yml on, every other one of the lab's
+ *  off (a lender's minutes and mail never go to the lab's own CI, schedules or autopilot) */
+export function forkWorkflows(wfs) {
+  const isHost = (w) => String(w.path ?? '').endsWith('/host.yml');
+  return { enable: wfs.filter((w) => isHost(w) && w.state !== 'active').map((w) => w.id), disable: wfs.filter((w) => !isHost(w) && w.state === 'active').map((w) => w.id) };
+}
+/** may the lab's jobs run on this host from the panel (pure): its rules are good and this person writes there, or it is a fork
+ *  of this lab (hostrun reaches it with the lab's App, no invitation needed) */
+export const canBorrow = (x, lab) => Boolean(x?.rules) && (x.role === 'borrower' || x.role === 'lender' || same(forkOf(x.repo), lab));
 export const HOST_UNIT_JOBS = ['test', 'go', 'sim'];
 export const HOST_JOB_WORDS = { gate: 'ラボの試験（gate）', 'gate-all': '全部の試験', test: 'ユニットの試験（test）', go: 'ユニットを仕上げる（go: .mcaddon も）', sim: 'ユニットをすばやく（sim）', upkeep: '新しい Minecraft に合わせる（upkeep）', 'dev-bds': 'BDS の開発版で' };
 /** the form for a job on a host → { inputs } for hostrun.yml, or { error } (pure): the lender's rules allow the job, a unit

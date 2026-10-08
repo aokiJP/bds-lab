@@ -233,18 +233,19 @@ await t('debug: the calls kept (a ring), the errors among them, whether this pag
   eq(D.redact('a ghp_0123456789abcdef b github_pat_11AB_cd lab-sealed:v1:xyz'), 'a [消しました] b [消しました] [消しました]');
 });
 
-await t('a stranger lends: their own new repository becomes a host — the template as the lab checks it, their rules; nothing else (pure)', async () => {
+await t('a stranger lends: their own public fork of the lab becomes a host — host.yml as the lab has it, their rules, nothing else running there (pure)', async () => {
   const PC = await imp('common/panel-config.mjs'), { HOST_FILES } = await imp('panel/lib/hosttemplate.mjs');
   eq(fs.readFileSync(path.join(TOP, PC.HOST_MODULE), 'utf8'), PC.hostTemplateModule(), 'panel/lib/hosttemplate.mjs is host/template now (node common/panel-config.mjs --host-template)');
-  const mine = { owner: { login: 'Lee' }, permissions: { admin: true }, private: true, visibility: 'private' };
-  ok(M.newHostCheck(mine, 'lee').ok && !M.newHostCheck(null, 'lee').ok, 'their own: yes; none: no');
-  ok(/あなた自身/.test(M.newHostCheck({ ...mine, owner: { login: 'other' } }, 'lee').errors.join()) && /あなた自身/.test(M.newHostCheck({ ...mine, permissions: { push: true } }, 'lee').errors.join()), 'another\'s repository: never (not even one they may write)');
-  ok(/フォーク/.test(M.newHostCheck({ ...mine, fork: true }, 'lee').errors.join()) && /アーカイブ/.test(M.newHostCheck({ ...mine, archived: true }, 'lee').errors.join()));
-  ok(M.newHostCheck({ ...mine, private: false, visibility: 'public' }, 'lee').ok && /公開/.test(M.newHostCheck({ ...mine, private: false, visibility: 'public' }, 'lee').warns.join()), 'public: allowed, said');
+  eq(fs.readFileSync(path.join(TOP, '.github/workflows/host.yml'), 'utf8'), HOST_FILES['.github/workflows/host.yml'], 'the lab carries host.yml as the template has it: every fork is a host as it stands');
+  const LAB = 'Owner/bds-lab', mine = { owner: { login: 'Lee' }, permissions: { admin: true }, private: false, visibility: 'public', fork: true, parent: { full_name: 'owner/bds-lab' } };
+  ok(M.forkHostCheck(mine, 'lee', LAB).ok && !M.forkHostCheck(null, 'lee', LAB).ok, 'their own fork of this lab: yes; none: no');
+  ok(/フォークだけ/.test(M.forkHostCheck({ ...mine, fork: false, parent: undefined }, 'lee', LAB).errors.join()) && /フォークだけ/.test(M.forkHostCheck({ ...mine, parent: { full_name: 'x/other' } }, 'lee', LAB).errors.join()), 'not a fork, or another lab\'s: never');
+  ok(/あなた自身/.test(M.forkHostCheck({ ...mine, owner: { login: 'other' } }, 'lee', LAB).errors.join()) && /あなた自身/.test(M.forkHostCheck({ ...mine, permissions: { push: true } }, 'lee', LAB).errors.join()), 'another\'s fork: never (not even one they may write)');
+  ok(/アーカイブ/.test(M.forkHostCheck({ ...mine, archived: true }, 'lee', LAB).errors.join()) && /private/.test(M.forkHostCheck({ ...mine, private: true }, 'lee', LAB).errors.join()));
   const rules = { minutesPerMonth: 300, jobs: ['gate', 'sim'], hours: '22:00-06:00', timezone: 'Asia/Tokyo', until: '2027-01-31', contact: 'lee' };
-  const r = M.newHostFiles(HOST_FILES, rules);
-  ok(!r.errors.length && r.files['.github/workflows/host.yml'] === fs.readFileSync(path.join(TOP, 'host/template/.github/workflows/host.yml'), 'utf8').replace(/\r\n/g, '\n') && M.checkRules(JSON.parse(r.files['.lab-host.json'])).rules.minutesPerMonth === 300, JSON.stringify(Object.keys(r.files)));
-  ok(/jobs/.test(M.newHostFiles(HOST_FILES, { ...rules, jobs: ['make'] }).errors.join()) && M.newHostFiles(HOST_FILES, { ...rules, jobs: ['make'] }).files === null, 'an AI job is never lent');
+  ok(M.checkRules(JSON.parse(M.hostRulesText(rules).text)).rules.minutesPerMonth === 300 && M.hostRulesText({ ...rules, jobs: ['make'] }).text === null, 'their rules; an AI job is never lent');
+  eq(M.forkWorkflows([{ id: 1, path: '.github/workflows/host.yml', state: 'disabled_fork' }, { id: 2, path: '.github/workflows/verify.yml', state: 'active' }, { id: 3, path: '.github/workflows/auto.yml', state: 'disabled_fork' }]), { enable: [1], disable: [2] }, 'host.yml on, the lab\'s own off');
+  ok(M.canBorrow({ rules: {}, role: 'read', repo: mine }, LAB) && !M.canBorrow({ rules: {}, role: 'read', repo: { fork: false } }, LAB) && M.canBorrow({ rules: {}, role: 'borrower', repo: {} }, LAB) && !M.canBorrow({ rules: null, role: 'lender', repo: mine }, LAB), 'the lab borrows a fork of itself without an invitation');
 });
 
 await t('panel check: a changed file → the checks it needs (ESLint, the offline tests, the browser unless quick); failures\' lines (pure)', async () => {

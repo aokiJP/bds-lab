@@ -5,9 +5,11 @@
 スマホの Discord から CI の端末を画面とボタンで動かせ、リポジトリの秘密も Discord のフォームで登録できる（node も PC も要らない）。**
 
 ### 管理パネル: 知らない人は時間を貸すだけ・直したらすぐデバッグ
-- 招かれていない人が入ると「使えません」ではなく「時間を貸す」（`ui/lend.mjs`）: 自分の private のリポジトリを、その場でホストに
-  （ひな形の README と host.yml をそのまま・条件から .lab-host.json、`lib/hosttemplate.mjs` は host/template から生成して試験で
-  照合）。自分のリポジトリだけ、AI の仕事は貸せない。入ってからも概要・貸し借り・設定だけ。
+- 招かれていない人が入ると「使えません」ではなく「時間を貸す」（`ui/lend.mjs`）: **ラボのフォーク**（public・同じ中身）をホストに。
+  ラボが `.github/workflows/host.yml`（ひな形と同じ: 試験で照合）を持つのでフォークにも入り、パネルが Sync fork・条件の
+  .lab-host.json・host.yml だけを動かす（ラボのほかのワークフローは貸し手のところで止めたまま）。自分のフォークだけ、AI の仕事は
+  貸せない。入ってからも概要・貸し借り・設定だけ。ラボは招かれなくても App でフォークに頼める（`M.canBorrow`、hostrun の App
+  トークンは permissions を返さないので、作れたことを書き込める印に）。貸し手の「🔄 ラボに合わせる」。
 - `node lab.mjs panel check [--quick|--all]`（`common/panel.mjs`）: 変えたファイルに要る ESLint・試験・本物のブラウザだけ。
   `panel shots` でタブごとの画像。Claude Code では編集のたびに `panel hook` が `--quick` を走らせ、落ちたらすぐ伝える（PostToolUse）。
 - パネルの「設定」→「デバッグ」: このページの版（pages.yml が config.json に GITHUB_SHA）と出した版、エラーと最近の呼び出し

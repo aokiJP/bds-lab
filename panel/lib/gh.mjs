@@ -58,6 +58,11 @@ export function gh({ token, base = 'https://api.github.com', fetchImpl = (...a) 
     cancel: (r, run) => call('POST', `/repos/${r}/actions/runs/${run}/cancel`),
     rerunFailed: (r, run) => call('POST', `/repos/${r}/actions/runs/${run}/rerun-failed-jobs`),
     pulls: (r) => call('GET', `/repos/${r}/pulls?state=open&per_page=20`),
+    /** a workflow turned on or off (a fork's start off: disabled_fork) */
+    enableWorkflow: (r, id) => call('PUT', `/repos/${r}/actions/workflows/${encodeURIComponent(id)}/enable`),
+    disableWorkflow: (r, id) => call('PUT', `/repos/${r}/actions/workflows/${encodeURIComponent(id)}/disable`),
+    /** a fork's branch brought up to its parent's (GitHub's 「Sync fork」) */
+    syncFork: (r, branch) => call('POST', `/repos/${r}/merge-upstream`, { branch }),
     /** the secrets' names (never their values: GitHub gives none) → [names], null when this token may not look */
     async secretNames(r) { try { return ((await call('GET', `/repos/${r}/actions/secrets?per_page=100`)).secrets ?? []).map((s) => s.name); } catch (e) { if (e.status === 403 || e.status === 404) return null; throw e; } },
     secrets: async (r) => (await call('GET', `/repos/${r}/actions/secrets?per_page=100`)).secrets ?? [],

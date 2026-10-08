@@ -32,10 +32,11 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 // (and an organization's private lab with a policy: its admin signs in with GitHub — the sign-in service's tokens ghu_* —
 // and a writer comes with a token)
 const CORP = 'acme/corp-lab', ADMIN = { admin: true, push: true, pull: true };
+const FORK = 'newlender/bds-lab', forkSide = { synced: [], toggled: [], wfs: [{ id: 31, name: 'bds-lab host', path: '.github/workflows/host.yml', state: 'disabled_fork' }, { id: 32, name: 'verify', path: '.github/workflows/verify.yml', state: 'active' }] };
 const people = {
   'tok-author': { login: 'author1', repos: { [LAB]: { admin: true, push: true, pull: true }, [HOST]: { push: true, pull: true } } },
   'tok-stranger': { login: 'stranger', repos: { [LAB]: { pull: true } } },
-  'tok-newlender': { login: 'newlender', repos: { [LAB]: { pull: true }, 'newlender/bds-lab-host': { admin: true, push: true, pull: true }, 'someone/their-repo': { push: true, pull: true } } },
+  'tok-newlender': { login: 'newlender', repos: { [LAB]: { pull: true }, [FORK]: { admin: true, push: true, pull: true }, 'someone/their-repo': { push: true, pull: true } } },
   'tok-lender': { login: 'lender1', repos: { [HOST]: { admin: true, push: true, pull: true } } },
   ghu_ceo1: { login: 'ceo1', repos: { [CORP]: ADMIN } }, ghu_ceo2: { login: 'ceo1', repos: { [CORP]: ADMIN } },
   'tok-writer': { login: 'writer1', repos: { [CORP]: { push: true, pull: true } } },
@@ -65,7 +66,7 @@ const runs = {
 };
 const jobs = { 100: [{ name: 'offline', status: 'completed', conclusion: 'failure', check_run_url: 'https://api.github.com/repos/author1/bds-lab/check-runs/55', html_url: 'https://github.com/x', steps: [{ name: 'checkout', status: 'completed', conclusion: 'success' }, { name: 'every offline test', status: 'completed', conclusion: 'failure' }] }],
   101: [{ name: 'device (1)', status: 'in_progress', steps: [{ name: 'checkout', status: 'completed' }, { name: '端末をそのまま調べる（hold）', status: 'in_progress' }] }] };
-const repoJson = (slug, perm) => ({ full_name: slug, permissions: perm, visibility: slug === LAB ? 'public' : 'private', default_branch: 'main', html_url: `https://github.com/${slug}`, fork: false, archived: false, owner: { login: slug.split('/')[0], type: slug === CORP ? 'Organization' : 'User' } });
+const repoJson = (slug, perm) => ({ full_name: slug, permissions: perm, visibility: slug === LAB || slug === FORK ? 'public' : 'private', private: !(slug === LAB || slug === FORK), default_branch: 'main', html_url: `https://github.com/${slug}`, fork: slug === FORK, ...(slug === FORK ? { parent: { full_name: LAB } } : {}), archived: false, owner: { login: slug.split('/')[0], type: slug === CORP ? 'Organization' : 'User' } });
 // (a key's shape made at run time: the lab's own secret scan — share, host's pre-push — reads this file as it is)
 const PEM = `-----BEGIN RSA ${'PRIVATE'} KEY-----\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n-----END RSA ${'PRIVATE'} KEY-----\n`;
 
@@ -108,6 +109,11 @@ async function api(route) {
   if (rest === '/actions/secrets') return perm.admin ? send(200, { secrets: [...G.secretNames].map((name) => ({ name, updated_at: iso(now - (name === 'GOOGLE_EMAIL' ? 400 : 1) * 86_400_000) })) }) : send(403, { message: 'Resource not accessible' });
   if (rest === '/actions/secrets/public-key') return send(200, { key_id: 'KID1', key: SEAL.toB64(PK) });
   if (rest.startsWith('/actions/secrets/') && req.method() === 'PUT') { const name = decodeURIComponent(rest.split('/').pop()); G.secretsPut.push({ name, body }); G.secretNames.add(name); return send(201, null); }
+  // (the lender's fork: behind the lab — no host.yml yet — until synced; the lab's workflows as a fork has them)
+  if (slug === FORK && rest === '/merge-upstream' && req.method() === 'POST') { forkSide.synced.push(body.branch); G.files[`${FORK}:.github/workflows/host.yml`] = fs.readFileSync(path.join(TOP, '.github/workflows/host.yml'), 'utf8'); return send(200, { merge_type: 'fast-forward' }); }
+  const tw = /^\/actions\/workflows\/(\d+)\/(enable|disable)$/.exec(rest);
+  if (slug === FORK && tw && req.method() === 'PUT') { forkSide.toggled.push(`${tw[2]} ${tw[1]}`); forkSide.wfs.find((w) => String(w.id) === tw[1]).state = tw[2] === 'enable' ? 'active' : 'disabled_manually'; return send(204, null); }
+  if (slug === FORK && rest.startsWith('/actions/workflows')) return send(200, { workflows: forkSide.wfs });
   if (rest === '/actions/workflows') return send(200, { workflows: ['app', 'notify', 'secrets', 'verify', 'hostrun'].map((n, i) => ({ id: i + 1, name: n, path: `.github/workflows/${n}.yml`, state: 'active' })) });
   if (rest === '/actions/artifacts') return send(200, { artifacts: slug === LAB ? G.artifacts : [] });
   const am = /^\/actions\/runs\/(\d+)\/artifacts/.exec(rest); if (am) return send(200, { artifacts: slug === LAB ? G.artifacts.filter((a) => String(a.workflow_run.id) === am[1]) : [] });
@@ -243,19 +249,19 @@ try {
   await page.click('text=別のアカウントで入る');
   await signIn('tok-newlender');
   await waitText(/時間を貸す/);
-  await page.fill('#lend input[aria-label="ホストのリポジトリ"]', 'someone/their-repo');
-  await page.locator('#lend button', { hasText: 'ホストを整える' }).click();
+  await page.fill('#lend input[aria-label="フォーク"]', 'someone/their-repo');
+  await page.locator('#lend button', { hasText: 'フォークで貸す' }).click();
   await page.waitForTimeout(500);
-  check(/あなた自身のリポジトリだけ/.test(await page.locator('#toast').innerText()) && !G.filesPut.some((f) => f.slug === 'someone/their-repo'), 'another\'s repository is never made a host', await page.locator('#toast').innerText());
-  await page.fill('#lend input[aria-label="ホストのリポジトリ"]', 'newlender/bds-lab-host');
+  check(/フォークだけ/.test(await page.locator('#toast').innerText()) && !G.filesPut.some((f) => f.slug === 'someone/their-repo'), 'a repository that is not their fork of the lab is never made a host', await page.locator('#toast').innerText());
+  await page.fill('#lend input[aria-label="フォーク"]', FORK);
   await page.fill('#lend input[aria-label="1 か月に貸す分"]', '300');
-  await page.locator('#lend button', { hasText: 'ホストを整える' }).click();
+  await page.locator('#lend button', { hasText: 'フォークで貸す' }).click();
   await waitText(/貸す条件（あなたのホスト）/, 8000);
-  const made = G.filesPut.filter((f) => f.slug === 'newlender/bds-lab-host').map((f) => f.f).sort();
+  const made = G.filesPut.filter((f) => f.slug === FORK).map((f) => f.f);
   const tabsNow = await page.locator('nav.tabs button').allInnerTexts();
-  check(JSON.stringify(made) === JSON.stringify(['.github/workflows/host.yml', '.lab-host.json', 'README.md']) && JSON.parse(G.files['newlender/bds-lab-host:.lab-host.json']).minutesPerMonth === 300
-    && G.files['newlender/bds-lab-host:.github/workflows/host.yml'] === fs.readFileSync(path.join(TOP, 'host/template/.github/workflows/host.yml'), 'utf8'), 'the host made: the template\'s host.yml as the lab checks it, their rules', JSON.stringify(made));
-  check(JSON.stringify(tabsNow) === JSON.stringify(['概要', '貸し借り', '設定']) && /貸し手/.test(await text()), 'then a lender: lending is all there is (no runs, secrets, members …)', JSON.stringify(tabsNow));
+  check(JSON.stringify(forkSide.synced) === '["main"]' && JSON.stringify(made) === '[".lab-host.json"]' && JSON.parse(G.files[`${FORK}:.lab-host.json`]).minutesPerMonth === 300, 'their fork made a host: brought up to the lab (host.yml as the lab has it), their rules written — nothing else', JSON.stringify({ synced: forkSide.synced, made }));
+  check(JSON.stringify(forkSide.toggled) === JSON.stringify(['enable 31', 'disable 32']), 'only host.yml runs in their fork: the lab\'s own CI off there', JSON.stringify(forkSide.toggled));
+  check(JSON.stringify(tabsNow) === JSON.stringify(['概要', '貸し借り', '設定']) && /貸し手/.test(await text()) && /のフォーク/.test(await text()), 'then a lender: lending is all there is (no runs, secrets, members …)', JSON.stringify(tabsNow));
   await page.locator('#who button', { hasText: '出る' }).click();
 
   // the author

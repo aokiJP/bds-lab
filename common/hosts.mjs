@@ -205,7 +205,10 @@ const lf = (s) => String(s).replace(/\r\n/g, '\n');
 function repoAccess(slug) {
   const { r, j } = ghJson(['api', `repos/${slug}`]);
   if (!r.ok) return { ok: false, gone: r.gone, why: r.gone ? '見えません（招待されていない・外された・消された: HTTP 403/404）' : `gh が答えません: ${r.err.trim().split('\n').pop()?.slice(0, 160)}` };
-  return { ok: true, push: Boolean(j?.permissions?.push), private: Boolean(j?.private), archived: Boolean(j?.archived), branch: j?.default_branch ?? 'main' };
+  // (the lab's App token in hostrun — ghs_, minted for this one repository with contents: write — gets no `permissions` back:
+  // that it was minted at all is the proof; a person's token always gets them)
+  const push = j?.permissions ? Boolean(j.permissions.push) : /^ghs_/.test(String(process.env.GH_TOKEN ?? ''));
+  return { ok: true, push, private: Boolean(j?.private), archived: Boolean(j?.archived), fork: Boolean(j?.fork), branch: j?.default_branch ?? 'main' };
 }
 // 403/404 this many looks in a row: the host is withdrawn (one may be GitHub's own hiccup). Seen again: used again
 export const STRIKES = 2;
