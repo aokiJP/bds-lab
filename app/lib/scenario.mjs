@@ -41,9 +41,18 @@
 //   until clientlog <正規表現> [ミリ秒]   ゲームのコンテンツログ（クライアントだけのエラー: JSON UI など）にその行が出るまで待つ
 //   expect clientlog <正規表現> / absent clientlog <正規表現>   ここまでのコンテンツログにある / ない
 //   Android の「応答なし」「停止しました」のダイアログには、until・shot・tap などの前にラボが答える（待つ / 閉じる。回数は報告に）
+// ゲームを人のように遊ぶ（端末のコントローラー: スティック・トリガー・ボタンを押したまま。lib/play.mjs。ワールドの中で）:
+//   walk <forward|back|left|right>… [秒]   歩く（walk forward left 2 で斜め）     sprint [秒]   前へ走る
+//   jump [forward|back|left|right] [秒]   跳ぶ / その向きへ跳びながら進む        sneak [秒]   しゃがむ（R3）
+//   look <left|right|up|down> [ミリ秒] [強さ%]   視点を回す（右スティック）      stick <L|R> <x%> <y%> [ミリ秒]   好きな向き
+//   attack [秒] / mine [秒]     殴る・壊す（RT）       use [秒] / place [秒]   使う・置く・開ける（LT）
+//   slot <1〜9|next|prev>       持つものを替える       inventory   持ち物（Y）     drop [回数]   落とす（Q）
+//   cmd </コマンド>             プレイヤーとしてコマンド    perspective   視点の切り替え（F5）   pause   ポーズ（START）
+//   release                     スティック・トリガー・ボタンを全部はなす
 // 行末の ` # …` はコメント。正規表現の頭に (?i) で大文字小文字を無視。失敗した手順で止まり、その画面を fail-line<行>.png に撮る。
 import fs from 'node:fs';
 import path from 'node:path';
+import { GAME_VERBS, gameStep, playGame } from './play.mjs';
 import { ANDROID_KEYS, androidKey, linuxKey, findText, firstRunButton, titleWords, joinPromptButton, joinRefusal, joinPromptKind, ownWorldListed, loadingScreen, playScreen, backToTitle, buttonFocused, focusRing, lanCardWord, titlePlay, holdScript, inputText, keyboardDevice, meminfoMb, gameLayer, framesIn, recPath } from './client.mjs';
 
 // APP_TIME_SCALE (0..1, tests on the fake device): every fixed pause shorter; deadlines stay in real time
@@ -55,7 +64,7 @@ const TITLE_OCR_MS = Number(process.env.APP_TITLE_OCR_MS) || 6000;
 const JOIN_OCR_MS = Number(process.env.APP_JOIN_OCR_MS) || 4000;
 export const KEYS = ANDROID_KEYS;
 const VERBS = new Set(['launch', 'stop', 'join', 'wait', 'shot', 'tap', 'swipe', 'key', 'text', 'do', 'until', 'expect', 'absent', 'pull', 'push', 'sh', 'section', 'chat', 'press', 'hold', 'record', 'perf', 'changed', 'network', 'size', 'density', 'cutout',
-  'mouse', 'pad', 'screen', 'background', 'foreground', 'trim']);
+  'mouse', 'pad', 'screen', 'background', 'foreground', 'trim', ...GAME_VERBS]);
 // a game controller's buttons (Android key names): the game's UI moves its focus with them, a path touch never takes
 // steps that leave the game as it is (the rest act on it)
 const STILL = new Set(['launch', 'until', 'wait', 'shot', 'section', 'do', 'expect', 'absent', 'changed', 'perf', 'record', 'pull', 'sh']);
@@ -84,7 +93,7 @@ export function parseScenario(text) {
     const [main, extra] = raw.split(/\s;\s/, 2);
     const one = (s) => {
       const verb = s.split(/\s+/)[0], rest = s.slice(verb.length).trim();
-      const args = ['do', 'text', 'sh', 'chat'].includes(verb) ? [rest] : ['until', 'expect', 'absent'].includes(verb) ? splitRegexArgs(rest)
+      const args = ['do', 'text', 'sh', 'chat', 'cmd'].includes(verb) ? [rest] : ['until', 'expect', 'absent'].includes(verb) ? splitRegexArgs(rest)
         : verb === 'tap' && /^text\s/.test(rest) ? ['text', rest.slice(5).trim()] : rest ? rest.split(/\s+/) : [];
       return { line, verb, args, raw: s };
     };
@@ -144,6 +153,7 @@ function check(s) {
     if (!['server', 'log', 'clientlog', 'text'].includes(a[0]) || !a[1]) return `書き方: ${s.verb} server|log|clientlog|text <正規表現>`;
     try { rx(a[1]); } catch (e) { return `正規表現の誤り: ${e.message}`; }
   }
+  if (GAME_VERBS.has(s.verb)) { const g = gameStep(s.verb, a.filter((x) => x !== '')); if (g.error) return g.error; }
   if (s.verb === 'pull' && !a[0]) return '書き方: pull <端末のパス> [名前]';
   if (s.verb === 'push' && a.length !== 2) return '書き方: push <ファイル> <端末のパス>';
   return null;
@@ -347,6 +357,13 @@ export async function runScenario(steps, ctx) {
       case 'section': return '';
       case 'shot': { const d = clearDialog(s); if (d) await sleep(2000); const f = save(a[0]); ctx.shotTaken?.(a[0], last); return '→ ' + f + (d ? `（先に Android のダイアログ「${d.proc}」に答えてから）` : ''); }
       case 'tap': case 'swipe': case 'key': case 'text': case 'chat': case 'press': case 'hold': case 'mouse': case 'pad': if (clearDialog(s)) await sleep(1000); break;
+    }
+    // the game played by name (walk, look, attack…): the controller's sticks, triggers and buttons (lib/play.mjs)
+    if (GAME_VERBS.has(s.verb)) {
+      if (clearDialog(s)) await sleep(1000);
+      ocrLast = null;
+      if (!adb.pad) throw new Error('この端末ではコントローラーを使えません');
+      return await playGame(adb, gameStep(s.verb, a.filter((x) => x !== '')), { ensurePad: () => Boolean(adb.padReady) || Boolean(ctx.ensurePad?.()), sleep });
     }
     switch (s.verb) {
       case 'tap': {

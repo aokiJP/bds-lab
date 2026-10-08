@@ -3,7 +3,13 @@
 // taps on the emulator, and the shell's injected key events (`input gamepad`, device -1) reach them unevenly: from a real
 // device each press has its own down, a moment held, and its up. Commands are read from a FIFO, one word each:
 //   A B X Y LB RB LT RT SELECT START HOME L3 R3 UP DOWN LEFT RIGHT   (a press)   wait<ms>   (a pause)   hold<ms>
-//   lab-pad <fifo>        echo "A DOWN A" > <fifo>
+//   +A / -A        that button (or LT RT UP DOWN LEFT RIGHT) down and left down / up again
+//   LX=<v> LY=<v> RX=<v> RY=<v>   a stick's axis set to v % (-100..100) and left there: LY=-100 walks forward until LY=0,
+//                  RX=50 turns right at half speed (the left stick moves the player, the right one turns the camera)
+//   LT=<v> RT=<v>  a trigger pulled v % (0..100) and left there (RT=100 … RT=0: the attack button held, a block mined)
+//   center         every stick and trigger back to rest, every button up
+//   lab-pad <fifo>        echo "A DOWN A" > <fifo>        echo "LY=-100 wait2000 LY=0" > <fifo>
+//   lab-pad --dry <file> <word>…   no device: the words' input events written to <file> (the lab's tests read them)
 // A button is held 500 ms (hold<ms> changes it for the presses after it): the game samples its buttons once a frame, and
 // on the CI device (4 frames a second) a 90 ms press was missed again and again where a 600 ms one was taken at once
 // No C library (the kernel's system calls, x86_64 or arm64): a few kilobytes, so it can be put on a device by any means.
@@ -47,6 +53,8 @@ static long sys(long n, long a, long b, long c, long d) {
 #define O_RDONLY 0
 #define O_WRONLY 1
 #define O_NONBLOCK 04000
+#define O_CREAT 0100
+#define O_TRUNC 01000
 // (a compiler may turn a loop that clears a struct into a call to memset: there is no C library to answer it)
 void *memset(void *d, int c, unsigned long n) { unsigned char *p = d; while (n--) *p++ = (unsigned char)c; return d; }
 void *memcpy(void *d, const void *s, unsigned long n) { unsigned char *p = d; const unsigned char *q = s; while (n--) *p++ = *q++; return d; }
@@ -69,7 +77,47 @@ static const struct { const char *name; int key; } KEYS[] = {
   { "A", BTN_A }, { "B", BTN_B }, { "X", BTN_X }, { "Y", BTN_Y }, { "LB", BTN_TL }, { "RB", BTN_TR }, { "SELECT", BTN_SELECT },
   { "START", BTN_START }, { "HOME", BTN_MODE }, { "L3", BTN_THUMBL }, { "R3", BTN_THUMBR },
 };
+// the sticks and triggers by name: the kernel's axis, its range (a trigger has no negative side)
+static const struct { const char *name; int axis, max, sides; } AXES[] = {
+  { "LX", ABS_X, 32767, 2 }, { "LY", ABS_Y, 32767, 2 }, { "RX", ABS_RX, 32767, 2 }, { "RY", ABS_RY, 32767, 2 }, { "LT", ABS_Z, 1023, 1 }, { "RT", ABS_RZ, 1023, 1 },
+};
+// "-100" → -100 (digits after an optional sign, nothing else): 1, else 0
+static int number(const char *p, long *out) {
+  int neg = 0; long v = 0;
+  if (*p == '-' || *p == '+') neg = *p++ == '-';
+  if (!*p) return 0;
+  for (; *p; p++) { if (*p < '0' || *p > '9' || v > 100000) return 0; v = v * 10 + (*p - '0'); }
+  *out = neg ? -v : v;
+  return 1;
+}
+// one button, trigger or D-pad direction put down (1) or let go (0) and left so: 1 when the name is one
+static int set_button(const char *w, int down) {
+  if (eq(w, "UP") || eq(w, "DOWN") || eq(w, "LEFT") || eq(w, "RIGHT")) {
+    int axis = (eq(w, "UP") || eq(w, "DOWN")) ? ABS_HAT0Y : ABS_HAT0X, v = (eq(w, "UP") || eq(w, "LEFT")) ? -1 : 1;
+    emit(EV_ABS, axis, down ? v : 0); syn(); return 1;
+  }
+  if (eq(w, "LT") || eq(w, "RT")) { emit(EV_ABS, eq(w, "LT") ? ABS_Z : ABS_RZ, down ? 1023 : 0); syn(); return 1; }
+  for (unsigned i = 0; i < sizeof KEYS / sizeof KEYS[0]; i++) if (eq(w, KEYS[i].name)) { emit(EV_KEY, KEYS[i].key, down); syn(); return 1; }
+  return 0;
+}
 static void press(const char *w) {
+  // a button down or up, left so (+A … -A): held as long as the words between them take
+  if ((w[0] == '+' || w[0] == '-') && w[1]) { if (!set_button(w + 1, w[0] == '+')) { say("lab-pad: unknown "); say(w); say("\n"); } return; }
+  // a stick or trigger set and left there: NAME=<percent>
+  for (unsigned i = 0; i < sizeof AXES / sizeof AXES[0]; i++) {
+    const char *n = AXES[i].name;
+    if (w[0] == n[0] && w[1] == n[1] && w[2] == '=') {
+      long v;
+      if (!number(w + 3, &v) || v > 100 || v < (AXES[i].sides == 2 ? -100 : 0)) { say("lab-pad: out of range "); say(w); say("\n"); return; }
+      emit(EV_ABS, AXES[i].axis, (int)(v * AXES[i].max / 100)); syn(); return;
+    }
+  }
+  if (eq(w, "center")) {
+    for (unsigned i = 0; i < sizeof AXES / sizeof AXES[0]; i++) emit(EV_ABS, AXES[i].axis, 0);
+    emit(EV_ABS, ABS_HAT0X, 0); emit(EV_ABS, ABS_HAT0Y, 0);
+    for (unsigned i = 0; i < sizeof KEYS / sizeof KEYS[0]; i++) emit(EV_KEY, KEYS[i].key, 0);
+    syn(); return;
+  }
   // the D-pad: the hat axis, as a controller reports it (Android turns it into DPAD keys)
   if (eq(w, "UP") || eq(w, "DOWN") || eq(w, "LEFT") || eq(w, "RIGHT")) {
     int axis = (eq(w, "UP") || eq(w, "DOWN")) ? ABS_HAT0Y : ABS_HAT0X, v = (eq(w, "UP") || eq(w, "LEFT")) ? -1 : 1;
@@ -99,7 +147,15 @@ __asm__(".globl _start\n_start:\n  mov x0, sp\n  bl cstart\n  b .\n");
 #endif
 void cstart(long *sp) {
   long argc = sp[0]; char **argv = (char **)(sp + 1);
-  if (argc != 2) { say("usage: lab-pad <fifo>\n"); sys(SYS_exit, 2, 0, 0, 0); }
+  // (--dry <file> <word>…: no device and no root — the words' events into a file, as they would go to the kernel)
+  if (argc >= 3 && eq(argv[1], "--dry")) {
+    ufd = (int)sys(SYS_openat, AT_FDCWD, (long)argv[2], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (ufd < 0) { say("lab-pad: cannot write "); say(argv[2]); say("\n"); sys(SYS_exit, 1, 0, 0, 0); }
+    for (long i = 3; i < argc; i++) press(argv[i]);
+    sys(SYS_close, ufd, 0, 0, 0);
+    sys(SYS_exit, 0, 0, 0, 0);
+  }
+  if (argc != 2) { say("usage: lab-pad <fifo>   (or lab-pad --dry <file> <word>...)\n"); sys(SYS_exit, 2, 0, 0, 0); }
   ufd = (int)sys(SYS_openat, AT_FDCWD, (long)"/dev/uinput", O_WRONLY | O_NONBLOCK, 0);
   if (ufd < 0) { say("lab-pad: /dev/uinput (root?)\n"); sys(SYS_exit, 1, 0, 0, 0); }
   sys(SYS_ioctl, ufd, UI_SET_EVBIT, EV_KEY, 0); sys(SYS_ioctl, ufd, UI_SET_EVBIT, EV_ABS, 0); sys(SYS_ioctl, ufd, UI_SET_EVBIT, EV_SYN, 0);

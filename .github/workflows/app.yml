@@ -418,6 +418,9 @@ jobs:
           MS_EMAIL: ${{ secrets.MS_EMAIL }}
           MS_PASSWORD: ${{ secrets.MS_PASSWORD }}
           APP_SIGNIN_WANTED: ${{ secrets.MS_EMAIL != '' && 'true' || 'false' }}
+          # (Discord: the screen and a controller of buttons in your DM — app/lib/discord.mjs; none set = the issue alone)
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_USER_ID: ${{ secrets.DISCORD_USER_ID }}
         run: node lab.mjs app hold --minutes "$HOLD"
 
       # 保存の前に、リポジトリのキャッシュ（上限 10 GB）を空ける: 前の版の部品を外し、まだ足りなければ端末の土台を諦める。
@@ -717,6 +720,11 @@ jobs:
           # (the live issue's commands and answers are sealed with it where the repository is not private)
           APP_CACHE_KEY: ${{ secrets.APP_CACHE_KEY }}
           GOOGLE_AAS_TOKEN: ${{ secrets.GOOGLE_AAS_TOKEN }}
+          # (live signin on the resident device; Discord: the screen and a controller of buttons in your DM)
+          MS_EMAIL: ${{ secrets.MS_EMAIL }}
+          MS_PASSWORD: ${{ secrets.MS_PASSWORD }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_USER_ID: ${{ secrets.DISCORD_USER_ID }}
         run: node lab.mjs app hold --minutes "$HOLD"
 
       - name: 端末の記録を結果に入れる

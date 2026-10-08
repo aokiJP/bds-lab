@@ -369,10 +369,12 @@ else if (sh !== null) {
   // the device's controller (lib/android.mjs startPad: lab-pad on uinput): plugged in by nohup, its presses through a FIFO
   else if (/nohup \/data\/local\/tmp\/lab-pad /.test(sh)) { S.padUp = true; save(); }
   else if (/^pidof lab-pad/.test(sh)) say(S.padUp ? '888\n' : '');
-  else if (/^echo '[\w ]*' > \/data\/local\/tmp\/lab-pad\.fifo$/.test(sh)) {
+  // (the controller's other words — a stick, a trigger, a button held: LY=-100 +A -A center — are kept as they came)
+  else if (/^echo '[\w =+-]*' > \/data\/local\/tmp\/lab-pad\.fifo$/.test(sh)) {
     const W = { A: 'BUTTON_A', B: 'BUTTON_B', X: 'BUTTON_X', Y: 'BUTTON_Y', LB: 'BUTTON_L1', RB: 'BUTTON_R1', UP: 'DPAD_UP', DOWN: 'DPAD_DOWN', LEFT: 'DPAD_LEFT', RIGHT: 'DPAD_RIGHT', START: 'BUTTON_START', SELECT: 'BUTTON_SELECT' };
-    S.viaPad = (S.viaPad ?? 0) + 1; save();
-    for (const w of /'([\w ]*)'/.exec(sh)[1].split(' ').filter(Boolean)) if (W[w]) await padPress(W[w]);
+    const words = /'([\w =+-]*)'/.exec(sh)[1];
+    S.viaPad = (S.viaPad ?? 0) + 1; S.padWords = [...(S.padWords ?? []), words]; save();
+    for (const w of words.split(' ').filter(Boolean)) if (W[w]) await padPress(W[w]);
   }
   // the lab's relays on the device (lib/android.mjs startRelay): started by nohup in one line, seen by pidof
   else if (/nohup \/data\/local\/tmp\/lab-relay /.test(sh)) { if (/pkill -f lab-relay/.test(sh)) process.exit(0); S.relays = [...sh.matchAll(/nohup (\/data\/local\/tmp\/lab-relay [^>]*?) >/g)].map((m) => m[1].trim()); S.relay = S.relays[0]; save(); }

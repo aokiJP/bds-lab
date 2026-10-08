@@ -9,6 +9,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { AppError, PACKAGE, cleanEnv } from './apk.mjs';
+import { PAD_SET, padBatchMs } from './play.mjs';
 
 export const AVD = process.env.APP_AVD || 'bdslab_app';
 export const SERIAL = process.env.APP_SERIAL || 'emulator-5554';
@@ -69,20 +70,23 @@ export class Adb {
   /** controller presses ("A", "DOWN A", "wait500"…), as the CI device showed they are taken at 4 frames a second: a
    *  direction as a key event (queued: never missed — the controller's D-pad is a state the game samples once a frame, and
    *  its short presses were lost), a button through the device's controller, held (startPad; APP_PAD_HOLD_MS) — the
-   *  shell's injected button is a state too, and too short. Without the controller every press is the shell's */
-  pad(keys) {
+   *  shell's injected button is a state too, and too short. Without the controller every press is the shell's.
+   *  The controller's other words (sticks, triggers, a button held: LY=-100 +A -A center — lab-pad.c) go to it alone.
+   *  { wait: true }: back only when the controller has done them all (a walk of 2 s, then the screen it ends on) */
+  pad(keys, { wait = false } = {}) {
     const words = String(keys).trim().split(/\s+/).filter(Boolean), dir = (w) => /^(UP|DOWN|LEFT|RIGHT)$/.test(w) && process.env.APP_PAD_DPAD !== 'hat';
     const hold = Number(process.env.APP_PAD_HOLD_MS) || 500;
     let batch = [];
     const flush = (next) => {
       if (!batch.length) return;
-      this.run(['shell', `echo '${[...(process.env.APP_PAD_HOLD_MS ? [`hold${hold}`] : []), ...batch].join(' ')}' > ${PAD_FIFO}`], { timeout: 30_000 });
+      const all = [...(process.env.APP_PAD_HOLD_MS ? [`hold${hold}`] : []), ...batch];
+      this.run(['shell', `echo '${all.join(' ')}' > ${PAD_FIFO}`], { timeout: 30_000 });
       // (the controller presses them in its own time: a key event after them waits for them)
-      if (next) spawnSync('sleep', [String((batch.filter((w) => !/^wait/.test(w)).length * (hold + 200) + batch.filter((w) => /^wait/.test(w)).reduce((t, w) => t + Number(w.slice(4)), 0)) / 1000)]);
+      if (next || wait) spawnSync('sleep', [String(padBatchMs(all, hold) / 1000)]);
       batch = [];
     };
     for (const w of words) {
-      if (this.padReady && !dir(w) && (/^wait\d+$/.test(w) ? batch.length : /^\w+$/.test(w))) { batch.push(w); continue; }
+      if (this.padReady && !dir(w) && (/^wait\d+$/.test(w) ? batch.length : /^\w+$/.test(w) || PAD_SET.test(w))) { batch.push(w); continue; }
       flush(true);
       if (/^wait\d+$/.test(w)) { spawnSync('sleep', [String(Number(w.slice(4)) / 1000)]); continue; }
       // (padLong — a real device without the controller: a button as the shell's long press, down … up ~0.5 s later, as the
@@ -260,6 +264,8 @@ export function clearDevice(adb) {
 // the shell's key codes of the same buttons (when there is no controller: input gamepad keyevent)
 const PAD_KEYCODE = { A: 'BUTTON_A', B: 'BUTTON_B', X: 'BUTTON_X', Y: 'BUTTON_Y', LB: 'BUTTON_L1', RB: 'BUTTON_R1', LT: 'BUTTON_L2', RT: 'BUTTON_R2', SELECT: 'BUTTON_SELECT', START: 'BUTTON_START', HOME: 'BUTTON_MODE', L3: 'BUTTON_THUMBL', R3: 'BUTTON_THUMBR', UP: 'DPAD_UP', DOWN: 'DPAD_DOWN', LEFT: 'DPAD_LEFT', RIGHT: 'DPAD_RIGHT' };
 export const PAD_WORDS = Object.keys(PAD_KEYCODE);
+// (the controller's words that set a state, and how long its words take: lib/play.mjs)
+export { PAD_SET, padBatchMs };
 
 /** the touchscreen in `getevent -pl` (pure): { dev, maxX, maxY } of the device with ABS_MT_POSITION_X/Y, or null */
 export function touchscreenOf(text) {
