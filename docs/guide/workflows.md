@@ -131,6 +131,7 @@ FAIL upkeep (412s) · 次: node lab.mjs bds why -a my_addon
 | `node lab.mjs undo` | **元に戻す**。`make` と `maintain` はアドオンを変える前に自動でチェックポイントを取ります。`undo` で直前に戻り、`undo --list` で一覧、`checkpoint "メモ"` で手動保存。undo 自体も undo できます |
 | Actions → **secrets** | **スマホだけで秘密を登録**。Run workflow で Discord の DM にフォームが届き、書いて送った値がリポジトリの秘密になります（`MS_EMAIL` `MS_PASSWORD` など 5 つまで。要るもの: 秘密 `DISCORD_BOT_TOKEN` `DISCORD_USER_ID` `LAB_SECRETS_TOKEN`。app/README.md「スマホだけで」） |
 | Actions → **notify**（自動） | **実行が終わると Discord に**。結果・落ちたジョブとその理由・実行と成果物と管理パネルへのボタン、成果物の .mcaddon などを 10 MB まで添えて（DM か LAB_NOTIFY_WEBHOOK。変数 LAB_NOTIFY でどの実行か、LAB_NOTIFY_FILES で何を添えるか。フォークの PR のファイルは添えない）。手で `run` = その実行を今 |
+| Actions → **auth-deploy** | **サインインのサービス**（auth/）を Cloudflare Workers に（管理パネルの「準備」が始める。秘密 CLOUDFLARE_API_TOKEN・CLOUDFLARE_ACCOUNT_ID、App の client ID・secret） |
 | Actions → **hostrun** | **貸し手の Actions で**ラボの仕事を（パネルの「実行」から。秘密 LAB_HOST_TOKEN。待てばホストの結果がこの実行の結果・成果物に: docs/guide/host.md） |
 | **管理パネル**（pages） | **スマホのブラウザで全部**。いくつものアカウントを切り替えて、進み具合・実行（自分の Actions か貸し手の Actions か）・成果物・Discord・秘密・端末・貸し借り（自分のトークンで。README「管理パネル」） |
 | Actions → **app**（mode hold） | **スマホの Discord で本物のアプリを操作**。DM に画面と 25 個のボタン（歩く・見回す・壊す・使う・持ち物・チャット…）、押すたびにその後の画面。DM に書いた文は `app live` の命令 |

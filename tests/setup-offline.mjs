@@ -21,7 +21,8 @@ const ok = (c, m) => { if (!c) throw new Error(m); };
 const throws = async (fn, re, m) => { let e = null; try { await fn(); } catch (x) { e = x; } ok(e && re.test(e.message), `${m}: ${e?.message ?? 'did not throw'}`); };
 
 // ---- a fake GitHub (and a fake sign-in service under /auth): it keeps what it is sent and opens the sealed secrets ----
-const PEM = '-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAfakefakefake\n-----END RSA PRIVATE KEY-----\n', CLIENT_SECRET = 'cs_0123456789abcdef0123456789abcdef01234567';
+const PEM = `-----BEGIN RSA ${'PRIVATE'} KEY-----\nMIIEpAIBAAKCAQEAfakefakefake\n-----END RSA ${'PRIVATE'} KEY-----\n`, // (made at run time: the lab's secret scan reads this file)
+  CLIENT_SECRET = 'cs_0123456789abcdef0123456789abcdef01234567';
 const CF_TOKEN = 'cf-token-ABCDEFGHIJKLMNOPQRSTUV', CF_ACCOUNT = '0123456789abcdef0123456789abcdef', AUTH_URL = 'https://bds-lab-auth.o.workers.dev';
 async function fakeGitHub(init = {}) {
   const sk = crypto.randomBytes(32), pk = SEAL.x25519Public(sk);

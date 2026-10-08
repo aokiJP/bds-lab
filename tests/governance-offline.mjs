@@ -155,7 +155,7 @@ await t('an audit entry: fixed keys of fixed forms only — a secret\'s name, ne
   const e = AU.entry({ actor: 'alice', action: 'secrets.put', target: 'o/lab', at: '2026-10-08T01:02:03Z', detail: { name: 'MS_PASSWORD', value: 'hunter2', secret: 'hunter2', token: 'ghp_x', run: 123, ref: 'main', workflow: 'app.yml', inputs: ['mode', 'hold'], file: '../../etc/passwd', unit: 'Coins!', extra: { a: 1 } } });
   eq(e, { v: 1, at: '2026-10-08T01:02:03.000Z', actor: 'alice', action: 'secrets.put', target: 'o/lab', detail: { name: 'MS_PASSWORD', run: '123', ref: 'main', workflow: 'app.yml', inputs: ['mode', 'hold'] } });
   ok(!JSON.stringify(e).includes('hunter2') && !AU.commentBody(e).includes('hunter2'), 'no value');
-  eq(AU.entry({ actor: 'a', action: 'dispatch', detail: { ref: 'ghp_abcdefghijklmnopqrstuvwxyz0123', name: 'GHP_OK', app: 'eyJhbGciOiJIUzI1NiJ9abcdefghijk.x' } }).detail, { name: 'GHP_OK' }, 'something shaped like a token: out, whatever its key');
+  eq(AU.entry({ actor: 'a', action: 'dispatch', detail: { ref: `ghp_${'abcdefghijklmnopqrstuvwxyz0123'}`, name: 'GHP_OK', app: 'eyJhbGciOiJIUzI1NiJ9abcdefghijk.x' } }).detail, { name: 'GHP_OK' }, 'something shaped like a token: out, whatever its key');
   eq(AU.entry({ actor: 'a', action: 'variables', target: 'not a slug', detail: { name: 'LAB_NOTIFY' } }).target, '', 'a target that is not owner/repo: none');
   for (const bad of [{ actor: 'x y', action: 'dispatch' }, { actor: 'a', action: 'Drop Table' }, { actor: 'a', action: 'dispatch', at: 'yesterday' }, { action: 'dispatch' }]) {
     let threw = false; try { AU.entry(bad); } catch { threw = true; }

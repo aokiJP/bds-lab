@@ -72,7 +72,7 @@ async function guarded(action, detail, fn, done) {
 /** what was done, kept as this person's own comment on the audit issue (GitHub says who wrote it) — when the policy keeps it */
 function record(action, detail = {}, slug = st.lab?.slug, mode = st.audit) {
   if (!slug || mode !== 'issue' || !st.me) return;
-  AU.record(st.api, slug, { actor: st.me.login, action, target: slug, detail }).catch((e) => toast(`監査ログに書けません: ${e.message}`, true));
+  AU.record(st.api, slug, { actor: st.me.login, action, target: slug, detail }).then((r) => { if (r?.why) toast(`監査ログ: ${r.why}`, true); }).catch((e) => toast(`監査ログに書けません: ${e.message}`, true));
 }
 
 // ---- the sign-in kept good: a token from 「GitHub でサインイン」 renewed before it runs out; idle too long: signed out ----
@@ -104,7 +104,7 @@ async function freshen(login = st.login) {
 function useToken(t) {
   if (t && t !== st.apiToken) { st.api = gh({ token: t }); st.apiToken = t; }
 }
-for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, () => { st.lastActive = Date.now(); }, { passive: true });
+for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, () => { st.lastActive = Date.now(); }, { passive: true });
 setInterval(async () => {
   if (!st.login || !st.me) return;
   const idle = P.idleMinutes(st.policy);

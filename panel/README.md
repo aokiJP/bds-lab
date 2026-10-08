@@ -1,94 +1,123 @@
 # 管理パネル（panel/）
 
 作者と、GitHub Actions の時間を貸し借りする人（ホスト: [docs/guide/host.md](../docs/guide/host.md)）のためのページです。
-リポジトリだけで動きます: 1 枚の静的なページが、見る人のトークンで GitHub の API と話すだけです（パソコンもサーバーも要りません）。
+リポジトリだけで動きます: 1 枚の静的なページ（GitHub Pages）が、サインインした人として GitHub の API と話します。GitHub に
+置けないのは、「GitHub でサインイン」を仕上げる小さなサインインのサービス（[auth/](../auth/README.md)）1 つだけです
+（Cloudflare Workers か、自分のサーバーの Docker）。
 
-## 開く
+## はじめに（ラボの管理者が 1 回だけ）
 
-リポジトリの Settings → Pages → Build and deployment → Source を「GitHub Actions」に。あとは既定の枝で `panel/` が変わるたびに
-`.github/workflows/pages.yml` が `https://<owner>.github.io/<リポジトリ>/` に置きます（Actions → pages → Run workflow で今すぐ）。
-ページ自体は誰でも開けますが、トークンなしでは何も読まず、何もできません。
+1. この枝を既定の枝にマージし、パネルを開きます（Pages がまだなら、`pages.yml` を一度手で走らせるか、2 のあとで）。
+   最初の 1 回だけ、トークンで入ります（「トークンで入る」: 下の表の権限の Fine-grained トークン）。
+2. 「準備」のタブを上から順に。⚠️ の行のボタンで、パネルから直せます:
+   - **GitHub Pages** を有効に（Source: GitHub Actions）
+   - **サインインのサービス**を置く: Cloudflare の API トークン（「Edit Cloudflare Workers」）と Account ID を入れると、その場で封じて
+     秘密に登録し、`auth-deploy.yml` を始め、そのアドレスを変数 `LAB_AUTH_URL` に入れ、`pages.yml` でページに渡します。
+     自分のサーバーなら URL を入れるだけ（[auth/README.md](../auth/README.md)）
+   - **GitHub App を作る**: 1 回のクリックで GitHub の作成画面へ（権限は App の manifest に書いてあり、選ぶ必要はありません）。
+     戻ってくると、App の鍵（`APP_PRIVATE_KEY`）・client secret（`APP_CLIENT_SECRET`）・受け渡しの署名の鍵（`AUTH_STATE_SECRET`）が
+     その場で封じてラボの秘密に、App の id・名前・client ID が変数に入ります（ブラウザには残りません）。もう一度サービスを置くと、
+     サービスにも App が入ります
+   - **App をラボに入れる**（install）。組織なら組織の管理者が
+3. それからは、誰でも「**GitHub でサインイン**」だけで入れます。できることは、App が入っているリポジトリで GitHub がその人に許す
+   ことだけです（許可は App の導入で自動に決まり、トークンを作る人はいません）。
+
+貸し手は、ホストに同じ App を入れるだけです（「準備」のリンクを貸し手に。**Only select repositories** でホストだけを選ぶ）。
+そのあとは、借り手の「実行」から貸し手の Actions で走らせるのに、誰の個人のトークンも要りません。
 
 ## 入る
 
-GitHub の Settings → Developer settings → Personal access tokens → **Fine-grained tokens** で作ります（パネルの「トークンを作る」
-が入れ物を開きます）。Repository access: ラボのリポジトリと、貸し借りのホストだけ。Repository permissions:
+- **GitHub でサインイン**（ふつう）: サインインのサービス経由で GitHub の画面へ → 戻るとサインイン済み。トークンは 8 時間で、
+  切れる前にサービスの `/refresh` で自動で新しくなります（GitHub は使うたびに新しい refresh token を出すので、同じブラウザの
+  タブは 1 つずつ更新します）。「出る」でトークンを GitHub で取り消します。
+- **トークンで入る**（最初の準備・サービスが無いとき）: Settings → Developer settings → Personal access tokens →
+  **Fine-grained tokens**（パネルの「トークンを作る」が入れ物を開きます）。Repository access: ラボと、貸し借りのホストだけ。
 
 | 権限 | 使うところ |
 |---|---|
 | Actions: Read and write | 進み具合・実行・止める・やり直す・成果物 |
-| Contents: Read and write | ワークフローの入力・ホストの `.lab-host.json`（貸し手が条件を変える） |
+| Contents: Read and write | ワークフローの入力・ポリシー・ホストの `.lab-host.json`（貸し手が条件を変える） |
 | Secrets: Read and write | 秘密の名前の一覧・登録・消す（値は GitHub も返しません） |
-| Variables: Read and write | Discord に知らせる実行と、添える成果物（`LAB_NOTIFY`・`LAB_NOTIFY_FILES`） |
-| Issues: Read and write | 端末（ライブの issue に命令を書き、返事を読む） |
+| Variables: Read and write | Discord の知らせ方・「準備」の変数 |
+| Issues: Read and write | 端末（ライブの issue）・監査ログ |
+| Pages: Read and write | 「準備」の Pages |
 | Pull requests: Read | 概要の開いている PR |
 
-足りない権限の操作だけ「権限がありません」と出ます（Read だけのトークンなら見るだけのパネルになります）。Fine-grained トークンが
-選べるのは 1 つの持ち主（自分か、入っている組織）のリポジトリだけです。ほかの人の個人アカウントにあるホストを借りるときは
-**Classic トークン**（`repo`・`workflow`）を使います（パネルはそのホストを「このトークンでは見えません」と教えます）。
+Fine-grained トークンが選べるのは 1 つの持ち主（自分か、入っている組織）のリポジトリだけです。ほかの人の個人アカウントのホストは、
+「GitHub でサインイン」（貸し手が App を入れていれば見えます）か Classic トークン（`repo`・`workflow`）で。
 
 **入れる人**: ラボのリポジトリに書き込める人（Write / Maintain / Admin）か、ホストの持ち主（貸し手）か、ホストに書き込める人
-（借り手）。ほかのトークンでは「使えません」で止まり、何も読みません（貸し手の初めての訪問では、その人のリポジトリから
-`.lab-host.json` のあるものを先に探します）。
+（借り手）。ほかは「使えません」で止まり、何も読みません（貸し手の初めての訪問では、その人のリポジトリから `.lab-host.json` の
+あるものを先に探します）。
 
 ## いくつものアカウント
 
-右上の「＋」で、作者・貸し手・借り手などのアカウントを同じブラウザに加え、上の一覧で切り替えます。それぞれのトークンと設定
-（ラボのリポジトリ・ホストの一覧・読み直す間隔・APP_CACHE_KEY）は別々で、ほかのアカウントのものは使いません。「覚える」を外した
-アカウントは、そのタブを閉じると忘れます。「出る」はそのアカウントだけをこのブラウザから消します（トークンそのものは GitHub で
-取り消すまで有効です）。Discord の知らせの「管理パネル」ボタンは、その実行のあるラボのアカウントで、その実行を開きます
-（`#runs?repo=<owner/repo>&run=<番号>`）。
+右上の「＋」で、作者・貸し手・借り手などのアカウントを同じブラウザに加え、上の一覧で切り替えます（「GitHub でサインイン」なら
+GitHub のアカウントを選ぶ画面から）。それぞれのトークンと設定（ラボのリポジトリ・ホストの一覧・読み直す間隔・APP_CACHE_KEY）は
+別々です。「覚える」を外したアカウントは、そのタブを閉じると忘れます。Discord の知らせの「管理パネル」ボタンは、その実行のある
+ラボのアカウントで、その実行を開きます（`#runs?repo=<owner/repo>&run=<番号>`）。
+
+## 役割と監査（会社で使う）
+
+ラボの既定の枝の **`.github/bds-lab-panel.json`** が、パネルで誰が何をできるかを決めます（無ければ今までどおり）:
+
+```json
+{
+  "roles": { "admin": ["*"], "write": ["dispatch", "run.cancel"], "auditor": ["audit.read"] },
+  "teams": { "auditors": "auditor" },
+  "confirm": ["dispatch", "secrets.delete"],
+  "idleMinutes": 30,
+  "audit": "issue"
+}
+```
+
+- `roles`: GitHub の役割（admin / maintain / write / triage / read）か、`teams` で決めた名前ごとに、許す操作（`dispatch`・`hostrun`・
+  `secrets.put`・`secrets.delete`・`variables`・`run.cancel`・`lend`・`audit.read`、`*` は全部）。書いていない役割は何もできません。
+- `teams`: 組織のチームの slug → 役割（書いた順で、その人が入っている最初のもの）。チームを読めないときは、その人がなりうる役割の
+  全部が許すことだけ。
+- `confirm`: 先に「よろしいですか」を聞く操作。`idleMinutes`: 操作がなければサインアウトする分（0: しない）。
+- `audit`: `issue` ならパネルでの操作をラボの issue（ラベル `bds-lab-audit`、作ったらロック、900 件ごとに次へ）にその人自身の
+  コメントで残し、「監査」のタブで絞り込み・CSV に。`auto`（既定）は非公開・internal のリポジトリだけ残します。
+- ポリシーは **狭めるだけ**: GitHub が許さないことはパネルも許しません（GitHub の API がまた断ります）。正しくないファイルは
+  「何も許さない」になります。このファイルを書ける人は GitHub で同じことができるので、CODEOWNERS や枝の保護で守ってください。
 
 ## どこの Actions で走らせるか
 
-「実行」の一番上で選びます:
-
-- **このラボ**: ラボ自身の Actions（いままでどおり。ワークフローの入力はその YAML から）。
-- **貸し手のホスト**: その人の Actions の分で。貸す条件（`.lab-host.json`）が許す仕事だけ、時間帯・最後の日の中、今月の分が上限の
-  80% に届くまで（GitHub が数えたホストの host.yml の実行: ほかの借り手の分も入ります）。始めると、ラボの `.github/workflows/hostrun.yml`
-  が `node lab.mjs host ci` で、ラボを `host run` と同じ中身でホストに送り、host.yml を始めます。「結果を待つ」なら、ホストの結果が
-  その実行の結果・まとめ・注釈・成果物（`hostrun-result`: go の .mcaddon も）になり、notify が Discord に知らせます。
-  要るもの: ラボの秘密 `LAB_HOST_TOKEN`（ホストに push でき、ワークフローを始められるあなたのトークン。Classic: `repo`・`workflow`
-  ／ Fine-grained: ホストの Contents・Actions・Workflows を Read and write）。パネルが足りないと言い、「秘密」で入れられます。
-  ラボが公開リポジトリなら、待つ間のラボの Actions に分は掛かりません。
+「実行」の一番上で選びます: **このラボ**（ラボ自身の Actions）か、**貸し手のホスト**（その人の Actions の分で。貸す条件が許す仕事だけ、
+時間帯・最後の日の中、今月の分が上限の 80% に届くまで: GitHub が数えたホストの実行で）。ホストなら、ラボの
+`.github/workflows/hostrun.yml` が `node lab.mjs host ci` で、ラボを `host run` と同じ中身でホストに送り、host.yml を始めます。
+「結果を待つ」なら、ホストの結果がその実行の結果・まとめ・注釈・成果物（go の .mcaddon も）になり、notify が Discord に知らせます。
+ホストへは、貸し手が App を入れていれば App の 1 時間のトークン（`common/ghapp.mjs`）で、なければ秘密 `LAB_HOST_TOKEN` で。
 
 ## Discord
 
 「Discord」のタブで: つなぐ秘密（`DISCORD_BOT_TOKEN`・`DISCORD_USER_ID`、またはボットのかわりに `LAB_NOTIFY_WEBHOOK`）をその場で
-封じて登録、どの実行を知らせるか（変数 `LAB_NOTIFY`: auto / all / failures / off）と、何を添えるか（`LAB_NOTIFY_FILES`: auto =
-.mcaddon・.mcpack・.mcworld・.mctemplate / off / `*.zip` のような型）、試しに送る・いちばん新しい成果物を送る・端末をスマホで・
-秘密を Discord のフォームで。
-
-notify は、終わった実行の知らせに、その実行の成果物から合うファイルを 10 MB まで添えます（変数 `LAB_NOTIFY_MAX_MB`、Discord の上限
-まで。入らないものは名前とサイズを書き、「成果物」のボタンから取れます）。添えるのは、このリポジトリのコードの実行だけです:
-フォークからの PR の実行も notify を起こしますが、そのファイルは渡しません。「成果物」のタブ・実行の詳しくの「Discord に送る」は、
-その実行を LAB_NOTIFY によらず送ります（notify を `run` の入力で）。
+封じて登録、どの実行を知らせるか（変数 `LAB_NOTIFY`）と、何を添えるか（`LAB_NOTIFY_FILES`）、試しに送る・いちばん新しい成果物を送る・
+端末をスマホで・秘密を Discord のフォームで（App があれば `LAB_SECRETS_TOKEN` も要りません）。notify は、終わった実行の知らせに、
+その実行の成果物から合うファイルを 10 MB まで添えます（このリポジトリのコードの実行だけ: フォークからの PR のファイルは渡しません）。
 
 ## 守っていること
 
-- トークンは、そのブラウザの中（「覚える」なら localStorage、外せばそのタブの間だけ）。送り先は `api.github.com` だけです:
-  ページの CSP（`connect-src https://api.github.com`）がほかへの通信を止めます。スクリプトはページ自身のものだけ、文字は
-  文字として置き（HTML として読まない）、インラインのスクリプトもスタイルもありません。アドレスの `#…` から読むのは、タブの
-  名前・owner/repo の形・数字だけです。
-- 秘密の値は、その場でリポジトリの公開鍵で封じてから送ります（libsodium の sealed box と同じ。`lib/seal.mjs` を libsodium の
-  出力で試験）。表示も保存もしません。
-- 公開リポジトリの端末: 命令と返事は vault の鍵（`APP_CACHE_KEY`）で封じたまま issue に書かれます。パネルの設定にその鍵を
-  入れると、パネルがその場で封じ・開きます（WebCrypto。`lib/vault.mjs` はランナーの app/lib/vault.mjs と同じ形）。
-- 端末の命令が効くのは、その実行を始めた人のコメントだけ（ランナーの側で決まっています）。返事として見せるのは、その実行の
-  ボット（github-actions[bot]）のコメントだけです。
-- hostrun: ホストから戻る言葉（結果の行）は、ラボのランナーで workflow の命令として読まれないように `::stop-commands::` の中で出します。
+[SECURITY.md](../SECURITY.md)「管理パネル」に。要点: トークンはそのブラウザの中だけ（「覚える」なら localStorage、外せばそのタブ
+だけ）。ページの CSP で、通信は GitHub の API・自分の config・サインインのサービスだけ、フォームは github.com だけ。サインインの
+受け渡しは URL の # だけで、受け取ったらすぐ消し、そのタブが始めたもの（nonce）だけを受け取ります。秘密の値は、その場で
+リポジトリの公開鍵で封じてから送ります（`lib/seal.mjs` を libsodium の出力で試験）。ほかのページの枠の中では何もしません。
 
 ## 中身
 
 | ファイル | |
 |---|---|
-| `index.html` `panel.css` `panel.js` | 画面（スマホが先。明るい・暗いどちらも） |
-| `lib/accounts.mjs` | このブラウザのアカウント（それぞれのトークンと設定、使っている 1 つ、前の版の 1 つのトークンの引き継ぎ） |
-| `lib/model.mjs` | 誰が使えるか・それぞれの設定でできること・ワークフローの入力・進み具合・ホストの条件と分（common/hosts.mjs と同じ判定）・ホストで走らせる入力・アドレス |
+| `index.html` `panel.css` `panel.js` | 画面（スマホが先。明るい・暗いどちらも）。`config.json` は pages.yml が書きます（`common/panel-config.mjs`） |
+| `lib/session.mjs` `ui/signin.mjs` | GitHub でサインイン（受け渡し・更新・取り消し）と、入口の画面 |
+| `lib/accounts.mjs` | このブラウザのアカウント（それぞれのトークンと設定、使っている 1 つ） |
+| `lib/setup.mjs` `ui/setup.mjs` | 「準備」: App の manifest・鍵の登録・Pages・サインインのサービス・診断 |
+| `lib/policy.mjs` `lib/audit.mjs` `ui/audit.mjs` | 役割（ポリシー）と監査ログ |
+| `lib/model.mjs` | 誰が使えるか・それぞれの設定でできること・ワークフローの入力・進み具合・ホストの条件と分・アドレス |
 | `lib/gh.mjs` | GitHub の API（その人のトークンで） |
 | `lib/seal.mjs` | 秘密を封じる（X25519・XSalsa20-Poly1305・BLAKE2b、ライブラリなし） |
-| `lib/vault.mjs` `lib/livefmt.mjs` | ライブの issue の行（封じる・開く・読む） |
-| `lib/pages.mjs` | 端末のボタン（Discord の DM と同じ表: app/lib/live.mjs も使う） |
+| `lib/vault.mjs` `lib/livefmt.mjs` `lib/pages.mjs` | ライブの issue の行と端末のボタン（Discord と同じ表） |
+| `ui/dom.mjs` | 画面を作る小道具（文字は文字として） |
 
-試験: `node tests/panel-offline.mjs`（部品・notify と成果物）・`node tests/panel-browser.mjs`（本物のブラウザで: CI の verify が走らせます）・
-`node tests/host-offline.mjs`（`host ci`: hostrun の中身）。
+試験: `tests/panel-offline.mjs`・`session-offline`・`setup-offline`・`governance-offline`・`auth-offline`・`appci-offline`（部品）、
+`tests/panel-browser.mjs`（本物のブラウザで: 入れない人・作者・借り手・貸し手・2 つのアカウント・会社のラボで GitHub でサインイン →
+ポリシー → 監査 → App を作る → 出る。CI の verify が走らせます）。

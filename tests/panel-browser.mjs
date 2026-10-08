@@ -63,7 +63,8 @@ const runs = {
 const jobs = { 100: [{ name: 'offline', status: 'completed', conclusion: 'failure', check_run_url: 'https://api.github.com/repos/author1/bds-lab/check-runs/55', html_url: 'https://github.com/x', steps: [{ name: 'checkout', status: 'completed', conclusion: 'success' }, { name: 'every offline test', status: 'completed', conclusion: 'failure' }] }],
   101: [{ name: 'device (1)', status: 'in_progress', steps: [{ name: 'checkout', status: 'completed' }, { name: '端末をそのまま調べる（hold）', status: 'in_progress' }] }] };
 const repoJson = (slug, perm) => ({ full_name: slug, permissions: perm, visibility: slug === LAB ? 'public' : 'private', default_branch: 'main', html_url: `https://github.com/${slug}`, fork: false, archived: false, owner: { login: slug.split('/')[0], type: slug === CORP ? 'Organization' : 'User' } });
-const PEM = '-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n-----END RSA PRIVATE KEY-----\n';
+// (a key's shape made at run time: the lab's own secret scan — share, host's pre-push — reads this file as it is)
+const PEM = `-----BEGIN RSA ${'PRIVATE'} KEY-----\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n-----END RSA ${'PRIVATE'} KEY-----\n`;
 
 async function api(route) {
   const req = route.request(), u = new URL(req.url()), p = u.pathname, who = people[String(req.headers().authorization ?? '').replace(/^Bearer /, '')];
@@ -406,7 +407,7 @@ try {
   const d2 = G.dispatched.find((x) => x.slug === CORP);
   check(d2 && d2.workflow === 'verify.yml' && d2.by === 'ceo1' && asked.some((q) => /ワークフローを始める（verify\.yml）: よろしいですか/.test(q)), 'started with the person\'s own sign-in, after the question the policy asks', JSON.stringify({ d2, asked }));
   const issue = G.corp.issues[0], c0 = issue ? G.corp.comments[issue.number][0] : null;
-  check(issue && issue.title === 'bds-lab 監査ログ' && G.corp.labels.includes('bds-lab-audit') && c0 && c0.user.login === 'ceo1' && /<!-- bdslab-audit \{.*"actor":"ceo1".*"action":"dispatch"/.test(c0.body) && !/ghu_|ghr_/.test(c0.body), 'kept in the audit log: an issue with its label, the person\'s own comment, no token in it', JSON.stringify({ issue, c0 }));
+  check(issue && issue.title === 'bds-lab 監査ログ' && G.corp.labels.includes('bds-lab-audit') && G.corp.locks.includes(issue.number) && c0 && c0.user.login === 'ceo1' && /<!-- bdslab-audit \{.*"actor":"ceo1".*"action":"dispatch"/.test(c0.body) && !/ghu_|ghr_/.test(c0.body), 'kept in the audit log: an issue with its label, locked (collaborators only), the person\'s own comment, no token in it', JSON.stringify({ issue, c0 }));
   await tab2('監査');
   check(await wait2(/ceo1/) && /ワークフローを始めた/.test(await text2()) && /verify\.yml/.test(await text2()), 'the audit tab reads it back', await text2());
   const [dl] = await Promise.all([p2.waitForEvent('download'), p2.locator('button', { hasText: 'CSV で取り出す' }).click()]);

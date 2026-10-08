@@ -4,6 +4,36 @@
 **app ラボを「ほぼクライアント」に: 本物のアプリをコントローラーで人のように遊べる（歩く・見回す・跳ぶ・壊す・置く・持ち物・チャット…）。
 スマホの Discord から CI の端末を画面とボタンで動かせ、リポジトリの秘密も Discord のフォームで登録できる（node も PC も要らない）。**
 
+### 管理パネルの完全版（会社で使える: GitHub でサインイン・許可は App で自動・準備の自動化・役割と監査）
+- **GitHub でサインイン**: ラボの GitHub App のユーザーのトークンで、誰でもボタン 1 つで（トークンを作る人はいない。できることは App が
+  入ったリポジトリで GitHub がその人に許すことだけ）。小さなサインインのサービス `auth/`（`handler.mjs`: Cloudflare Workers と Node で同じ
+  コード、`Dockerfile` で自分のサーバーにも）が OAuth を仕上げる: 何も保存しない。state は署名した値、URL に出ない乱数は `__Host-` の
+  HttpOnly cookie にだけ、PKCE の verifier はその乱数から（callback のアドレスを見た人も替えられない）、戻る先は `PANEL_ORIGINS` の
+  アドレス（パスの頭まで）だけ、トークンは URL の # で 1 回だけ渡す。パネル（`panel/lib/session.mjs`・`ui/signin.mjs`）はそのタブが
+  始めたもの（nonce）だけを受け取り、すぐアドレスから消し、8 時間のトークンを切れる前に `/refresh` で（タブ 1 つずつ）、「出る」で
+  GitHub で取り消す。トークンで入る道も残す（最初の準備）。
+- **準備**（`panel/lib/setup.mjs`・`ui/setup.mjs`、「準備」のタブ）: Pages・サインインのサービス・App・App の導入・ワークフローを順に
+  確かめ、ボタンで直す。App は manifest から 1 回のクリックで（権限は manifest に。鍵・client secret・署名の鍵はその場で封じてラボの秘密に、
+  id・名前・client ID は変数に: ブラウザには残らない）。サービスは Cloudflare のトークンを入れれば `auth-deploy.yml` が置き、そのアドレスを
+  `LAB_AUTH_URL` に、`pages.yml` がページに渡す（`common/panel-config.mjs`: `config.json` と CSP にその origin だけ）。直すボタンは
+  管理者で、しかもポリシーが許すときだけ。
+- **役割と監査**（`panel/lib/policy.mjs`・`audit.mjs`・`ui/audit.mjs`）: `.github/bds-lab-panel.json` で役割ごとにできることを狭める
+  （GitHub が許さないことは許さない。正しくないファイルは何も許さない）、組織のチームで役割、確かめる操作、操作がないときの
+  サインアウト。操作はその人自身のコメントとして監査の issue（ロック・900 件ごとに次へ）に: 他人のふりの記録は数えず、編集は印、
+  秘密の値は入らない。「監査」で絞り込み・CSV（式にならないように）。
+- **ワークフローは App のトークンで**: `common/ghapp.mjs`（App の JWT → そのリポジトリだけ・頼んだ権限だけの 1 時間のトークン、
+  ログに出さず `$GITHUB_ENV` へ）。`hostrun.yml` は貸し手が App を入れたホストに、`secrets.yml` はラボの秘密に、個人の長いトークン
+  （LAB_HOST_TOKEN・LAB_SECRETS_TOKEN）なしで。
+- パネルはほかのページの枠の中では何もしない（クリックジャッキング）。CSP: 通信は GitHub の API・自分の config・サインインの
+  サービスだけ、フォームは github.com だけ。
+- 進め方: fanout（signin・admin の 2 レーン + 読むだけのレビュー。レビューの指摘 14 件のうち確実な 6 件と安く直せるものを直し役で
+  直した: callback の盗み見・同じ origin のほかの Pages・nonce なしの受け渡し・URL のパス・直すボタンのポリシー・監査の押し出し ほか）。
+- 試験: `auth-offline`（10）・`session-offline`（8）・`setup-offline`（10）・`governance-offline`（10）・`appci-offline`（4）、
+  `panel-browser` に会社のラボの場面（本物の Chromium と本物のサインインのサービスで: GitHub でサインイン → 更新 → ポリシーが聞く →
+  監査ログ → CSV → 準備で Pages と App → 鍵が封じて入る → 出ると取り消し → 書き込みの人には秘密を許さない。全部で 56 の確かめ）。
+- 実物でしか確かめられないこと: GitHub の OAuth が PKCE と prompt=select_account を受けるか、App の権限の名前（actions_variables・
+  members など）、Pages を App のトークンで変えられるか、Cloudflare に置いた `__Host-` の cookie。
+
 ### 管理パネル（panel/: 作者と、GitHub Actions の時間を貸し借りする人のための Web）
 - 1 枚の静的なページ（GitHub Pages: `.github/workflows/pages.yml`。リポジトリだけで動く: 手元のサーバー `node lab.mjs panel` はやめた）。見る人の GitHub のトークンで
   GitHub の API とだけ話す（CSP で api.github.com のほかへは通信できない。トークンはそのブラウザの中だけ）。ラボに書き込める人・ホストの持ち主（貸し手）・
