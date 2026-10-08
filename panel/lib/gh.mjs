@@ -18,13 +18,23 @@ export function explain(status, message = '') {
   return `GitHub: ${status} ${message}`;
 }
 
-/** → the API's calls. token: the person's; base: GitHub's API (another only for tests) */
-export function gh({ token, base = 'https://api.github.com', fetchImpl = (...a) => globalThis.fetch(...a) } = {}) {
+/** → the API's calls. token: the person's; base: GitHub's API (another only for tests); onCall: told of each call when it
+ *  ends — { method, path (no query), status, ms } — for the panel's debug view (never the token, a body or an answer) */
+export function gh({ token, base = 'https://api.github.com', fetchImpl = (...a) => globalThis.fetch(...a), onCall = null } = {}) {
   const state = { remaining: null, reset: null };
   // (anon: asked without the token — a call whose own argument is the proof, the App manifest's code)
-  async function call(method, path, body, { anon = false } = {}) {
+  async function call(method, path, body, opts) {
+    const t0 = Date.now(), tell = (status) => { try { onCall?.({ method, path: String(path).split('?')[0], status, ms: Date.now() - t0 }); } catch { /* a view's trouble is not the call's */ } };
+    let r; try { r = await send(method, path, body, opts); } catch (e) { tell(0); throw e; }
+    tell(r.status);
+    return read(r, path);
+  }
+  async function send(method, path, body, { anon = false } = {}) {
     const r = await fetchImpl(`${base}${path}`, { method, headers: { ...(anon ? {} : { authorization: `Bearer ${token}` }), accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
     const rem = r.headers?.get?.('x-ratelimit-remaining'); if (rem !== null && rem !== undefined) { state.remaining = Number(rem); state.reset = Number(r.headers.get('x-ratelimit-reset')); }
+    return r;
+  }
+  async function read(r, path) {
     if (r.status === 204) return null;
     const text = await r.text();
     let j = null; try { j = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
@@ -48,6 +58,20 @@ export function gh({ token, base = 'https://api.github.com', fetchImpl = (...a) 
     cancel: (r, run) => call('POST', `/repos/${r}/actions/runs/${run}/cancel`),
     rerunFailed: (r, run) => call('POST', `/repos/${r}/actions/runs/${run}/rerun-failed-jobs`),
     pulls: (r) => call('GET', `/repos/${r}/pulls?state=open&per_page=20`),
+    /** a workflow turned on or off (a fork's start off: disabled_fork) */
+    enableWorkflow: (r, id) => call('PUT', `/repos/${r}/actions/workflows/${encodeURIComponent(id)}/enable`),
+    disableWorkflow: (r, id) => call('PUT', `/repos/${r}/actions/workflows/${encodeURIComponent(id)}/disable`),
+    /** a fork's branch brought up to its parent's (GitHub's 「Sync fork」) */
+    syncFork: (r, branch) => call('POST', `/repos/${r}/merge-upstream`, { branch }),
+    /** the repository's forks, the newest first (up to 100) */
+    forks: (r) => call('GET', `/repos/${r}/forks?sort=newest&per_page=100`),
+    /** someone made a collaborator (invited; on an organization's repository with that role, on a person's with write) */
+    addCollaborator: (r, login, permission = 'push') => call('PUT', `/repos/${r}/collaborators/${encodeURIComponent(login)}`, { permission }),
+    /** the invitations to repositories this person has not taken yet, and one taken */
+    myInvitations: () => call('GET', '/user/repository_invitations?per_page=100'),
+    acceptInvitation: (id) => call('PATCH', `/user/repository_invitations/${encodeURIComponent(id)}`),
+    /** a GitHub App as GitHub shows it to anyone: { slug, permissions, … } */
+    app: (slug) => call('GET', `/apps/${encodeURIComponent(slug)}`),
     /** the secrets' names (never their values: GitHub gives none) → [names], null when this token may not look */
     async secretNames(r) { try { return ((await call('GET', `/repos/${r}/actions/secrets?per_page=100`)).secrets ?? []).map((s) => s.name); } catch (e) { if (e.status === 403 || e.status === 404) return null; throw e; } },
     secrets: async (r) => (await call('GET', `/repos/${r}/actions/secrets?per_page=100`)).secrets ?? [],

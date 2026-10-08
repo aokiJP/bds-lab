@@ -20,7 +20,9 @@ export function panelConfig(env = {}) {
   const slug = String(env.APP_SLUG ?? '').trim(), cid = String(env.APP_CLIENT_ID ?? '').trim();
   if (slug && !/^[a-z0-9][a-z0-9-]{0,62}$/.test(slug)) errors.push('APP_SLUG: App の短い名前（英小文字・数字・-）');
   if (cid && !/^[A-Za-z0-9._-]{1,64}$/.test(cid)) errors.push('APP_CLIENT_ID: App の Client ID');
-  return { config: { authUrl, appSlug: slug && !errors.some((e) => e.startsWith('APP_SLUG')) ? slug : null, appClientId: cid && !errors.some((e) => e.startsWith('APP_CLIENT_ID')) ? cid : null }, origin, errors };
+  // (the commit the page was built from — GitHub sets GITHUB_SHA in pages.yml — so the panel can say whether a change is live)
+  const sha = /^[0-9a-f]{40}$/.test(String(env.GITHUB_SHA ?? '')) ? env.GITHUB_SHA : null;
+  return { config: { authUrl, appSlug: slug && !errors.some((e) => e.startsWith('APP_SLUG')) ? slug : null, appClientId: cid && !errors.some((e) => e.startsWith('APP_CLIENT_ID')) ? cid : null, ...(sha ? { version: sha } : {}) }, origin, errors };
 }
 /** the page's HTML with the service's origin allowed to be fetched (pure; the policy otherwise as it is) */
 export function withOrigin(html, origin) {
@@ -39,6 +41,23 @@ export function buildPages(out, env = process.env, src = path.join(TOP, 'panel')
   return r;
 }
 
+/** the lender's three files (host/template) as a module the panel writes a new host from (pure but for reading them):
+ *  host.yml byte for byte as the lab checks it (common/hosts.mjs `host add`); tests/panel-offline.mjs holds it current */
+export const HOST_FILES = ['README.md', '.github/workflows/host.yml', '.lab-host.json'];
+export const HOST_MODULE = 'panel/lib/hosttemplate.mjs';
+export function hostTemplateModule(dir = path.join(TOP, 'host', 'template')) {
+  const files = Object.fromEntries(HOST_FILES.map((f) => [f, fs.readFileSync(path.join(dir, f), 'utf8').replace(/\r\n/g, '\n')]));
+  return `// hosttemplate: the lender's three files from host/template, written by \`node common/panel-config.mjs --host-template\` —
+// never by hand (tests/panel-offline.mjs fails when it differs). The panel makes a new host from them (「時間を貸す」).
+export const HOST_FILES = ${JSON.stringify(files, null, 1)};
+`;
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) && process.argv[2] === '--host-template') {
+  fs.writeFileSync(path.join(TOP, HOST_MODULE), hostTemplateModule());
+  console.log(`OK ${HOST_MODULE}`);
+  process.exit(0);
+}
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const out = process.argv[2];
   if (!out) { console.log('usage: node common/panel-config.mjs <out>'); process.exit(1); }

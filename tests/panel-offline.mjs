@@ -216,6 +216,76 @@ await t('each workflow\'s health, a secret\'s age, the keys, the role presets an
   eq(MB.invitationUrl('o/lab'), 'https://github.com/o/lab/invitations');
 });
 
+await t('debug: the calls kept (a ring), the errors among them, whether this page is the newest published, a report with no token in it (pure)', async () => {
+  const D = await imp('panel/lib/debug.mjs');
+  let now = Date.parse('2026-10-08T01:02:03Z');
+  const log = D.debugLog(3, () => now++);
+  log.add({ method: 'GET', path: '/user', status: 200, ms: 5 }); log.add({ method: 'GET', path: '/repos/o/r/contents/x', status: 404, ms: 7 });
+  log.add({ kind: 'error', message: 'boom', where: 'panel.js:3' }); log.add({ method: 'POST', path: '/repos/o/r/actions/runs/1/cancel', status: 0, ms: 9 });
+  eq(log.list().map((e) => e.status ?? e.kind), [0, 'error', 404], 'the last three, newest first');
+  eq(log.errors().length, 3);
+  const P = 'a'.repeat(40), N = 'b'.repeat(40), run = (head_sha, status, conclusion) => ({ head_sha, status, conclusion });
+  eq([D.versionState(null).state, D.versionState(P, []).state, D.versionState(P, [run(P, 'completed', 'success')]).state, D.versionState(P, [run(N, 'in_progress', null)]).state, D.versionState(P, [run(N, 'completed', 'success')]).state, D.versionState(P, [run(N, 'completed', 'failure')]).state],
+    ['unknown', 'unknown', 'live', 'deploying', 'newer', 'failed']);
+  ok(/bbbbbbb/.test(D.versionState(P, [run(N, 'completed', 'success')]).say), 'the new version named');
+  const r = D.report({ version: P, url: 'https://x.github.io/bds-lab/#bdslab-auth=ghu_abcdefghijklmnop', agent: 'test', login: 'me', kind: 'oauth', lab: 'o/r', role: 'admin', tab: 'runs', remaining: 4999, log });
+  ok(/✘ 届かない POST \/repos\/o\/r\/actions\/runs\/1\/cancel/.test(r) && /✘ boom \(panel\.js:3\)/.test(r) && /GitHub でサインイン/.test(r) && !/ghu_|#/.test(r.split('\n')[2]), r);
+  eq(D.redact('a ghp_0123456789abcdef b github_pat_11AB_cd lab-sealed:v1:xyz'), 'a [消しました] b [消しました] [消しました]');
+});
+
+await t('a stranger lends: their own public fork of the lab becomes a host — host.yml as the lab has it, their rules, nothing else running there (pure)', async () => {
+  const PC = await imp('common/panel-config.mjs'), { HOST_FILES } = await imp('panel/lib/hosttemplate.mjs');
+  eq(fs.readFileSync(path.join(TOP, PC.HOST_MODULE), 'utf8'), PC.hostTemplateModule(), 'panel/lib/hosttemplate.mjs is host/template now (node common/panel-config.mjs --host-template)');
+  eq(fs.readFileSync(path.join(TOP, '.github/workflows/host.yml'), 'utf8'), HOST_FILES['.github/workflows/host.yml'], 'the lab carries host.yml as the template has it: every fork is a host as it stands');
+  const LAB = 'Owner/bds-lab', mine = { owner: { login: 'Lee' }, permissions: { admin: true }, private: false, visibility: 'public', fork: true, parent: { full_name: 'owner/bds-lab' } };
+  ok(M.forkHostCheck(mine, 'lee', LAB).ok && !M.forkHostCheck(null, 'lee', LAB).ok, 'their own fork of this lab: yes; none: no');
+  ok(/フォークだけ/.test(M.forkHostCheck({ ...mine, fork: false, parent: undefined }, 'lee', LAB).errors.join()) && /フォークだけ/.test(M.forkHostCheck({ ...mine, parent: { full_name: 'x/other' } }, 'lee', LAB).errors.join()), 'not a fork, or another lab\'s: never');
+  ok(/あなた自身/.test(M.forkHostCheck({ ...mine, owner: { login: 'other' } }, 'lee', LAB).errors.join()) && /あなた自身/.test(M.forkHostCheck({ ...mine, permissions: { push: true } }, 'lee', LAB).errors.join()), 'another\'s fork: never (not even one they may write)');
+  ok(/アーカイブ/.test(M.forkHostCheck({ ...mine, archived: true }, 'lee', LAB).errors.join()) && /private/.test(M.forkHostCheck({ ...mine, private: true }, 'lee', LAB).errors.join()));
+  const rules = { minutesPerMonth: 300, jobs: ['gate', 'sim'], hours: '22:00-06:00', timezone: 'Asia/Tokyo', until: '2027-01-31', contact: 'lee' };
+  ok(M.checkRules(JSON.parse(M.hostRulesText(rules).text)).rules.minutesPerMonth === 300 && M.hostRulesText({ ...rules, jobs: ['make'] }).text === null, 'their rules; an AI job is never lent');
+  eq(M.forkWorkflows([{ id: 1, path: '.github/workflows/host.yml', state: 'disabled_fork' }, { id: 2, path: '.github/workflows/verify.yml', state: 'active' }, { id: 3, path: '.github/workflows/auto.yml', state: 'disabled_fork' }]), { enable: [1], disable: [2] }, 'host.yml on, the lab\'s own off');
+  ok(M.canBorrow({ rules: {}, role: 'read', repo: mine }, LAB) && !M.canBorrow({ rules: {}, role: 'read', repo: { fork: false } }, LAB) && M.canBorrow({ rules: {}, role: 'borrower', repo: {} }, LAB) && !M.canBorrow({ rules: null, role: 'lender', repo: mine }, LAB), 'the lab borrows a fork of itself without an invitation');
+});
+
+await t('panel check: a changed file → the checks it needs (ESLint, the offline tests, the browser unless quick); failures\' lines (pure)', async () => {
+  const PN = await imp('common/panel.mjs');
+  eq(PN.plan(['panel/lib/members.mjs']), { lint: ['panel/lib/members.mjs'], tests: ['tests/panel-offline.mjs', 'tests/governance-offline.mjs', 'tests/panel-browser.mjs'] });
+  eq(PN.plan(['panel/ui/signin.mjs', 'auth/handler.mjs'], { quick: true }).tests, ['tests/panel-offline.mjs', 'tests/session-offline.mjs', 'tests/auth-offline.mjs']);
+  eq(PN.plan(['README.md', 'bds/lab.mjs']), { lint: [], tests: [] }, 'not the panel: nothing');
+  eq(PN.plan(['host/template/.lab-host.json', 'tests/setup-offline.mjs']).tests, ['tests/panel-offline.mjs', 'tests/setup-offline.mjs']);
+  eq(PN.failLines('ok a\nFAIL b\n  why\nok c').slice(0, 2), ['FAIL b', '  why']);
+});
+
+await t('administrators always lend (adminsLend): the rules that lend always, an administrator\'s lending as the lab sees it, the lab\'s lending forks, LAB_HOSTS kept, auto runs, what needs doing now (pure)', async () => {
+  const P = await imp('panel/lib/policy.mjs'), MB = await imp('panel/lib/members.mjs');
+  const A = M.alwaysRules('Asia/Tokyo', 'me');
+  ok(M.alwaysLends(A).ok && A.minutesPerMonth === M.ALWAYS_MINUTES && A.jobs.length === M.HOST_JOBS.length && !('until' in A), JSON.stringify(A));
+  const not = M.alwaysLends({ ...A, minutesPerMonth: 600, jobs: ['gate'], hours: '09:00-18:00', until: '2027-01-01' });
+  ok(!not.ok && not.why.length === 4 && /600/.test(not.why[0]) && /upkeep/.test(not.why[1]) && /09:00-18:00/.test(not.why[2]) && /2027-01-01/.test(not.why[3]), JSON.stringify(not));
+  ok(!M.alwaysLends(null).ok && /ありません/.test(M.alwaysLends(null).why[0]) && !M.alwaysLends({ jobs: ['make'] }).ok, 'no rules or wrong ones: not lending');
+  const LAB = 'o/lab', fork = { full_name: 'ad/lab', owner: { login: 'ad' }, permissions: { admin: true }, fork: true, parent: { full_name: LAB }, visibility: 'public' };
+  eq(M.adminLend({ required: false }), { required: false, ok: true, fork: null, why: [] }, 'not an administrator (or the owner, or no adminsLend): nothing asked');
+  ok(!M.adminLend({ required: true }).ok && /フォークがまだ/.test(M.adminLend({ required: true }).why[0]), 'no fork: not yet');
+  const good = M.adminLend({ required: true, fork, check: M.forkHostCheck(fork, 'ad', LAB), rules: A, hostYmlOk: true });
+  ok(good.ok && good.fork === 'ad/lab', JSON.stringify(good));
+  const behind = M.adminLend({ required: true, fork, check: M.forkHostCheck(fork, 'ad', LAB), rules: { ...A, until: '2027-01-01' }, hostYmlOk: false });
+  ok(!behind.ok && behind.why.some((w) => /host\.yml/.test(w)) && behind.why.some((w) => /最後の日/.test(w)), JSON.stringify(behind));
+  // (the policy's switch: off by default, carried through the grid and back)
+  const g = MB.gridOf(P.checkPolicy({ version: 1, adminsLend: true }).policy);
+  ok(g.adminsLend === true && MB.policyOf(g).json.adminsLend === true && !('adminsLend' in MB.policyOf(MB.gridOf(P.DEFAULT_POLICY)).json) && MB.applyPreset(g, 'owner').adminsLend === true, 'adminsLend kept through the grid, a preset and back');
+  ok(JSON.parse(fs.readFileSync(path.join(TOP, '.github/bds-lab-panel.json'), 'utf8')).adminsLend === true, 'this lab: its administrators always lend');
+  const lf = M.lendingForks([{ fork: { full_name: 'z/lab', owner: { login: 'z' } }, json: { ...A, minutesPerMonth: 300 } }, { fork: { full_name: 'ad/lab', owner: { login: 'ad' } }, json: A }, { fork: { full_name: 'n/lab', owner: { login: 'n' } }, json: null }], ['AD']);
+  eq(lf.map((x) => [x.slug, x.admin, x.always.ok]), [['ad/lab', true, true], ['z/lab', false, false]], 'the administrators\' first; a fork that does not lend: not listed');
+  eq([M.labHostsWith('a/b, c/d  a/b', ['e/f', 'C/D']), M.labHostsWith('a/b c/d', [], ['A/B']), M.labHostsWith(null, ['bad', 'x/y'])], ['a/b c/d e/f', 'c/d', 'x/y']);
+  eq(M.hostRunInputs({ host: 'auto', job: 'gate' }).inputs, { host: 'auto', job: 'gate', unit: '', wait: 'true' });
+  ok(/ユニット/.test(M.hostRunInputs({ host: 'auto', job: 'sim', unit: '' }).error) && /走らせられる仕事ではありません/.test(M.hostRunInputs({ host: 'auto', job: 'make' }).error), 'auto: any lent job, a unit when it takes one');
+  const td = M.todos({ policyErrors: ['x'], idleAdmins: ['ad'], invites: 2, unlisted: ['z/lab'], stale: ['OLD'], health: [{ name: 'verify', streak: 3 }, { name: 'go', streak: 1 }], ending: [{ slug: 'l/h', until: '2026-10-10', days: 2 }], version: { state: 'newer', say: '新しい版' } });
+  eq(td.map((x) => [x.level, x.tab]), [['bad', 'members'], ['bad', 'runs'], ['warn', 'hosts'], ['warn', 'hosts'], ['warn', 'secrets'], ['warn', 'hosts'], ['info', 'hosts'], ['info', null]], JSON.stringify(td));
+  ok(/verify が 3 回続けて/.test(td[1].text) && /招待が 2 件/.test(td[3].text) && /あと 2 日/.test(td[5].text), JSON.stringify(td));
+  eq(M.todos({}), [], 'nothing to do: nothing said');
+});
+
 await t('the secret sealed as libsodium seals it (crypto_box_seal; vectors from libsodium) and its parts against Node\'s own X25519 and BLAKE2b', () => {
   // (made with libsodium-wrappers 0.7.15: seed keypair from 32 bytes of i+1, ephemeral secret 32 bytes of 100+i; sha256 of the box)
   const V = [['', '1b1b58dd50ea14b60da17b790cd02754d970c9bab864ebb3c0f3016fe51d3f57', '138d5a94edadcd0cb3573cbbad620463cd344c38f5017230d1a0d5eb53a52b7b'],

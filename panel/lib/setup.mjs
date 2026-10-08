@@ -13,8 +13,10 @@ import { SLUG } from './model.mjs';
 /** the App's permissions on the repositories it is put on: the least the panel and the workflows use (the keys are GitHub's
  *  names for an App's permissions — 要実測 on GitHub: this is the one place to change them). members: read is the
  *  organization's (its teams, for the policy's teams: without it a person signed in with the App cannot be told in a team,
- *  and gets the narrowest role); not used when the App is on a personal account — 要実測 */
-export const APP_PERMISSIONS = Object.freeze({ actions: 'write', contents: 'write', secrets: 'write', actions_variables: 'write', issues: 'write', workflows: 'write', pages: 'write', pull_requests: 'read', metadata: 'read', members: 'read' });
+ *  and gets the narrowest role); not used when the App is on a personal account — 要実測. administration: write is a lending
+ *  fork's whole say given to the lab's owner (its owner invites them there, the lab's workflows may set it up), and the
+ *  lab's people changed from the panel when signed in with the App — on the repositories the App is put on, nowhere else */
+export const APP_PERMISSIONS = Object.freeze({ administration: 'write', actions: 'write', contents: 'write', secrets: 'write', actions_variables: 'write', issues: 'write', workflows: 'write', pages: 'write', pull_requests: 'read', metadata: 'read', members: 'read' });
 /** what keeping the App's keys in the lab does, in the policy's words (storeApp: secrets sealed, variables set) */
 export const APP_NEEDS = Object.freeze(['secrets.put', 'variables']);
 const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
@@ -147,6 +149,11 @@ export async function deployAuth(api, slug, { ref = 'main', cf = null, me, sleep
   onStep(`${url} に置きました: pages.yml でページに渡します`);
   return url;
 }
+/** what an App's permissions (GitHub's GET /apps/<slug>) lack of APP_PERMISSIONS (pure) → [[name, level]]: write covers read */
+export function appMissing(perms) {
+  const p = perms ?? {};
+  return Object.entries(APP_PERMISSIONS).filter(([k, v]) => !(p[k] === v || (v === 'read' && p[k] === 'write')));
+}
 /** variables read → { NAME: value | null (not set) | undefined (this token may not read them) } */
 async function readVars(api, slug, names) {
   const out = {};
@@ -170,8 +177,8 @@ export async function checks(ctx) {
 
   // ---- GitHub Pages: where this panel is served from (built by pages.yml) ----
   let pages; try { pages = await api.pages(slug); } catch (e) { pages = e; }
-  // (signed in with the App: turning Pages on asks the repository's administration, which the App is not given — GitHub's own
-  // page instead; a person's token: the button)
+  // (signed in with the App: turning Pages on asks the repository's administration, which an App made before this lab asked
+  // for it lacks — GitHub's own page instead; a person's token: the button)
   const pagesLink = { label: 'Pages の設定で Source を GitHub Actions に（GitHub へ）', link: `https://github.com/${slug}/settings/pages` };
   const pagesFix = (update) => (signedInWithApp ? pagesLink : { label: update ? 'Source を GitHub Actions に' : 'Pages を有効に（GitHub Actions で）', needs: PY, run: async () => { await api.enablePages(slug, { update }); await pagesYml(); return `Pages を有効にしました${wf('pages.yml') ? '（pages.yml を始めました）' : ''}`; } });
   const onGitHub = signedInWithApp ? ': GitHub の Pages の設定で Source を「GitHub Actions」に（App でのサインインでは、ここからは変えられません）' : '';
@@ -194,6 +201,17 @@ export async function checks(ctx) {
   else if (!signedInWithApp) c('installed', 'App がラボに入っている', null, 'App でサインインすると分かります', putOn);
   else if (!inst) c('installed', 'App がラボに入っている', null, `App の入り先を読めません（${instWhy}）`, putOn);
   else c('installed', 'App がラボに入っている', inst.has(slug.toLowerCase()), `${slug} に App が入っていません: 入れると、ラボの人はサインインするだけで使えます（許可は App の導入と GitHub の権限で決まります）`, putOn);
+
+  // ---- the App's permissions as GitHub has them now: an App made before this lab asked for more says what to add (its owner
+  // adds them on GitHub; whoever installed it is asked to accept) ----
+  if (appSlug) {
+    let app = null, why = '';
+    try { app = await api.app(appSlug); } catch (e) { why = e.message; }
+    const missing = app ? appMissing(app.permissions) : [], perms = appSettingsUrl(appSlug, owner, isOrg);
+    const toPerms = perms ? { label: 'App の Permissions を開く（GitHub へ）', link: `${perms}/permissions` } : null;
+    if (!app) c('app-perms', 'App の権限', null, `App を読めません（${why}）`, toPerms);
+    else c('app-perms', 'App の権限', !missing.length, `App に ${missing.map(([k, v]) => `${k}: ${v}`).join('・')} がありません: App の設定の Permissions で足してください（入れている人には GitHub が承認を頼みます）。administration は、貸し手のフォークの全権限を預かり、App でサインインしていてもメンバーを変えるのに使います`, toPerms);
+  }
 
   // ---- the sign-in service: answering, with this App's client id, for this panel ----
   const urlFix = { label: '自分のサーバーの URL を入れる', inputs: [{ name: 'url', label: 'サインインのサービスの URL（https://… の origin だけ: パスなし）', placeholder: 'https://…' }], needs: ['variables', ...PY], run: async ({ url } = {}) => {
@@ -246,7 +264,7 @@ export async function checks(ctx) {
 
   // ---- each host: the link its lender opens to put the App on it (the App asks the same permissions everywhere it is put:
   // the lender chooses the host alone) ----
-  const onlyHost = '「Only select repositories」でホストのリポジトリだけを選んでもらいます（App の権限はラボと同じ: secrets・variables・issues・pages の write も及びます。ホストで使うのは contents・actions・workflows だけ（hostrun））';
+  const onlyHost = '「Only select repositories」でホストのリポジトリだけを選んでもらいます（App の権限はラボと同じ: administration・secrets・variables・issues・pages の write も及びます — フォークならその全権限をラボの持ち主に預けます。ホストで使うのは contents・actions・workflows だけ（hostrun））';
   for (const x of hosts) {
     if (!SLUG.test(String(x?.slug ?? ''))) continue;
     const key = `host:${x.slug}`, label = `${x.slug}: 貸し手（${x.slug.split('/')[0]} さん）に App を入れてもらう`;

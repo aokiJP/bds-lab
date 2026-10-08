@@ -173,14 +173,85 @@ export function hostNow(rules, used, now = new Date(), running = false) {
   return { ok: !why.length, why, used, limit: rules.minutesPerMonth, stopAt, remaining: Math.max(0, stopAt - used) };
 }
 // ---- where a job runs: this lab's own Actions, or a lender's (a host) through hostrun.yml ----
+/** the lab a fork came from (pure): its parent's (or source's) owner/name, null when it is not a fork */
+export const forkOf = (repo) => (repo?.fork ? repo.parent?.full_name ?? repo.source?.full_name ?? null : null);
+export const same = (a, b) => String(a ?? '').toLowerCase() === String(b ?? '').toLowerCase();
+/** may this repository become this person's host (pure) → { ok, errors }: their own fork of this lab (public, the same
+ *  code: GitHub's standard runners cost a public repository no minutes), not archived */
+export function forkHostCheck(repo, me, lab) {
+  const errors = [];
+  if (!repo) return { ok: false, errors: ['そのフォークが見えません（まだフォークしていないか、ラボの App をそこに入れていません）'] };
+  if (!same(forkOf(repo), lab)) errors.push(`ラボ（${lab}）のフォークだけをホストにできます`);
+  if (roleOf(repo.permissions) !== 'admin' || !same(repo.owner?.login, me)) errors.push('あなた自身のフォークだけをホストにできます（持ち主として）');
+  if (repo.archived) errors.push('アーカイブされています');
+  if (repo.private || repo.visibility === 'private') errors.push('private です: ラボと同じ public のフォークにしてください');
+  return { ok: !errors.length, errors };
+}
+/** the lender's rules as .lab-host.json (pure) → { text, errors } */
+export function hostRulesText(rules) {
+  const c = checkRules(rules);
+  return c.errors.length ? { text: null, errors: c.errors } : { text: JSON.stringify({ lab: 1, ...rules }, null, 2) + '\n', errors: [] };
+}
+/** a fork's workflows set for lending (pure) → { enable: [ids], disable: [ids] }: host.yml on, every other one of the lab's
+ *  off (a lender's minutes and mail never go to the lab's own CI, schedules or autopilot) */
+export function forkWorkflows(wfs) {
+  const isHost = (w) => String(w.path ?? '').endsWith('/host.yml');
+  return { enable: wfs.filter((w) => isHost(w) && w.state !== 'active').map((w) => w.id), disable: wfs.filter((w) => !isHost(w) && w.state === 'active').map((w) => w.id) };
+}
+/** may the lab's jobs run on this host from the panel (pure): its rules are good and this person writes there, or it is a fork
+ *  of this lab (hostrun reaches it with the lab's App, no invitation needed) */
+export const canBorrow = (x, lab) => Boolean(x?.rules) && (x.role === 'borrower' || x.role === 'lender' || same(forkOf(x.repo), lab));
+// ---- the lab's administrators lend always (the policy's adminsLend): their own fork, every job, all day, no last day ----
+/** the most minutes a month a host can lend: an administrator's (a public fork's standard runners cost nothing) */
+export const ALWAYS_MINUTES = 50000;
+/** an administrator's rules: lending always (pure) */
+export const alwaysRules = (timezone = 'UTC', contact = '') => ({ minutesPerMonth: ALWAYS_MINUTES, jobs: [...HOST_JOBS], hours: '00:00-24:00', timezone, contact });
+/** do these rules (.lab-host.json's JSON) lend always (pure) → { ok, why } */
+export function alwaysLends(j) {
+  const c = checkRules(j);
+  if (!c.rules) return { ok: false, why: [j ? `.lab-host.json: ${c.errors.join(' / ')}` : '.lab-host.json がありません'] };
+  const r = c.rules, why = [], missing = HOST_JOBS.filter((x) => !r.jobs.includes(x));
+  if (r.minutesPerMonth < ALWAYS_MINUTES) why.push(`1 か月 ${r.minutesPerMonth} 分（いつもなら ${ALWAYS_MINUTES} 分）`);
+  if (missing.length) why.push(`許していない仕事: ${missing.join(' ')}`);
+  if (r.hours !== '00:00-24:00') why.push(`時間帯 ${r.hours}（いつもなら一日中）`);
+  if (r.until) why.push(`最後の日 ${r.until}（いつもならなし）`);
+  return { ok: !why.length, why };
+}
+/** an administrator's lending as the lab sees it (pure) → { required, ok, fork, why }: required when the policy says
+ *  adminsLend and they are an administrator but not the owner; ok when their own fork of the lab lends always with host.yml
+ *  as the lab has it. fork: their fork's repository (null: none); check: forkHostCheck's answer; rules: its .lab-host.json's
+ *  JSON (null: none); hostYmlOk: its host.yml is the lab's */
+export function adminLend({ required, fork = null, check = null, rules = null, hostYmlOk = false }) {
+  if (!required) return { required: false, ok: true, fork: null, why: [] };
+  if (!fork) return { required: true, ok: false, fork: null, why: ['ラボのフォークがまだありません'] };
+  const why = [...(check?.errors ?? []), ...(hostYmlOk ? [] : ['フォークの host.yml がラボと違います（ラボに合わせる）']), ...alwaysLends(rules).why];
+  return { required: true, ok: !why.length, fork: fork.full_name ?? null, why };
+}
+/** the lab's lending forks as their .lab-host.json says (pure) → [{ slug, owner, rules, always, admin }], the
+ *  administrators' first. forks: [{ fork repository, json: .lab-host.json's JSON | null }]; admins: their logins */
+export function lendingForks(forks, admins = []) {
+  const isAdmin = new Set(admins.map((a) => String(a).toLowerCase()));
+  return forks.filter((f) => f.json).map((f) => {
+    const c = checkRules(f.json), owner = f.fork.owner?.login ?? String(f.fork.full_name).split('/')[0];
+    return { slug: f.fork.full_name, owner, rules: c.rules, errors: c.errors, always: alwaysLends(f.json), admin: isAdmin.has(owner.toLowerCase()) };
+  }).sort((a, b) => Number(b.admin) - Number(a.admin) || a.slug.localeCompare(b.slug));
+}
+/** LAB_HOSTS with these hosts in (or out) (pure): the variable's list, spaces between, each once, as it was ordered */
+export function labHostsWith(value, add = [], drop = []) {
+  const out = [], seen = new Set(), no = new Set(drop.map((x) => x.toLowerCase()));
+  for (const s of [...String(value ?? '').split(/[\s,]+/), ...add]) if (SLUG.test(s) && !seen.has(s.toLowerCase()) && !no.has(s.toLowerCase())) { seen.add(s.toLowerCase()); out.push(s); }
+  return out.join(' ');
+}
 export const HOST_UNIT_JOBS = ['test', 'go', 'sim'];
 export const HOST_JOB_WORDS = { gate: 'ラボの試験（gate）', 'gate-all': '全部の試験', test: 'ユニットの試験（test）', go: 'ユニットを仕上げる（go: .mcaddon も）', sim: 'ユニットをすばやく（sim）', upkeep: '新しい Minecraft に合わせる（upkeep）', 'dev-bds': 'BDS の開発版で' };
 /** the form for a job on a host → { inputs } for hostrun.yml, or { error } (pure): the lender's rules allow the job, a unit
  *  for test / go / sim (bds/addons/<name>), none for the rest */
 export function hostRunInputs({ host, job, unit = '', wait = true, rules }) {
-  if (!SLUG.test(String(host ?? ''))) return { error: 'ホストを選んでください' };
+  // (auto: hostrun chooses among LAB_HOSTS the one that may take it now — each host's own rules decide there)
+  if (host === 'auto') rules = { jobs: HOST_JOBS };
+  else if (!SLUG.test(String(host ?? ''))) return { error: 'ホストを選んでください' };
   if (!rules) return { error: `${host} の .lab-host.json が読めません` };
-  if (!rules.jobs.includes(job)) return { error: `${job} は ${host} では許されていません（許す仕事: ${rules.jobs.join(' ')}）` };
+  if (!rules.jobs.includes(job)) return { error: host === 'auto' ? `${job} はホストで走らせられる仕事ではありません` : `${job} は ${host} では許されていません（許す仕事: ${rules.jobs.join(' ')}）` };
   const u = String(unit ?? '').trim();
   if (HOST_UNIT_JOBS.includes(job) && !/^[a-z0-9_]+$/.test(u)) return { error: `${job} はユニットの名前が要ります（bds/addons/<名前>: 英小文字・数字・_）` };
   return { inputs: { host, job, unit: HOST_UNIT_JOBS.includes(job) ? u : '', wait: String(wait !== false) } };
@@ -220,6 +291,21 @@ export function shortcut(key, tabs) {
   if (/^[1-9]$/.test(key)) return tabs[Number(key) - 1] ? { tab: tabs[Number(key) - 1] } : null;
   if (key === '0') return tabs[9] ? { tab: tabs[9] } : null;
   return ({ '/': { search: true }, r: { reload: true }, '?': { help: true } })[key] ?? null;
+}
+/** what needs doing now, from what the panel read (pure) → [{ level: 'bad' | 'warn' | 'info', text, tab }], the worst first.
+ *  health: workflowHealth's; ending: [{ slug, until, days }] a lender's hosts whose last day is near */
+export function todos({ policyErrors = [], version = null, idleAdmins = [], invites = 0, unlisted = [], stale = [], health = [], ending = [] } = {}) {
+  const out = [], add = (level, text, tab = null) => out.push({ level, text, tab });
+  if (policyErrors.length) add('bad', '.github/bds-lab-panel.json が正しくありません: 直すまでパネルは何も許しません', 'members');
+  for (const x of health.filter((y) => y.streak >= 2)) add('bad', `${x.name} が ${x.streak} 回続けて失敗しています`, 'runs');
+  if (idleAdmins.length) add('warn', `まだいつも貸していない管理者: ${idleAdmins.join('・')}`, 'hosts');
+  if (invites) add('warn', `フォークからの招待が ${invites} 件: 受けると、そのフォークを預かれます`, 'hosts');
+  if (stale.length) add('warn', `${STALE_DAYS} 日以上そのままの秘密: ${stale.join('・')}`, 'secrets');
+  for (const e of ending) add('warn', `${e.slug} を貸す最後の日は ${e.until}（あと ${e.days} 日）`, 'hosts');
+  if (unlisted.length) add('info', `貸しているのに LAB_HOSTS にないフォーク: ${unlisted.join('・')}`, 'hosts');
+  if (version?.state === 'newer' || version?.state === 'failed') add(version.state === 'failed' ? 'warn' : 'info', version.say);
+  const rank = { bad: 0, warn: 1, info: 2 };
+  return out.map((x, i) => [x, i]).sort((a, b) => rank[a[0].level] - rank[b[0].level] || a[1] - b[1]).map(([x]) => x);
 }
 /** location.hash → { tab, repo, run } (pure; anything unknown → nulls) */
 export function parseHash(hash) {

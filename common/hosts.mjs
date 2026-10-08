@@ -182,6 +182,16 @@ export async function packFiles(unit, top = TOP) {
 
 // ---------------------------------------------------------------- GitHub, through the person's own gh login
 const GH = () => process.env.LAB_GH || 'gh';
+// (host ci with the lab's App: a token minted on each host the App is on — a lender's fork — held here, and GH_TOKEN set to
+// that host's before anything is asked of it: gh, git push (gh auth git-credential) and the downloads all read GH_TOKEN.
+// A host without one: GH_TOKEN as it was given — LAB_HOST_TOKEN in hostrun, the person's own gh login on their computer)
+const HOST_TOKENS = new Map();
+let BASE_TOKEN;
+export function useHost(slug) {
+  if (BASE_TOKEN === undefined) BASE_TOKEN = process.env.GH_TOKEN ?? null;
+  const t = HOST_TOKENS.get(String(slug ?? '').toLowerCase()) ?? BASE_TOKEN;
+  if (t) process.env.GH_TOKEN = t; else delete process.env.GH_TOKEN;
+}
 // (a rate limit, an organization's SSO sign-in, GitHub or the network down: nothing the lender did — tried again later. A plain
 // 403/404 says the repository is gone for this login)
 const TEMPORARY = /rate limit|secondary rate|abuse detection|SAML|single sign-on|\bSSO\b|timed? ?out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|HTTP 5\d\d|could not connect|connection (reset|refused)|TLS handshake|i\/o timeout/i;
@@ -205,13 +215,17 @@ const lf = (s) => String(s).replace(/\r\n/g, '\n');
 function repoAccess(slug) {
   const { r, j } = ghJson(['api', `repos/${slug}`]);
   if (!r.ok) return { ok: false, gone: r.gone, why: r.gone ? '見えません（招待されていない・外された・消された: HTTP 403/404）' : `gh が答えません: ${r.err.trim().split('\n').pop()?.slice(0, 160)}` };
-  return { ok: true, push: Boolean(j?.permissions?.push), private: Boolean(j?.private), archived: Boolean(j?.archived), branch: j?.default_branch ?? 'main' };
+  // (the lab's App token in hostrun — ghs_, minted for this one repository with contents: write — gets no `permissions` back:
+  // that it was minted at all is the proof; a person's token always gets them)
+  const push = j?.permissions ? Boolean(j.permissions.push) : /^ghs_/.test(String(process.env.GH_TOKEN ?? ''));
+  return { ok: true, push, private: Boolean(j?.private), archived: Boolean(j?.archived), fork: Boolean(j?.fork), branch: j?.default_branch ?? 'main' };
 }
 // 403/404 this many looks in a row: the host is withdrawn (one may be GitHub's own hiccup). Seen again: used again
 export const STRIKES = 2;
 /** a host looked at again: can this login still see it and push there, is it archived, its rules (read again: missing or wrong
  *  rules pause it — never the old ones in their place). 403/404 twice in a row: withdrawn; seen again: back */
 function refresh(H, slug, out) {
+  useHost(slug);
   const h = H.hosts[slug], at = new Date().toISOString();
   const a = repoAccess(slug);
   if (!a.ok) {
@@ -288,6 +302,7 @@ function templateCmd(args, out) {
 function addCmd(args, out) {
   const slug = args[0];
   if (!SLUG.test(String(slug ?? ''))) throw new Error('host add <owner/repo>（貸し手のリポジトリ）');
+  useHost(slug);
   const a = repoAccess(slug);
   if (!a.ok) throw new Error(`${slug}: ${a.why}`);
   if (!a.push) throw new Error(`${slug}: 書き込めません（貸し手に collaborator の Write で招いてもらい、招待を受けてから）`);
@@ -317,6 +332,7 @@ function forgetCmd(args, out) {
 /** a dispatched run brought to its end: waited for (or only looked at: wait false), timed, its result taken, the branch
  *  deleted, the ledger written → the done row, or null while it still runs */
 async function settle(p, out, { wait = true } = {}) {
+  useHost(p.host);
   const poll = Number(process.env.LAB_HOST_POLL_MS) || 15_000, limit = (JOBS[p.job]?.limitMin ?? 60) * 60_000 + 10 * 60_000, t0 = Date.now();
   const findMs = Number(process.env.LAB_HOST_FIND_MS) || 120_000;
   let run = p.run, empty = 0;
@@ -394,6 +410,7 @@ async function runCmd(args, out) {
   const mb = (files.reduce((n, [, b]) => n + b.length, 0) / 1e6).toFixed(1);
   if (bad.length) { out(`STOP 送る前の検査で止めました（何も送っていません）: ${files.length} ファイル ${mb} MB`); for (const b of bad.slice(0, 20)) out(`  ✘ ${b.rel}: ${b.why}`); return false; }
   const req = newRequest(), branch = `lab/run-${req}`, c = pick.checks.find((x) => x.slug === pick.host).c;
+  useHost(pick.host);
   out(`${pick.host}: ${job}${unit ? ` -a ${unit}` : ''} · ${files.length} ファイル ${mb} MB · 今月 ${c.used}/${c.stopAt} 分（見込み ${c.estimate} 分）`);
   if (dry) { for (const [r] of files.slice(0, 400)) out(`  ${r}`); out(`（--dry: 送っていません。${branch} に送ります）`); return true; }
   pushTree(files, pick.host, branch);
@@ -412,15 +429,35 @@ async function runCmd(args, out) {
  *  (the variable LAB_HOSTS' list), each added as `host add` does (the rules, host.yml as the lab's); the minutes are GitHub's
  *  count (a fresh runner has no ledger); then `host run`. The result: the run's summary, an annotation for a failure (notify
  *  tells it to Discord) and HOST_OUT (default hostrun-result/: the artifact, with a go's .mcaddon) */
+/** the lab's App's token on each host it is on (APP_ID, APP_PRIVATE_KEY: hostrun.yml with host: auto) → the hosts that got
+ *  one; a host without the App is said and left to GH_TOKEN (LAB_HOST_TOKEN). The key is dropped from the environment after */
+export async function hostTokens(list, out, E = process.env) {
+  if (!E.APP_ID || !E.APP_PRIVATE_KEY) return [];
+  const { installationToken } = await import(pathToFileURL(path.join(TOP, 'common', 'ghapp.mjs')).href), got = [];
+  try {
+    for (const s of list) {
+      try {
+        const t = await installationToken({ appId: E.APP_ID, pem: E.APP_PRIVATE_KEY, repo: s, permissions: { contents: 'write', actions: 'write', workflows: 'write' }, api: E.GITHUB_API_URL || 'https://api.github.com' });
+        out(`::add-mask::${t.token}`);
+        HOST_TOKENS.set(s.toLowerCase(), t.token); got.push(s);
+      } catch (e) { out(`・ ${s}: ラボの App のトークンはありません（${String(e.message).split('\n')[0]}）${E.GH_TOKEN ? ': LAB_HOST_TOKEN で' : ''}`); }
+    }
+  } finally { delete E.APP_PRIVATE_KEY; }
+  if (got.length) out(`App のトークン: ${got.join(' ')}（1 時間・そのホストだけ・contents・actions・workflows）`);
+  return got;
+}
 async function ciCmd(out) {
   const E = process.env;
   if (!E.GITHUB_ACTIONS && !E.LAB_HOST_CI) throw new Error('host ci は hostrun.yml の中で（手元からは node lab.mjs host run）');
-  if (!E.GH_TOKEN) throw new Error('ホストへのトークンがありません: 貸し手にラボの GitHub App をホストへ入れてもらう（管理パネルの「準備」のリンク。host は名前で: auto では App を使いません）か、秘密 LAB_HOST_TOKEN（ホストに push でき、ワークフローを始められるあなたのトークン。Classic: repo・workflow / Fine-grained: ホストの Contents・Actions・Workflows を Read and write）を、ラボの Secrets に');
   const job = String(E.HOST_JOB ?? '').trim(), unit = String(E.HOST_UNIT ?? '').trim(), on = String(E.HOST_ON || 'auto').trim(), wait = !/^(false|0|no)$/i.test(String(E.HOST_WAIT ?? ''));
   const list = on === 'auto' ? String(E.LAB_HOSTS ?? '').split(/[\s,]+/).filter(Boolean) : [on];
   if (!list.length) throw new Error('ホストがありません: HOST_ON に owner/repo を、または変数 LAB_HOSTS にホストの一覧を（管理パネルの「実行」）');
   const bad = list.find((s) => !SLUG.test(s));
   if (bad) throw new Error(`${bad} は owner/repo ではありません`);
+  // (the lab's App on each host — a lender's fork: its say given to the lab's owner — a token of its own minted there first,
+  // masked while workflow commands still count; the App's key gone from this process right after, so nothing it starts has it)
+  await hostTokens(list, out);
+  if (!E.GH_TOKEN && !HOST_TOKENS.size) throw new Error('ホストへのトークンがありません: 貸し手にラボの GitHub App をホストへ入れてもらう（管理パネルの「準備」のリンク。auto でも、変数 LAB_HOSTS のホストごとに App のトークンを作ります）か、秘密 LAB_HOST_TOKEN（ホストに push でき、ワークフローを始められるあなたのトークン。Classic: repo・workflow / Fine-grained: ホストの Contents・Actions・Workflows を Read and write）を、ラボの Secrets に');
   // (what the run prints is the lab's and the host's words: no line of it is taken as a workflow command)
   const stop = crypto.randomBytes(8).toString('hex'), log = [];
   out(`::stop-commands::${stop}`);
@@ -484,6 +521,7 @@ async function reportCmd(args, out) {
   }
   const f = path.join(os.tmpdir(), `bdslab-host-report-${process.pid}.md`);
   fs.writeFileSync(f, text + '\n');
+  useHost(slug);
   const r = gh(['issue', 'create', '--repo', slug, '--title', `bds-lab: ${m} の使用量`, '--body-file', f]);
   fs.rmSync(f, { force: true });
   if (!r.ok) throw new Error(`Issue を書けません: ${r.err.trim().split('\n').pop()?.slice(0, 160)}`);

@@ -5,7 +5,8 @@ import { h, toast, act, link } from './dom.mjs';
 import * as MB from '../lib/members.mjs';
 import * as P from '../lib/policy.mjs';
 
-/** ctx: { api, lab: { slug, repo, role }, me, policy, role, may(action), guarded(action, detail, fn, done), reload() } */
+/** ctx: { api, lab: { slug, repo, role }, me, policy, role, may(action), guarded(action, detail, fn, done), reload(),
+ *  lending() (the owner's: the lab's lending forks → { list }, for each administrator's mark) } */
 export function membersTab(body, ctx) {
   const { api, lab } = ctx, admin = lab.role === 'admin' && ctx.may('members');
   const list = h('div', {}, h('p', { class: 'muted' }, '読んでいます…'));
@@ -13,9 +14,9 @@ export function membersTab(body, ctx) {
   const perm = h('select', { 'aria-label': '役割' }, MB.PERMISSIONS.map((p) => h('option', { value: p, selected: p === 'push' ? 'selected' : null }, MB.PERMISSION_WORDS[p])));
   const load = () => act(async () => {
     let m;
-    // (signed in through the App, GitHub gives no repository administration — on purpose: the App is on lenders' hosts too —
-    // so the people are changed on GitHub's own page then)
-    try { m = await MB.readMembers(api, lab.slug, lab.repo); } catch (e) { if (e.status !== 403) throw e; return list.replaceChildren(h('p', { class: 'warn' }, 'このサインインでは、GitHub がメンバーを読ませません（ラボの App には、リポジトリの管理の権限を渡していません: 貸し手のホストを守るため）。'), h('p', {}, link(`https://github.com/${lab.slug}/settings/access`, 'GitHub の「Collaborators」で招く・変える'), ' か、Administration: Read and write のトークンで入る（＋ でアカウントを加える）と、ここでできます。')); }
+    // (signed in through an App made before it asked for administration, GitHub lets no one read the people: GitHub's own
+    // page then, and 「準備」's 「App の権限」 says what to add)
+    try { m = await MB.readMembers(api, lab.slug, lab.repo); } catch (e) { if (e.status !== 403) throw e; return list.replaceChildren(h('p', { class: 'warn' }, 'このサインインでは、GitHub がメンバーを読ませません（ラボの App にリポジトリの管理の権限 administration がまだありません: 「準備」の「App の権限」で足すと、ここでできます）。'), h('p', {}, link(`https://github.com/${lab.slug}/settings/access`, 'GitHub の「Collaborators」で招く・変える'), ' か、Administration: Read and write のトークンで入る（＋ でアカウントを加える）と、ここでできます。')); }
     list.replaceChildren(h('ul', { class: 'plain' },
       m.members.map((x) => {
         const c = MB.canChange(x, { owner: m.owner, me: ctx.me.login }), sel = h('select', { 'aria-label': `${x.login} の役割`, disabled: !admin || !c.ok }, MB.PERMISSIONS.map((p) => h('option', { value: p, selected: p === x.permission ? 'selected' : null }, MB.PERMISSION_WORDS[p])));
@@ -27,13 +28,20 @@ export function membersTab(body, ctx) {
       m.invitations.map((i) => h('li', { class: 'row' }, h('span', { class: 'grow' }, h('strong', {}, i.login), ' ', h('span', { class: 'chip' }, '招待中'), h('div', { class: 'muted' }, `${MB.PERMISSION_WORDS[i.permission] ?? i.permission}・相手が GitHub の通知かメールで受けると入ります`)),
         h('button', { title: '相手に渡すアドレス（GitHub の通知とメールにも届きます）', onclick: () => copy(MB.invitationUrl(lab.slug), '招待を受けるアドレスを写しました') }, '🔗 アドレス'),
         admin ? h('button', { onclick: () => ctx.guarded('members', { user: i.login, permission: 'none' }, () => MB.cancelInvitation(api, lab.slug, i.id), `${i.login} への招待を取り消しました`).then(load) }, '取り消す') : null))));
+    // (each administrator but the owner: lending always from their fork, or not yet — the policy's adminsLend)
+    if (ctx.lending && P.adminsLend(ctx.policy)) ctx.lending().then((d) => {
+      for (const x of m.members.filter((y) => y.permission === 'admin' && y.login.toLowerCase() !== m.owner.toLowerCase())) {
+        const f = d.list.find((y) => y.owner.toLowerCase() === x.login.toLowerCase()), row = list.querySelector(`[data-member="${x.login}"] .grow`);
+        row?.append(h('div', { class: f?.always.ok ? 'ok' : 'warn', 'data-lending': x.login }, f?.always.ok ? `⏱ いつも貸している（${f.slug}）` : f ? `⏱ 貸しているが、いつもではない（${f.always.why.join(' / ')}）` : '⚠ まだ貸していません（入ると、まず自分のフォークで貸す画面になります）'));
+      }
+    }).catch(() => { /* the forks not readable: no marks */ });
   });
   body.append(h('div', { class: 'card' }, h('h2', {}, `メンバー（${lab.slug}）`),
     h('p', { class: 'muted' }, admin ? 'GitHub のユーザー名で招きます。相手が招待を受けると、その役割で「GitHub でサインイン」から入れます（パネルでできることは下の「役割」でさらに狭められます）。'
       : '見るだけです: メンバーを変えられるのはラボの管理者だけです（GitHub が管理者にだけ許します）。'),
     admin ? h('div', { class: 'row' }, who, perm, h('button', { class: 'primary', onclick: async () => {
       const name = who.value.trim().replace(/^@/, '');
-      if (perm.value === 'admin' && !confirm(`${name} を管理者にしますか（メンバー・秘密・設定も変えられるようになります）`)) return;
+      if (perm.value === 'admin' && !confirm(`${name} を管理者にしますか（メンバー・秘密・設定も変えられるようになります）${P.adminsLend(ctx.policy) ? '。管理者はいつも時間を貸します: 入るとまず自分のフォークで貸し、その全権限をあなたに預けます' : ''}`)) return;
       const r = await ctx.guarded('members', { user: name, permission: perm.value }, () => MB.setMember(api, lab.slug, name, perm.value));
       if (r !== undefined) { toast(r === 'invited' ? `${name} を招きました（相手が受けると入ります）` : `${name} の役割を変えました`); who.value = ''; load(); }
     } }, '招く')) : null,
@@ -52,6 +60,7 @@ function policyCard(ctx, admin) {
   const rows = P.ACTIONS.map((a) => h('tr', {}, h('td', {}, P.ACTION_WORDS[a]),
     P.GITHUB_ROLES.map((r) => { const b = h('input', { type: 'checkbox', checked: g.roles[r].includes(a), disabled: !admin || r === 'admin', 'aria-label': `${r}: ${a}` }); (boxes[r] ??= {})[a] = b; return h('td', {}, b); }),
     h('td', {}, (ask[a] = h('input', { type: 'checkbox', checked: g.confirm.includes(a), disabled: !admin, 'aria-label': `確かめる: ${a}` })))));
+  const lendBox = h('input', { type: 'checkbox', checked: g.adminsLend, disabled: !admin, 'aria-label': '管理者はいつも貸す' });
   const idle = h('input', { type: 'number', min: 0, max: 1440, value: g.idleMinutes, disabled: !admin }), audit = h('select', { disabled: !admin }, ['auto', 'issue', 'off'].map((v) => h('option', { value: v, selected: v === g.audit ? 'selected' : null }, { auto: 'auto（非公開なら残す）', issue: '残す', off: '残さない' }[v])));
   return h('div', { class: 'card' }, h('h2', {}, '役割（パネルでできること）'),
     h('p', { class: 'muted' }, `${P.POLICY_FILE} に書きます。GitHub の役割ごとに、パネルで許す操作を選びます（GitHub が許さないことはここで選んでもできません。管理者はいつも全部）。${ctx.policyErrors?.length ? ' いまのファイルは正しくありません: 保存すると直ります。' : ''}`),
@@ -63,8 +72,9 @@ function policyCard(ctx, admin) {
     } }, p.label))) : null,
     h('table', {}, h('thead', {}, head), h('tbody', {}, rows)),
     h('label', {}, '操作がなければサインアウトする分（0: しない）'), idle, h('label', {}, '監査ログ'), audit,
+    h('label', {}, lendBox, ' 管理者（持ち主のほか）はいつも時間を貸す（自分のフォークで・全部の仕事・一日中・期限なし。貸すまでは管理者の操作を止める）'),
     admin ? h('div', { class: 'row' }, h('button', { class: 'primary', onclick: () => {
-      const grid = { ...g, roles: Object.fromEntries(P.GITHUB_ROLES.map((r) => [r, P.ACTIONS.filter((a) => boxes[r][a].checked)])), confirm: P.ACTIONS.filter((a) => ask[a].checked), idleMinutes: Number(idle.value), audit: audit.value };
+      const grid = { ...g, roles: Object.fromEntries(P.GITHUB_ROLES.map((r) => [r, P.ACTIONS.filter((a) => boxes[r][a].checked)])), confirm: P.ACTIONS.filter((a) => ask[a].checked), idleMinutes: Number(idle.value), audit: audit.value, adminsLend: lendBox.checked };
       return ctx.guarded('members', { file: P.POLICY_FILE }, () => MB.savePolicy(ctx.api, ctx.lab.slug, grid), '役割を保存しました（既定の枝に）').then((r) => { if (r !== undefined) ctx.reload(); });
     } }, '役割を保存')) : h('p', { class: 'muted' }, '変えられるのは管理者だけです'),
     link(`https://github.com/${ctx.lab.slug}/blob/${ctx.lab.repo?.default_branch ?? 'main'}/${P.POLICY_FILE}`, 'GitHub でファイルを見る'));

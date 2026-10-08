@@ -6,7 +6,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -334,6 +335,38 @@ await t('host ci (hostrun.yml, started from the management panel): on a fresh ru
   r = ci({ LAB_HOST_STATE: fresh('ci4'), HOST_JOB: 'gate', HOST_UNIT: '', FAKE_RUN_OK: '0' });
   ok(r.status === 1 && /^FAIL r\S+ on lender\/host/m.test(r.text) && /^::error title=host gate::.*FAIL gate: tests\/x-offline\.mjs/m.test(r.text), r.text);
   setState((x) => { delete x.ghRuns; });
+});
+
+await t('host ci, auto with the lab\'s App: a token minted on each LAB_HOSTS host the App is on (masked before workflow commands stop counting), each host asked with its own; one without the App on LAB_HOST_TOKEN; the App\'s key never reaches what it starts', async () => {
+  const fresh = (name) => { const d = path.join(tmp, name); fs.mkdirSync(d, { recursive: true }); return d; };
+  lender('friend/fork', { rules: { ...RULES, minutesPerMonth: 50000 } });
+  // (GitHub's App side, a process of its own: the App is on friend/fork alone — a token for it; anything else: 404)
+  const srv = spawn(process.execPath, ['-e', `
+    const http = require('node:http');
+    const s = http.createServer((q, r) => {
+      const send = (c, j) => { r.writeHead(c, { 'content-type': 'application/json' }); r.end(JSON.stringify(j)); };
+      if (q.method === 'GET' && q.url === '/repos/friend/fork/installation') return send(200, { id: 77 });
+      if (q.method === 'POST' && q.url === '/app/installations/77/access_tokens') return send(201, { token: 'ghs_appforktoken', expires_at: '2099-01-01T00:00:00Z', permissions: { contents: 'write' } });
+      send(404, { message: 'Not Found' });
+    }).listen(0, '127.0.0.1', () => console.log(s.address().port));`], { stdio: ['ignore', 'pipe', 'inherit'] });
+  try {
+    const port = await new Promise((res, rej) => { srv.stdout.once('data', (d) => res(String(d).trim())); srv.once('exit', () => rej(new Error('no server'))); });
+    const pem = crypto.generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs1', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } }).privateKey;
+    fs.writeFileSync(path.join(GHD, 'tokens.log'), '');
+    const r = host(['ci'], { LAB_HOST_CI: '1', LAB_HOST_STATE: fresh('ci-app'), GH_TOKEN: 'ghs_labhosttoken', HOST_ON: 'auto', LAB_HOSTS: 'lender/host friend/fork', HOST_JOB: 'sim', HOST_UNIT: 'jsonui_demo', HOST_WAIT: 'true', APP_ID: '4242', APP_PRIVATE_KEY: pem, GITHUB_API_URL: `http://127.0.0.1:${port}` });
+    const stop = /^::stop-commands::([0-9a-f]{16})$/m.exec(r.text)?.[1];
+    ok(r.status === 0 && /^PASS r\S+ on friend\/fork/m.test(r.text), `the fork lending the most was chosen and ran\n${r.text}`);
+    ok(r.text.indexOf('::add-mask::ghs_appforktoken') >= 0 && r.text.indexOf('::add-mask::ghs_appforktoken') < r.text.indexOf(`::stop-commands::${stop}`), `the App's token masked before workflow commands stop counting\n${r.text}`);
+    ok(/lender\/host: ラボの App のトークンはありません.*LAB_HOST_TOKEN で/.test(r.text), `a host without the App: said, on LAB_HOST_TOKEN\n${r.text}`);
+    const tl = fs.readFileSync(path.join(GHD, 'tokens.log'), 'utf8').split('\n').filter(Boolean);
+    const by = (re) => tl.filter((l) => re.test(l)).map((l) => l.split(' ')[0]);
+    ok(by(/friend\/fork/).length && by(/friend\/fork/).every((x) => x === 'ghs_appforktoken'), `every ask of friend/fork with its App token\n${tl.join('\n')}`);
+    ok(by(/lender\/host/).length && by(/lender\/host/).every((x) => x === 'ghs_labhosttoken'), `lender/host with LAB_HOST_TOKEN\n${tl.join('\n')}`);
+    ok(!tl.some((l) => / KEY /.test(l)), `the App's key reached nothing it started\n${tl.join('\n')}`);
+    // no LAB_HOST_TOKEN at all: the App's tokens are enough
+    const r2 = host(['ci'], { LAB_HOST_CI: '1', LAB_HOST_STATE: fresh('ci-app2'), HOST_ON: 'auto', LAB_HOSTS: 'friend/fork', HOST_JOB: 'sim', HOST_UNIT: 'jsonui_demo', HOST_WAIT: 'true', APP_ID: '4242', APP_PRIVATE_KEY: pem, GITHUB_API_URL: `http://127.0.0.1:${port}` });
+    ok(r2.status === 0 && /^PASS r\S+ on friend\/fork/m.test(r2.text), r2.text);
+  } finally { srv.kill(); }
 });
 
 fs.rmSync(tmp, { recursive: true, force: true });

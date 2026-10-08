@@ -49,14 +49,14 @@ export const cancelInvitation = (api, slug, id) => api.call('DELETE', `/repos/${
 /** the policy as a grid (pure): for each GitHub role, the actions it lists; confirm; idle minutes; audit */
 export function gridOf(policy = DEFAULT_POLICY) {
   const roles = Object.fromEntries(GITHUB_ROLES.map((r) => { const l = policy.roles?.[r] ?? []; return [r, l.includes('*') ? [...ACTIONS] : ACTIONS.filter((a) => l.includes(a))]; }));
-  return { roles, confirm: ACTIONS.filter((a) => (policy.confirm ?? []).includes(a) || (policy.confirm ?? []).includes('*')), idleMinutes: policy.idleMinutes ?? 0, audit: policy.audit ?? 'auto', teams: { ...(policy.teams ?? {}) }, extra: Object.fromEntries(Object.entries(policy.roles ?? {}).filter(([r]) => !GITHUB_ROLES.includes(r))) };
+  return { roles, confirm: ACTIONS.filter((a) => (policy.confirm ?? []).includes(a) || (policy.confirm ?? []).includes('*')), idleMinutes: policy.idleMinutes ?? 0, audit: policy.audit ?? 'auto', adminsLend: policy.adminsLend === true, teams: { ...(policy.teams ?? {}) }, extra: Object.fromEntries(Object.entries(policy.roles ?? {}).filter(([r]) => !GITHUB_ROLES.includes(r))) };
 }
 /** the grid → the policy file's JSON, checked (pure): { json, errors }. admin keeps everything (a lab never locks its
  *  administrators out); the roles named for teams are kept as they were */
 export function policyOf(grid) {
   const roles = { ...grid.extra };
   for (const r of GITHUB_ROLES) { const l = r === 'admin' ? ['*'] : ACTIONS.filter((a) => grid.roles[r]?.includes(a)); if (l.length) roles[r] = l; }
-  const json = { version: 1, roles, ...(Object.keys(grid.teams ?? {}).length ? { teams: grid.teams } : {}), confirm: ACTIONS.filter((a) => grid.confirm.includes(a)), idleMinutes: Math.max(0, Math.min(1440, Math.round(Number(grid.idleMinutes) || 0))), audit: grid.audit };
+  const json = { version: 1, roles, ...(Object.keys(grid.teams ?? {}).length ? { teams: grid.teams } : {}), confirm: ACTIONS.filter((a) => grid.confirm.includes(a)), idleMinutes: Math.max(0, Math.min(1440, Math.round(Number(grid.idleMinutes) || 0))), audit: grid.audit, ...(grid.adminsLend ? { adminsLend: true } : {}) };
   return { json, errors: checkPolicy(json).errors };
 }
 /** ready-made grids (the GitHub roles below admin; admin always has everything): the owner alone, writers who run, a

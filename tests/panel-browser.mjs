@@ -32,10 +32,16 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 // (and an organization's private lab with a policy: its admin signs in with GitHub — the sign-in service's tokens ghu_* —
 // and a writer comes with a token)
 const CORP = 'acme/corp-lab', ADMIN = { admin: true, push: true, pull: true };
+// (forks of the lab that lend: a stranger's, and an administrator's — each with the lab's workflows as a fork has them, its
+// say given to the lab's owner by an invitation the owner takes from their panel)
+const mkFork = (base) => ({ synced: [], toggled: [], invited: [], wfs: [{ id: base + 1, name: 'bds-lab host', path: '.github/workflows/host.yml', state: 'disabled_fork' }, { id: base + 2, name: 'verify', path: '.github/workflows/verify.yml', state: 'active' }] });
+const FORK = 'newlender/bds-lab', FORK2 = 'admin2/bds-lab', forkSide = mkFork(30), forkSide2 = mkFork(40), SIDES = { [FORK]: forkSide, [FORK2]: forkSide2 }, myInvites = [];
 const people = {
   'tok-author': { login: 'author1', repos: { [LAB]: { admin: true, push: true, pull: true }, [HOST]: { push: true, pull: true } } },
   'tok-stranger': { login: 'stranger', repos: { [LAB]: { pull: true } } },
+  'tok-newlender': { login: 'newlender', repos: { [LAB]: { pull: true }, [FORK]: { admin: true, push: true, pull: true }, 'someone/their-repo': { push: true, pull: true } } },
   'tok-lender': { login: 'lender1', repos: { [HOST]: { admin: true, push: true, pull: true } } },
+  'tok-admin2': { login: 'admin2', repos: { [LAB]: { ...ADMIN }, [FORK2]: { ...ADMIN } } },
   ghu_ceo1: { login: 'ceo1', repos: { [CORP]: ADMIN } }, ghu_ceo2: { login: 'ceo1', repos: { [CORP]: ADMIN } },
   'tok-writer': { login: 'writer1', repos: { [CORP]: { push: true, pull: true } } },
 };
@@ -44,10 +50,12 @@ const G = {
   files: { [`${LAB}:.github/workflows/app.yml`]: wf('app.yml'), [`${LAB}:.github/workflows/notify.yml`]: wf('notify.yml'), [`${LAB}:.github/workflows/secrets.yml`]: wf('secrets.yml'), [`${LAB}:.github/workflows/hostrun.yml`]: wf('hostrun.yml'),
     [`${HOST}:.lab-host.json`]: JSON.stringify({ lab: 1, minutesPerMonth: 600, jobs: ['gate', 'test'], hours: '00:00-24:00', timezone: 'UTC', until: '2099-12-31', contact: 'lender1' }, null, 2),
     [`${CORP}:.github/workflows/verify.yml`]: wf('verify.yml'), [`${CORP}:.github/workflows/notify.yml`]: wf('notify.yml'), [`${CORP}:.github/workflows/pages.yml`]: wf('pages.yml'), [`${CORP}:.github/workflows/auth-deploy.yml`]: wf('auth-deploy.yml'),
-    [`${CORP}:.github/bds-lab-panel.json`]: JSON.stringify(POLICY) },
+    [`${CORP}:.github/bds-lab-panel.json`]: JSON.stringify(POLICY),
+    // (this lab's administrators always lend; everything else as with no file)
+    [`${LAB}:.github/bds-lab-panel.json`]: JSON.stringify({ version: 1, adminsLend: true }) },
   // (the organization's lab: its own secrets, variables, Pages, issues; the App made from its manifest)
   corp: { secrets: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID']), vars: {}, pages: null, pagesPut: [], issues: [], comments: {}, labels: [], locks: [], manifests: [], conversions: [] },
-  members: [['author1', 'admin'], ['helper1', 'write']], invites: [], membersPut: [],
+  members: [['author1', 'admin'], ['helper1', 'write'], ['admin2', 'admin']], invites: [], membersPut: [], accepted: [],
   dispatched: [], secretsPut: [], filesPut: [], posted: [], secretNames: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID', 'GOOGLE_EMAIL']), vars: { LAB_NOTIFY: 'failures' }, varsPut: [],
   artifacts: [{ id: 31, name: 'bds-addons', size_in_bytes: 1_234_567, expired: false, created_at: iso(now - 3_000_000), workflow_run: { id: 100, head_branch: 'main' } },
     { id: 30, name: 'old-addons', size_in_bytes: 99, expired: true, created_at: iso(now - 90 * 86_400_000), workflow_run: { id: 90, head_branch: 'main' } }],
@@ -64,7 +72,7 @@ const runs = {
 };
 const jobs = { 100: [{ name: 'offline', status: 'completed', conclusion: 'failure', check_run_url: 'https://api.github.com/repos/author1/bds-lab/check-runs/55', html_url: 'https://github.com/x', steps: [{ name: 'checkout', status: 'completed', conclusion: 'success' }, { name: 'every offline test', status: 'completed', conclusion: 'failure' }] }],
   101: [{ name: 'device (1)', status: 'in_progress', steps: [{ name: 'checkout', status: 'completed' }, { name: '端末をそのまま調べる（hold）', status: 'in_progress' }] }] };
-const repoJson = (slug, perm) => ({ full_name: slug, permissions: perm, visibility: slug === LAB ? 'public' : 'private', default_branch: 'main', html_url: `https://github.com/${slug}`, fork: false, archived: false, owner: { login: slug.split('/')[0], type: slug === CORP ? 'Organization' : 'User' } });
+const repoJson = (slug, perm) => ({ full_name: slug, permissions: perm, visibility: slug === LAB || SIDES[slug] ? 'public' : 'private', private: !(slug === LAB || SIDES[slug]), default_branch: 'main', html_url: `https://github.com/${slug}`, fork: Boolean(SIDES[slug]), ...(SIDES[slug] ? { parent: { full_name: LAB } } : {}), archived: false, owner: { login: slug.split('/')[0], type: slug === CORP ? 'Organization' : 'User' } });
 // (a key's shape made at run time: the lab's own secret scan — share, host's pre-push — reads this file as it is)
 const PEM = `-----BEGIN RSA ${'PRIVATE'} KEY-----\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n-----END RSA ${'PRIVATE'} KEY-----\n`;
 
@@ -81,13 +89,21 @@ async function api(route) {
   if (/^\/orgs\/acme\/teams\/[^/]+\/memberships\//.test(p)) return send(404, { message: 'Not Found' });
   if (p === '/user') return send(200, { login: who.login, avatar_url: 'https://avatars.githubusercontent.com/u/1' });
   if (p === '/user/repos') return send(200, Object.entries(who.repos).map(([s, perm]) => repoJson(s, perm)));
+  // (invitations to this person: a fork's say, taken from the panel — then they write there)
+  if (p === '/user/repository_invitations') return send(200, myInvites.filter((i) => i.invitee === who.login));
+  const ia = /^\/user\/repository_invitations\/(\d+)$/.exec(p);
+  if (ia && req.method() === 'PATCH') { const i = myInvites.findIndex((x) => String(x.id) === ia[1] && x.invitee === who.login); if (i < 0) return send(404, { message: 'Not Found' }); const [inv] = myInvites.splice(i, 1); who.repos[inv.repository.full_name] = { push: true, pull: true }; G.accepted.push(inv.repository.full_name); return send(204, null); }
   if (/^\/users\/[^/]+$/.test(p)) return /ghost/.test(p) ? send(404, { message: 'Not Found' }) : send(200, { login: p.split('/').pop() });
   const m = /^\/repos\/([^/]+\/[^/]+)(\/.*)?$/.exec(p);
   if (!m) return send(404, { message: 'Not Found' });
-  const [, slug, rest = ''] = m, perm = who.repos[slug];
+  // (a fork of the public lab is public: anyone reads it, only its people write)
+  const [, slug, rest = ''] = m, perm = who.repos[slug] ?? (SIDES[slug] ? { pull: true } : undefined);
   if (!perm) return send(404, { message: 'Not Found' });
   const body = req.postData() ? JSON.parse(req.postData()) : null;
   if (rest === '') return send(200, repoJson(slug, perm));
+  if (rest.startsWith('/forks')) return send(200, slug === LAB ? [FORK2, FORK].map((f) => repoJson(f, who.repos[f] ?? { pull: true })) : []);
+  // (a fork's owner invites the lab's owner: an invitation on GitHub, theirs to take)
+  if (SIDES[slug] && rest.startsWith('/collaborators/') && req.method() === 'PUT') { if (!perm.admin) return send(403, { message: 'Must have admin rights' }); const name = decodeURIComponent(rest.split('/')[2]); SIDES[slug].invited.push(`${name}=${body.permission}`); myInvites.push({ id: 700 + myInvites.length, invitee: name, repository: { full_name: slug, name: slug.split('/')[1], fork: true }, inviter: { login: who.login } }); return send(201, { id: 700 }); }
   // (corpApi answers true once it has answered: route.fulfill itself resolves to nothing)
   if (slug === CORP && await corpApi(req, u, rest, body, who, perm, (...x) => send(...x).then(() => true))) return;
   if (rest.startsWith('/contents/')) {
@@ -107,6 +123,11 @@ async function api(route) {
   if (rest === '/actions/secrets') return perm.admin ? send(200, { secrets: [...G.secretNames].map((name) => ({ name, updated_at: iso(now - (name === 'GOOGLE_EMAIL' ? 400 : 1) * 86_400_000) })) }) : send(403, { message: 'Resource not accessible' });
   if (rest === '/actions/secrets/public-key') return send(200, { key_id: 'KID1', key: SEAL.toB64(PK) });
   if (rest.startsWith('/actions/secrets/') && req.method() === 'PUT') { const name = decodeURIComponent(rest.split('/').pop()); G.secretsPut.push({ name, body }); G.secretNames.add(name); return send(201, null); }
+  // (the lender's fork: behind the lab — no host.yml yet — until synced; the lab's workflows as a fork has them)
+  if (SIDES[slug] && rest === '/merge-upstream' && req.method() === 'POST') { if (!perm.push) return send(403, { message: 'Resource not accessible' }); SIDES[slug].synced.push(body.branch); G.files[`${slug}:.github/workflows/host.yml`] = fs.readFileSync(path.join(TOP, '.github/workflows/host.yml'), 'utf8'); return send(200, { merge_type: 'fast-forward' }); }
+  const tw = /^\/actions\/workflows\/(\d+)\/(enable|disable)$/.exec(rest);
+  if (SIDES[slug] && tw && req.method() === 'PUT') { if (!perm.push) return send(403, { message: 'Resource not accessible' }); SIDES[slug].toggled.push(`${tw[2]} ${tw[1]}`); SIDES[slug].wfs.find((w) => String(w.id) === tw[1]).state = tw[2] === 'enable' ? 'active' : 'disabled_manually'; return send(204, null); }
+  if (SIDES[slug] && rest.startsWith('/actions/workflows')) return send(200, { workflows: SIDES[slug].wfs });
   if (rest === '/actions/workflows') return send(200, { workflows: ['app', 'notify', 'secrets', 'verify', 'hostrun'].map((n, i) => ({ id: i + 1, name: n, path: `.github/workflows/${n}.yml`, state: 'active' })) });
   if (rest === '/actions/artifacts') return send(200, { artifacts: slug === LAB ? G.artifacts : [] });
   const am = /^\/actions\/runs\/(\d+)\/artifacts/.exec(rest); if (am) return send(200, { artifacts: slug === LAB ? G.artifacts.filter((a) => String(a.workflow_run.id) === am[1]) : [] });
@@ -235,13 +256,53 @@ let shots = 0;
 try {
   // a stranger: GitHub gives this token no write on the lab and no host
   await signIn('tok-stranger');
-  check(await waitText(/使えません/) && /書き込める人/.test(await text()) && !/進み具合/.test(await page.locator('body').innerText()), 'a token with no write and no host: locked out, no tabs', await text());
+  check(await waitText(/時間を貸す/) && /書き込める人/.test(await text()) && !/進み具合/.test(await page.locator('body').innerText()) && await page.locator('nav.tabs').count() === 0, 'a token with no write and no host: the lab shut, lending its only door, no tabs', await text());
+
+  // a stranger who lends: their own new repository made a host from the page — someone else's never — and then lending is
+  // all they have (no lab tabs)
+  await page.click('text=別のアカウントで入る');
+  await signIn('tok-newlender');
+  await waitText(/時間を貸す/);
+  await page.fill('#lend input[aria-label="フォーク"]', 'someone/their-repo');
+  await page.locator('#lend button', { hasText: 'フォークで貸す' }).click();
+  await page.waitForTimeout(500);
+  check(/フォークだけ/.test(await page.locator('#toast').innerText()) && !G.filesPut.some((f) => f.slug === 'someone/their-repo'), 'a repository that is not their fork of the lab is never made a host', await page.locator('#toast').innerText());
+  await page.fill('#lend input[aria-label="フォーク"]', FORK);
+  await page.fill('#lend input[aria-label="1 か月に貸す分"]', '300');
+  await page.locator('#lend button', { hasText: 'フォークで貸す' }).click();
+  await waitText(/貸す条件（あなたのホスト）/, 8000);
+  const made = G.filesPut.filter((f) => f.slug === FORK).map((f) => f.f);
+  const tabsNow = await page.locator('nav.tabs button').allInnerTexts();
+  check(JSON.stringify(forkSide.synced) === '["main"]' && JSON.stringify(made) === '[".lab-host.json"]' && JSON.parse(G.files[`${FORK}:.lab-host.json`]).minutesPerMonth === 300, 'their fork made a host: brought up to the lab (host.yml as the lab has it), their rules written — nothing else', JSON.stringify({ synced: forkSide.synced, made }));
+  check(JSON.stringify(forkSide.toggled) === JSON.stringify(['enable 31', 'disable 32']), 'only host.yml runs in their fork: the lab\'s own CI off there', JSON.stringify(forkSide.toggled));
+  check(JSON.stringify(tabsNow) === JSON.stringify(['概要', '貸し借り', '設定']) && /貸し手/.test(await text()) && /のフォーク/.test(await text()), 'then a lender: lending is all there is (no runs, secrets, members …)', JSON.stringify(tabsNow));
+  await page.locator('#who button', { hasText: '出る' }).click();
+
+  // an administrator of the lab but not its owner: the lab's policy says they always lend (adminsLend) — until they do, lending
+  // is all the panel offers them; then their fork lends always, its whole say given to the owner (invited), into LAB_HOSTS
+  await signIn('tok-admin2');
+  await waitText(/まず時間を貸します/, 8000);
+  check(await page.locator('#lend input[aria-label="1 か月に貸す分"]').isDisabled() && await page.locator('#lend input[aria-label="1 か月に貸す分"]').inputValue() === '50000' && await page.locator('#lend input[aria-label="許す: upkeep"]').isChecked(), 'always: every job, the most minutes, fixed', '');
+  await tab('設定');
+  check(/できること: なし/.test(await text()), 'an administrator who does not lend yet: nothing else offered', await text());
+  await tab('概要');
+  await page.locator('#lend button', { hasText: 'フォークで貸す' }).click();
+  await waitText(/いつも貸している（admin2\/bds-lab）/, 8000);
+  const al = JSON.parse(G.files[`${FORK2}:.lab-host.json`] ?? '{}');
+  check(al.minutesPerMonth === 50000 && al.hours === '00:00-24:00' && !al.until && al.jobs?.length === 7 && JSON.stringify(forkSide2.synced) === '["main"]' && JSON.stringify(forkSide2.toggled) === '["enable 41","disable 42"]', 'their fork lends always: every job, all day, no last day; host.yml alone runs there', JSON.stringify({ al, side: forkSide2 }));
+  check(JSON.stringify(forkSide2.invited) === '["author1=admin"]' && G.varsPut.includes('POST LAB_HOSTS=admin2/bds-lab'), 'its whole say given to the owner (invited) and into LAB_HOSTS', JSON.stringify({ invited: forkSide2.invited, vars: G.varsPut }));
+  await tab('設定');
+  check(/できること: ワークフローを始める/.test(await text()), 'lending: the administrator\'s powers back', await text());
+  await page.locator('#who button', { hasText: '出る' }).click();
 
   // the author
-  await page.click('text=別のアカウントで入る');
   await signIn('tok-author');
   check(await waitText(/管理者/) && await waitText(/✅ Discord の DM で端末を操作/) && /⚠️ 本物のアプリで確かめる/.test(await text()) && /GOOGLE_EMAIL・GOOGLE_AAS_TOKEN が要ります/.test(await text()), 'the author: admin; what their own secrets allow (Discord yes, the app lab not yet: what is missing said)', await text());
   check(await waitText(/動いている 1・失敗 1/), 'the overview counts the runs', await text());
+  // what needs doing now, the worst first: the invitations from the forks, a secret left for half a year, a lending fork not in LAB_HOSTS
+  await page.waitForFunction(() => !/見ています/.test(document.querySelector('#todo')?.innerText ?? '見ています'), null, { timeout: 8000 });
+  const todo = await page.locator('#todo').innerText();
+  check(/フォークからの招待が 2 件/.test(todo) && /180 日以上そのままの秘密: GOOGLE_EMAIL/.test(todo) && /LAB_HOSTS にないフォーク: newlender\/bds-lab/.test(todo) && todo.indexOf('招待') < todo.indexOf('LAB_HOSTS にない'), 'いまやること: each thing to do, the worst first', todo);
   check((await page.evaluate(() => JSON.stringify(localStorage))).includes('tok-author'), 'remembered in this browser (asked to)');
   check(await waitText(/ワークフローの調子/) && await page.locator('[data-health=".github/workflows/verify.yml"]', { hasText: '1 回続けて失敗' }).count() === 1, 'each workflow\'s health: verify failing in a row', await text());
   await page.keyboard.press('2');
@@ -281,6 +342,14 @@ try {
   await page.locator('button', { hasText: '操作する' }).click();
   check(await waitText(/封じられています/), 'without the vault key the reply is said to be sealed', await text());
   await tab('設定');
+  // debug: the last GitHub calls on this device, no token in them; an error on the page shown at once at the top
+  check(/GET \/repos\/author1\/bds-lab/.test(await page.locator('#debuglog').innerText()) && !/tok-author/.test(await page.locator('#debug').innerText()), 'the debug card: the last calls, never the token', await page.locator('#debug').innerText());
+  await page.evaluate(() => window.dispatchEvent(new ErrorEvent('error', { message: 'boom ghp_abcdefghijklmnop1234', filename: 'x/panel.js', lineno: 9 })));
+  check(await page.locator('#faults').innerText() === '⚠ 1', 'an error on the page: a mark at the top at once', await page.locator('#who').innerText());
+  await page.locator('#debug button', { hasText: '読み直す' }).click();
+  check(/boom \[消しました\] \(panel\.js:9\)/.test(await page.locator('#debuglog').innerText()), 'the error in the debug card, a token in it taken out', await page.locator('#debuglog').innerText());
+  await page.locator('#debug button', { hasText: '消す' }).click();
+  check(await page.locator('#faults').count() === 0, 'cleared: the mark gone');
   await page.locator('#tabbody input[type=password]').fill(VKEY);
   await page.locator('#tabbody button', { hasText: '保存' }).click();
   await waitText(/管理者/);
@@ -324,6 +393,15 @@ try {
   const hr = G.dispatched.find((x) => x.workflow === 'hostrun.yml');
   check(hr && hr.body.ref === 'main' && JSON.stringify(hr.body.inputs) === JSON.stringify({ host: HOST, job: 'test', unit: 'coins', wait: 'true' }), 'started on the lender\'s Actions: hostrun.yml with the host, the job, the unit', JSON.stringify(G.dispatched));
   await page.waitForTimeout(2600);
+  // the lenders the lab lists as one choice: hostrun's auto picks among LAB_HOSTS (the administrator's fork in it)
+  await tab('実行');
+  await page.locator('ul.targets input[value="auto"]').check();
+  await page.selectOption('#autohost #hjob', 'gate');
+  await page.locator('#autohost button', { hasText: '空いている貸し手で始める' }).click();
+  await page.waitForTimeout(800);
+  const ha = G.dispatched.filter((x) => x.workflow === 'hostrun.yml').pop();
+  check(ha && JSON.stringify(ha.body.inputs) === JSON.stringify({ host: 'auto', job: 'gate', unit: '', wait: 'true' }), 'started on whichever lender may take it (hostrun: auto)', JSON.stringify(G.dispatched));
+  await page.waitForTimeout(2600);
 
   // what the runs left: sent to Discord by notify (its files go along)
   await tab('成果物');
@@ -341,7 +419,7 @@ try {
   await page.selectOption('select[aria-label="LAB_NOTIFY_FILES"]', 'off');
   await page.locator('button', { hasText: '知らせ方を保存' }).click();
   await page.waitForTimeout(700);
-  check(JSON.stringify(G.varsPut) === JSON.stringify(['PATCH LAB_NOTIFY=all', 'POST LAB_NOTIFY_FILES=off']), 'saved as repository variables (made when missing)', JSON.stringify(G.varsPut));
+  check(JSON.stringify(G.varsPut.filter((x) => /LAB_NOTIFY/.test(x))) === JSON.stringify(['PATCH LAB_NOTIFY=all', 'POST LAB_NOTIFY_FILES=off']), 'saved as repository variables (made when missing)', JSON.stringify(G.varsPut));
   const putBefore = G.secretsPut.length;
   await page.locator('input[aria-label="DISCORD_USER_ID"]').fill('not-a-number');
   await page.locator('#tabbody li', { hasText: 'DISCORD_USER_ID' }).locator('button').click();
@@ -365,6 +443,23 @@ try {
   await page.locator('[data-preset="team"]').click();
   check(await page.locator('table input[aria-label="maintain: variables"]').isChecked() && !await page.locator('table input[aria-label="maintain: secrets.put"]').isChecked() && await page.locator('table input[aria-label="write: hostrun"]').isChecked() && !G.filesPut.some((f) => /bds-lab-panel/.test(JSON.stringify(f))), 'a ready-made grid in one tap, not saved until asked', JSON.stringify(G.filesPut));
   check(await page.locator('#tabbody button', { hasText: '🔗 アドレス' }).count() >= 1, 'an invitation\'s address to pass along');
+  // the owner: each administrator's lending in the members; the forks that lend, an invitation from one taken here, that fork
+  // brought up to the lab from here — and one whose say is not taken yet: said so, nothing done
+  await page.waitForSelector('[data-lending="admin2"]', { timeout: 8000 });
+  check(/いつも貸している（admin2\/bds-lab）/.test(await page.locator('[data-lending="admin2"]').innerText()), 'the members: an administrator lending always', await page.locator('[data-member="admin2"]').innerText());
+  await tab('貸し借り');
+  await page.waitForSelector(`#forks [data-fork="${FORK2}"]`, { timeout: 8000 });
+  const f2 = await page.locator(`#forks [data-fork="${FORK2}"]`).innerText(), f1 = await page.locator(`#forks [data-fork="${FORK}"]`).innerText();
+  check(/管理者/.test(f2) && /⏱ いつも/.test(f2) && /LAB_HOSTS/.test(f2) && /いつもではない/.test(f1) && !/管理者/.test(f1), 'the owner\'s forks: the administrator\'s always and in LAB_HOSTS; a stranger\'s as they chose', `${f2}\n${f1}`);
+  await page.locator(`#forks [data-invite="${FORK2}"] button`, { hasText: '受ける' }).click();
+  await page.waitForTimeout(800);
+  check(G.accepted.includes(FORK2) && await page.locator(`#forks [data-invite="${FORK2}"]`).count() === 0, 'the fork\'s invitation taken from the panel: its say held', JSON.stringify(G.accepted));
+  await page.locator(`#forks [data-fork="${FORK2}"] button`, { hasText: '合わせる' }).click();
+  await page.waitForTimeout(800);
+  check(forkSide2.synced.length === 2, 'the fork brought up to the lab from the owner\'s panel', JSON.stringify(forkSide2.synced));
+  await page.locator(`#forks [data-fork="${FORK}"] button`, { hasText: '合わせる' }).click();
+  await page.waitForTimeout(800);
+  check(/まだ預かっていません/.test(await page.locator('#toast').innerText()) && forkSide.synced.length === 1, 'a fork whose say is not taken yet: said so, nothing done', await page.locator('#toast').innerText());
   // the runs found as typed
   await tab('進み具合');
   await page.fill('input[aria-label="実行を探す"]', 'verify');

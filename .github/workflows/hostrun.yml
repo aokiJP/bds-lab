@@ -10,7 +10,9 @@ name: hostrun
 #   LAB_HOST_TOKEN   your own token that can push to the host and start its workflows — Classic: repo + workflow;
 #                    Fine-grained: the host's Contents, Actions and Workflows: Read and write (a fine-grained token reaches
 #                    only one owner's repositories: a host in another person's account takes a classic one)
-#   LAB_HOSTS        (a variable, for host: auto) the hosts to choose from, owner/repo separated by spaces or commas
+#   LAB_HOSTS        (a variable, for host: auto) the hosts to choose from, owner/repo separated by spaces or commas — the
+#                    management panel puts the lab's lending forks in it (an administrator's own, always); with host: auto
+#                    the App's token is made on each of them in turn (`host ci`), LAB_HOST_TOKEN for one without the App
 # (the title says where and what — and when it only started the job, so a green run is not read as the job's own result)
 run-name: "hostrun ${{ inputs.job }}${{ inputs.unit && format(' -a {0}', inputs.unit) || '' }} on ${{ inputs.host }}${{ !inputs.wait && '（始めただけ: 結果はホストで）' || '' }}"
 on:
@@ -57,6 +59,9 @@ jobs:
       - name: ホストで走らせる
         env:
           GH_TOKEN: ${{ env.APP_TOKEN || secrets.LAB_HOST_TOKEN }}
+          # (host: auto — the App's token is made per host inside, the key dropped from the process right after)
+          APP_ID: ${{ inputs.host == 'auto' && vars.APP_ID || '' }}
+          APP_PRIVATE_KEY: ${{ inputs.host == 'auto' && secrets.APP_PRIVATE_KEY || '' }}
           LAB_HOSTS: ${{ vars.LAB_HOSTS }}
           HOST_ON: ${{ inputs.host }}
           HOST_JOB: ${{ inputs.job }}

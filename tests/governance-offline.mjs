@@ -50,7 +50,10 @@ await t('the policy file checked: errors in words; a file that does not check ou
   }
   const { policy, errors } = P.checkPolicy({ version: 1, roles: { admin: ['*'], write: ['dispatch', 'dispatch', 'run.cancel'], auditor: ['audit.read'] }, teams: { auditors: 'auditor' }, confirm: ['run.cancel'], idleMinutes: 30, audit: 'issue' });
   eq(errors, []);
-  eq(policy, { version: 1, roles: { admin: ['*'], write: ['dispatch', 'run.cancel'], auditor: ['audit.read'] }, teams: { auditors: 'auditor' }, confirm: ['run.cancel'], idleMinutes: 30, audit: 'issue' });
+  eq(policy, { version: 1, roles: { admin: ['*'], write: ['dispatch', 'run.cancel'], auditor: ['audit.read'] }, teams: { auditors: 'auditor' }, confirm: ['run.cancel'], idleMinutes: 30, audit: 'issue', adminsLend: false });
+  // (adminsLend: the administrators always lend — a boolean, off unless the file says true)
+  eq([P.adminsLend(policy), P.adminsLend(P.checkPolicy({ adminsLend: true }).policy), P.adminsLend(P.DEFAULT_POLICY), P.adminsLend(P.LOCKED_POLICY)], [false, true, false, false]);
+  ok(P.checkPolicy({ adminsLend: 'yes' }).policy === P.LOCKED_POLICY && /adminsLend/.test(P.checkPolicy({ adminsLend: 'yes' }).errors.join()), 'adminsLend: true or false only');
   eq([allowed(policy, 'write'), allowed(policy, 'maintain'), allowed(policy, 'admin').length], [['dispatch', 'run.cancel'], [], P.ACTIONS.length], 'a role not listed may do nothing');
   eq([P.needsConfirm(policy, 'run.cancel'), P.needsConfirm(policy, 'secrets.delete'), P.idleMinutes(policy), P.auditMode(policy, 'public')], [true, false, 30, 'issue']);
   eq(P.checkPolicy({ teams: { ops: 'write' } }).policy.roles, P.DEFAULT_POLICY.roles, 'no roles: the default\'s, which a team may name');
