@@ -263,7 +263,7 @@ export function hostRunInputs({ host, job, unit = '', wait = true, rules }) {
 export const bestHost = (list) => [...list].filter((x) => x.now?.ok).sort((a, b) => b.now.remaining - a.now.remaining || a.slug.localeCompare(b.slug))[0] ?? null;
 
 // ---- the address: #<tab>, or #runs?repo=<owner/repo>&run=<id> (Discord's 「管理パネル」 button opens that run) ----
-export const TAB_KEYS = ['overview', 'runs', 'start', 'files', 'discord', 'secrets', 'live', 'hosts', 'members', 'setup', 'audit', 'settings'];
+export const TAB_KEYS = ['overview', 'runs', 'start', 'units', 'releases', 'files', 'schedule', 'stats', 'discord', 'secrets', 'live', 'hosts', 'members', 'setup', 'audit', 'settings'];
 /** runs narrowed (pure): q in the name, title, branch or who started it; show: all · failed · going · mine (me: the login) */
 export function filterRuns(rs, { q = '', show = 'all', me = '' } = {}) {
   const w = String(q).trim().toLowerCase();

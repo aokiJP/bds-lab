@@ -18,15 +18,22 @@ const RULES = [
   [/^panel\/(lib|ui)\/setup\.mjs$/, ['tests/setup-offline.mjs']],
   [/^panel\/(lib\/session|ui\/signin)\.mjs$/, ['tests/session-offline.mjs']],
   [/^panel\//, ['tests/panel-offline.mjs', BROWSER]],
+  // (the tabs of a lane each: their own test — and any of the panel's libraries or views, which they read, runs all four: they
+  // take a moment)
+  [/^panel\/(lib|ui)\/|^common\/unitci\.mjs$/, ['tests/units-offline.mjs']],
+  [/^panel\/(lib|ui)\/|^common\/schedule\.mjs$/, ['tests/schedule-offline.mjs']],
+  [/^panel\/(lib|ui)\//, ['tests/stats-offline.mjs']],
+  [/^panel\/(lib|ui)\/|^panel\/sw\.js$/, ['tests/inbox-offline.mjs']],
   [/^host\/template\//, ['tests/panel-offline.mjs']],
   [/^auth\//, ['tests/auth-offline.mjs', BROWSER]],
   [/^common\/(panel-config|ghapp)\.mjs$/, ['tests/appci-offline.mjs', 'tests/panel-offline.mjs']],
   [/^common\/panel\.mjs$/, ['tests/panel-offline.mjs']],
   [/^app\/(app\.mjs|lib\/runfiles\.mjs)$/, ['tests/panel-offline.mjs']],
-  [/^tests\/(panel-offline|panel-browser|governance-offline|setup-offline|session-offline|auth-offline|appci-offline)\.mjs$/, (f) => [f]],
+  [/^tests\/(panel-offline|panel-browser|governance-offline|setup-offline|session-offline|auth-offline|appci-offline|units-offline|schedule-offline|stats-offline|inbox-offline)\.mjs$/, (f) => [f]],
 ];
-export const ALL = ['tests/panel-offline.mjs', 'tests/governance-offline.mjs', 'tests/setup-offline.mjs', 'tests/session-offline.mjs', 'tests/auth-offline.mjs', 'tests/appci-offline.mjs', BROWSER];
-const LINTABLE = /^(panel|auth)\/.*\.(m?js)$|^common\/(panel|panel-config|ghapp|hosts)\.mjs$|^tests\/(panel|governance|setup|session|auth|appci|host)-[a-z]+\.mjs$/;
+export const ALL = ['tests/panel-offline.mjs', 'tests/governance-offline.mjs', 'tests/setup-offline.mjs', 'tests/session-offline.mjs', 'tests/auth-offline.mjs', 'tests/appci-offline.mjs',
+  'tests/units-offline.mjs', 'tests/schedule-offline.mjs', 'tests/stats-offline.mjs', 'tests/inbox-offline.mjs', BROWSER];
+const LINTABLE = /^(panel|auth)\/.*\.(m?js)$|^common\/(panel|panel-config|ghapp|hosts|schedule|unitci)\.mjs$|^tests\/(panel|governance|setup|session|auth|appci|host|units|schedule|stats|inbox)-[a-z]+\.mjs$/;
 
 /** the changed files → { lint: [files], tests: [files] } (pure); quick leaves the browser out */
 export function plan(files, { quick = false } = {}) {

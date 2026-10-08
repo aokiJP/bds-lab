@@ -4,6 +4,28 @@
 **app ラボを「ほぼクライアント」に: 本物のアプリをコントローラーで人のように遊べる（歩く・見回す・跳ぶ・壊す・置く・持ち物・チャット…）。
 スマホの Discord から CI の端末を画面とボタンで動かせ、リポジトリの秘密も Discord のフォームで登録できる（node も PC も要らない）。**
 
+### 管理パネル: 今の約 2 倍に — git clone も PC もなしで、作る・取り込む・直す・試験・仕上げ・配る・予約・統計・お知らせ
+- 🧩 **アドオン**（`lib/units.mjs`・`lib/workspace.mjs`・`ui/units.mjs`・`ui/workspace.mjs`）: ラボのユニットを GitHub から一覧（題・説明・
+  版・試験の数・最新の .mcaddon）。新しく作る・人のアドオンを取り込む（専用の枝 `lab-incoming/…` に置き、既定の枝の履歴に残さない）・
+  ファイルを直す（sha つきの commit）・試験・仕上げ・AI で変える。GitHub の Actions の `unit.yml` → `node lab.mjs unitci`
+  （`common/unitci.mjs`: パネルと同じ検査、引数で渡してシェルを通さない、結果はまとめ・注釈・出力に）。
+- 📦 **配布**（`lib/releases.mjs`・`ui/releases.mjs`）: リリースのファイル・大きさ・ダウンロードの数・合計、リンクを写す、Discord に知らせる。
+- ⏰ **予約**（`lib/schedule.mjs`・`ui/schedule.mjs`・`common/schedule.mjs`）: 何時間ごと・毎日・毎週（時間帯つき）にワークフローを自動で。
+  `.github/bds-lab-schedule.json` に書き、毎時の `schedule.yml` が `node lab.mjs schedule ci` で始める（手で始めると `--dry`）。
+- 📊 **統計**（`lib/stats.mjs`・`ui/stats.mjs`）: 実行の数・通った割合・時間・曜日×時間・貸し手の分を、自前の SVG のグラフと「数字で見る」表で。
+- 🩺 **健康度と報告書**（`lib/health.mjs`・`ui/health.mjs`）: 「概要」にラボの健康度（0〜100・A〜E と直すと上がる 3 つ）、会社向けの報告書（Markdown）。
+- 🔔 **お知らせ・本物の通知・オフライン**（`lib/inbox.mjs`・`ui/inbox.mjs`・`sw.js`）: 開いていなかった間のことを 🔔 に（アカウントと
+  ラボごと、サインアウトで消える）。service worker でスマホにも通知（2 件以上は 1 通）、押すとそのタブと実行へ（`hashchange`）。
+  一度開いたパネルはネットなしでも開ける（自分のファイルだけを版ごとに。GitHub の答えとトークンは持たない）。
+- 📥 **秘密をまとめて**（`lib/bulk.mjs`・`ui/bulk.mjs`）: .env を貼ると名前だけ確かめ、1 つずつ封じて登録（値は表示も保存もしない）。
+- 🔎「やりたいこと」・タブの説明・ことばに、新しいタブ（アドオン・配布・予約・統計）と健康度・まとめて登録・お知らせ。
+- `panel check` が新しい部品の試験（units・schedule・stats・inbox の `*-offline`）も走らせる。本物のブラウザの試験に、新しいタブと
+  ネットなしで開くことを足した。
+- 4 つのレーンを並行で作り（fanout）、確認のレーンの指摘（取り込みの名前・別のユニットのリリース・CRLF・service worker が README を
+  パネルとして持つ・予約が読めないとき）を直してから統合。
+- CI: verify の「test and pack every addon」で落ちたアドオンを注釈（`::error title=addon <名前>`）に、最後の 30 行と一緒に出す
+  （ログを開けないときも、どのアドオンのどの行かが分かる）。
+
 ### 管理パネル: はじめての人にも・アイデアから作る・会社で使う
 - 🔎 **やりたいこと**（Ctrl/⌘+K・?・右上の 🔎）: 自分の言葉（ひらがな・言い方の違いも）→ その場所へ、ことばの意味も（`lib/guide.mjs` `findIntents` `findTerms`）。
 - **はじめてのガイド**（役割ごと: 持ち主・管理者・書く人・貸し手・知らない人）、どのタブも「？ できること」（初めて開いたときだけ開く）、📖 ことばの意味。

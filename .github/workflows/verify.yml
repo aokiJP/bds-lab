@@ -84,12 +84,20 @@ jobs:
       - run: node ../tests/dev-bds.mjs
       # the server's side of the app lab's game verbs (where, items, face, lookat: their very js) with a real client joined
       - run: node ../tests/play-bds.mjs
+      # (an addon whose tests fail is also an annotation: which addon, and the last lines it printed — readable on the run's
+      # page and through the API where the log is not)
       - name: test and pack every addon
         run: |
-          set -e
+          set -eo pipefail
           for d in addons/*/; do
             a=$(basename "$d"); [ -f "addons/$a/bp/manifest.json" ] || continue
-            echo "::group::$a"; node lab.mjs test -a "$a"; node lab.mjs pack -a "$a"; echo "::endgroup::"
+            echo "::group::$a"
+            if ! node lab.mjs test -a "$a" 2>&1 | tee "$RUNNER_TEMP/addon.log"; then
+              echo "::endgroup::"
+              echo "::error title=addon $a::$(tail -n 30 "$RUNNER_TEMP/addon.log" | sed 's/%/%25/g; s/\r/%0D/g' | sed ':a;N;$!ba;s/\n/%0A/g')"
+              exit 1
+            fi
+            node lab.mjs pack -a "$a"; echo "::endgroup::"
           done
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

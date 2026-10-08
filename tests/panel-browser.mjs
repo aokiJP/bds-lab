@@ -52,11 +52,23 @@ const G = {
     [`${CORP}:.github/workflows/verify.yml`]: wf('verify.yml'), [`${CORP}:.github/workflows/notify.yml`]: wf('notify.yml'), [`${CORP}:.github/workflows/pages.yml`]: wf('pages.yml'), [`${CORP}:.github/workflows/auth-deploy.yml`]: wf('auth-deploy.yml'),
     [`${CORP}:.github/bds-lab-panel.json`]: JSON.stringify(POLICY),
     // (this lab's administrators always lend; everything else as with no file)
-    [`${LAB}:.github/bds-lab-panel.json`]: JSON.stringify({ version: 1, adminsLend: true }) },
+    [`${LAB}:.github/bds-lab-panel.json`]: JSON.stringify({ version: 1, adminsLend: true }),
+    // (a unit of the lab: its manifest, task, tests and code — 「アドオン」 reads them; unit.yml and schedule.yml as the lab has them)
+    [`${LAB}:bds/addons/coins/bp/manifest.json`]: JSON.stringify({ format_version: 2, header: { name: 'Coins Shop', description: 'Coins from mobs, spent at a shop', uuid: '0f6c1b7e-0000-4000-8000-000000000001', version: [1, 2, 0], min_engine_version: [1, 21, 0] },
+      modules: [{ type: 'script', language: 'javascript', entry: 'scripts/main.js', uuid: '0f6c1b7e-0000-4000-8000-000000000002', version: [1, 2, 0] }] }),
+    [`${LAB}:bds/addons/coins/TASK.md`]: '# Coins Shop\n\nCoins drop from mobs; a shop sells for them.\n',
+    [`${LAB}:bds/addons/coins/tests.txt`]: '## a coin\n@A join\n\n## the shop\n@A cmd /lab:shop\n',
+    [`${LAB}:bds/addons/coins/src/main.ts`]: "import { world } from '@minecraft/server';\nworld.afterEvents.playerSpawn.subscribe(() => {});\n",
+    [`${LAB}:.github/workflows/unit.yml`]: wf('unit.yml'), [`${LAB}:.github/workflows/schedule.yml`]: wf('schedule.yml') },
+  // (folders as the contents API lists them: a unit, and one the panel leaves out — _template)
+  dirs: { [`${LAB}:bds/addons`]: [{ name: 'coins', type: 'dir', path: 'bds/addons/coins' }, { name: '_template', type: 'dir', path: 'bds/addons/_template' }, { name: 'README.md', type: 'file', path: 'bds/addons/README.md' }],
+    [`${LAB}:bds/addons/coins`]: [{ name: 'bp', type: 'dir' }, { name: 'src', type: 'dir' }, { name: 'tests.txt', type: 'file' }, { name: 'TASK.md', type: 'file' }] },
+  releases: [{ id: 1, tag_name: 'addon-coins-v1.2.0', name: 'Coins v1.2.0', draft: false, prerelease: false, published_at: iso(now - 86_400_000), created_at: iso(now - 86_400_000), html_url: `https://github.com/${LAB}/releases/tag/addon-coins-v1.2.0`,
+    assets: [{ id: 5, name: 'Coins.mcaddon', size: 12_345, download_count: 7, browser_download_url: `https://github.com/${LAB}/releases/download/addon-coins-v1.2.0/Coins.mcaddon` }] }],
   // (the organization's lab: its own secrets, variables, Pages, issues; the App made from its manifest)
   corp: { secrets: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID']), vars: {}, pages: null, pagesPut: [], issues: [], comments: {}, labels: [], locks: [], manifests: [], conversions: [] },
   joinIssues: [], members: [['author1', 'admin'], ['helper1', 'write'], ['admin2', 'admin']], invites: [], membersPut: [], accepted: [],
-  dispatched: [], secretsPut: [], filesPut: [], posted: [], secretNames: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID', 'GOOGLE_EMAIL', 'ANTHROPIC_API_KEY']), vars: { LAB_NOTIFY: 'failures' }, varsPut: [],
+  dispatched: [], secretsPut: [], filesPut: [], refsMade: [], posted: [], secretNames: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID', 'GOOGLE_EMAIL', 'ANTHROPIC_API_KEY']), vars: { LAB_NOTIFY: 'failures' }, varsPut: [],
   artifacts: [{ id: 31, name: 'bds-addons', size_in_bytes: 1_234_567, expired: false, created_at: iso(now - 3_000_000), workflow_run: { id: 100, head_branch: 'main' } },
     { id: 30, name: 'old-addons', size_in_bytes: 99, expired: true, created_at: iso(now - 90 * 86_400_000), workflow_run: { id: 90, head_branch: 'main' } }],
   comments: [{ id: 900, body: 'lab-live@101 待っています（60 分まで。端末: スナップショットから起動しました）', created_at: iso(now - 60_000), user: { login: 'github-actions[bot]' } },
@@ -108,8 +120,9 @@ async function api(route) {
   if (slug === CORP && await corpApi(req, u, rest, body, who, perm, (...x) => send(...x).then(() => true))) return;
   if (rest.startsWith('/contents/')) {
     const f = decodeURIComponent(rest.slice('/contents/'.length)), key = `${slug}:${f}`;
-    if (req.method() === 'PUT') { if (!perm.push) return send(403, { message: 'no' }); G.filesPut.push({ slug, f, body }); G.files[key] = Buffer.from(body.content, 'base64').toString('utf8'); return send(200, {}); }
-    return G.files[key] !== undefined ? send(200, { content: Buffer.from(G.files[key]).toString('base64'), sha: 'sha-' + key.length }) : send(404, { message: 'Not Found' });
+    if (req.method() === 'PUT') { if (!perm.push) return send(403, { message: 'no' }); G.filesPut.push({ slug, f, body }); G.files[key] = Buffer.from(body.content, 'base64').toString('utf8'); return send(200, { content: { sha: `sha-put-${G.filesPut.length}` }, commit: { html_url: `https://github.com/${slug}/commit/put${G.filesPut.length}` } }); }
+    if (G.dirs[key]) return send(200, G.dirs[key]);
+    return G.files[key] !== undefined ? send(200, { type: 'file', encoding: 'base64', name: f.split('/').pop(), path: f, size: Buffer.byteLength(G.files[key]), content: Buffer.from(G.files[key]).toString('base64'), sha: 'sha-' + key.length }) : send(404, { message: 'Not Found' });
   }
   // (the lab's people: the owner, a writer, an invitation; invited, changed, removed)
   if (rest.startsWith('/collaborators') || rest.startsWith('/invitations')) {
@@ -130,7 +143,11 @@ async function api(route) {
   if (SIDES[slug] && rest.startsWith('/actions/workflows')) return send(200, { workflows: SIDES[slug].wfs });
   // (who changed the policy file: its commits)
   if (rest.startsWith('/commits') && /path=/.test(u.search)) return send(200, [{ html_url: `https://github.com/${slug}/commit/abc`, commit: { message: 'panel: 役割（ポリシー）を変える', author: { date: iso(now), name: 'author1' } }, author: { login: 'author1' } }]);
-  if (rest === '/actions/workflows') return send(200, { workflows: ['app', 'notify', 'secrets', 'verify', 'hostrun', 'ai-make'].map((n, i) => ({ id: i + 1, name: n, path: `.github/workflows/${n}.yml`, state: 'active' })) });
+  if (rest === '/actions/workflows') return send(200, { workflows: ['app', 'notify', 'secrets', 'verify', 'hostrun', 'ai-make', 'unit', 'schedule'].map((n, i) => ({ id: i + 1, name: n, path: `.github/workflows/${n}.yml`, state: 'active' })) });
+  if (rest.startsWith('/releases')) return send(200, slug === LAB ? G.releases : []);
+  // (a branch of its own for a pack taken in: the default branch's head read, a ref made from it)
+  if (rest === '/git/ref/heads/main') return send(200, { ref: 'refs/heads/main', object: { sha: 'f'.repeat(40), type: 'commit' } });
+  if (rest === '/git/refs' && req.method() === 'POST') { if (!perm.push) return send(403, { message: 'no' }); G.refsMade.push(body); return send(201, { ref: body.ref, object: { sha: body.sha } }); }
   if (rest === '/actions/artifacts') return send(200, { artifacts: slug === LAB ? G.artifacts : [] });
   const am = /^\/actions\/runs\/(\d+)\/artifacts/.exec(rest); if (am) return send(200, { artifacts: slug === LAB ? G.artifacts.filter((a) => String(a.workflow_run.id) === am[1]) : [] });
   const vm = /^\/actions\/variables(?:\/([A-Z_]+))?$/.exec(rest);
@@ -204,6 +221,10 @@ const { srv, url: URL0 } = await serve(path.join(TOP, 'panel'));
 const AUTH = 'https://auth.bdslab.test', BUILT = fs.mkdtempSync(path.join(os.tmpdir(), 'bds-lab-panel-built-'));
 (await imp('common/panel-config.mjs')).buildPages(BUILT, { LAB_AUTH_URL: AUTH, APP_CLIENT_ID: 'Iv1.labapp' });
 const { srv: srv2, url: URL2 } = await serve(BUILT);
+// (and as pages.yml builds it from a commit: config.json's version names the service worker's cache)
+const BUILT3 = fs.mkdtempSync(path.join(os.tmpdir(), 'bds-lab-panel-versioned-'));
+(await imp('common/panel-config.mjs')).buildPages(BUILT3, { GITHUB_SHA: 'ab'.repeat(20) });
+const { srv: srv3, url: URL3 } = await serve(BUILT3);
 // (the real sign-in service, auth/handler.mjs, answering at AUTH — GitHub's side of it a fake: the code and the refresh
 // token exchanged, a token revoked)
 const OA = { authorize: [], exchanges: [], revoked: [] }, CID = 'Iv1.labapp', CSECRET = 'app-client-secret-xyz';
@@ -460,6 +481,128 @@ try {
   await page.waitForTimeout(500);
   check(G.dispatched.some((x) => x.workflow === 'notify.yml' && x.body.inputs.run === '' && /管理パネルから試しに送りました/.test(x.body.inputs.message)), 'a test message through notify', JSON.stringify(G.dispatched));
 
+  // 「アドオン」: the lab's units as GitHub has them (manifest, TASK.md, tests.txt, the newest .mcaddon of its releases); a test
+  // started on the lab's Actions (unit.yml), then to 「進み具合」; a file changed with the sha it was read with; a name taken
+  // refused before GitHub is asked; a new one made; a person's addon put in incoming/ and taken in — no computer of one's own
+  await tab('アドオン');
+  check(await waitText(/Coins Shop/) && /v1\.2\.0/.test(await text()) && /試験 2/.test(await text()) && /Coins\.mcaddon/.test(await text()) && !/_template/.test(await text()),
+    'アドオン: each unit as GitHub has it (manifest, TASK.md, tests.txt) with its newest .mcaddon; _template left out', await text());
+  let d0 = G.dispatched.length;
+  await page.locator('[data-unit="bds/coins"] button', { hasText: '試験' }).click();
+  await page.waitForTimeout(600);
+  const ut = G.dispatched.slice(d0).find((x) => x.workflow === 'unit.yml');
+  check(ut && ut.body.ref === 'main' && ut.body.inputs.job === 'test' && ut.body.inputs.unit === 'coins', 'a unit tested on the lab\'s own Actions: unit.yml, job test, the default branch', JSON.stringify(G.dispatched.slice(d0)));
+  await page.waitForTimeout(2600);
+  check((await page.locator('nav.tabs button.on').innerText()) === '進み具合', 'then 「進み具合」, where it runs', await page.locator('nav.tabs button.on').innerText());
+  await tab('アドオン');
+  await waitText(/Coins Shop/);
+  await page.locator('[data-unit="bds/coins"] button', { hasText: 'ファイルを直す' }).click();
+  await page.waitForFunction(() => /playerSpawn/.test(document.querySelector('#edit-text')?.value ?? ''), null, { timeout: 5000 }).catch(() => {});
+  check(/playerSpawn/.test(await page.locator('#edit-text').inputValue()), 'ファイルを直す: src/main.ts as it is on GitHub', await page.locator('#editor').innerText().catch(() => ''));
+  await page.fill('#edit-text', "import { world } from '@minecraft/server';\n// changed in the panel\n");
+  let p0 = G.filesPut.length;
+  await page.locator('#editor button', { hasText: /^保存$/ }).click();
+  await page.waitForTimeout(700);
+  const fp = G.filesPut.slice(p0).find((x) => x.f === 'bds/addons/coins/src/main.ts');
+  check(fp && fp.slug === LAB && fp.body.sha === `sha-${`${LAB}:bds/addons/coins/src/main.ts`.length}` && /changed in the panel/.test(Buffer.from(fp.body.content, 'base64').toString('utf8')),
+    'saved as a commit on the default branch, with the sha it was read with (never over another\'s change)', JSON.stringify(G.filesPut.slice(p0).map((x) => ({ f: x.f, sha: x.body.sha }))));
+  await page.locator('#newunit summary').click();
+  await page.fill('#newunit-name', 'coins');
+  d0 = G.dispatched.length;
+  await page.locator('#newunit button', { hasText: /^作る$/ }).click();
+  await page.waitForTimeout(500);
+  check(/bds\/addons\/coins はもうあります/.test(await page.locator('#toast').innerText()) && G.dispatched.length === d0, 'a new unit with a name taken: refused before GitHub is asked to make it', await page.locator('#toast').innerText());
+  await page.fill('#newunit-name', 'ruby_sword');
+  await page.fill('#newunit-title', 'Ruby Sword');
+  await page.fill('#newunit-request', '右クリックで雷が落ちる剣');
+  await page.locator('#newunit button', { hasText: /^作る$/ }).click();
+  await page.waitForTimeout(600);
+  const un = G.dispatched.slice(d0).find((x) => x.workflow === 'unit.yml');
+  check(un && un.body.inputs.job === 'new' && un.body.inputs.unit === 'ruby_sword' && un.body.inputs.title === 'Ruby Sword' && /雷/.test(un.body.inputs.request), 'a new unit made by unit.yml (job new): its name, title and what it does', JSON.stringify(un));
+  await page.waitForTimeout(2600);
+  await tab('アドオン');
+  await waitText(/Coins Shop/);
+  await page.locator('#importunit summary').click();
+  const pack = Buffer.from('PK\x03\x04 a person\'s addon');
+  await page.setInputFiles('#import-file', { name: 'My Shop (v2).mcaddon', mimeType: 'application/octet-stream', buffer: pack });
+  await page.fill('#import-words', '値段を半分にしてほしい');
+  p0 = G.filesPut.length; d0 = G.dispatched.length;
+  await page.locator('#importunit button', { hasText: /^取り込む$/ }).click();
+  await page.waitForTimeout(900);
+  const inc = G.filesPut.slice(p0).find((x) => /^incoming\//.test(x.f)), im = G.dispatched.slice(d0).find((x) => x.workflow === 'unit.yml'), ref = G.refsMade.at(-1);
+  check(inc && /^incoming\/[A-Za-z0-9._-]+\.mcaddon$/.test(inc.f) && Buffer.from(inc.body.content, 'base64').equals(pack) && inc.body.branch === `lab-incoming/${inc.f.slice('incoming/'.length)}` && ref?.ref === `refs/heads/${inc.body.branch}` && ref.sha === 'f'.repeat(40)
+    && im && im.body.ref === 'main' && im.body.inputs.job === 'import' && im.body.inputs.file === inc.f && /^[a-z][a-z0-9_]{1,39}$/.test(im.body.inputs.unit) && im.body.inputs.words === '値段を半分にしてほしい',
+    'a person\'s addon: on a branch of its own (never the default branch\'s history) under a safe name, the bytes as they were; then unit.yml (job import) with a unit name and their words', JSON.stringify({ put: inc?.f, branch: inc?.body.branch, ref, run: im?.body }));
+  await page.waitForTimeout(2600);
+
+  // 「配布」: the lab's releases — each file's size and downloads, the totals — and a word to Discord through notify.yml
+  await tab('配布');
+  check(await waitText(/Coins v1\.2\.0/) && /Coins\.mcaddon 12 KB・7 回/.test(await text()) && /ダウンロード 7 回/.test(await text()), '配布: each release\'s files, their size and downloads; the totals', await text());
+  d0 = G.dispatched.length;
+  await page.locator('[data-release="addon-coins-v1.2.0"] button', { hasText: 'Discord に知らせる' }).click();
+  await page.waitForTimeout(600);
+  const rn = G.dispatched.slice(d0).find((x) => x.workflow === 'notify.yml');
+  check(rn && rn.body.inputs.run === '' && /Coins v1\.2\.0/.test(rn.body.inputs.message) && /releases/.test(rn.body.inputs.message), 'a release told on Discord: notify.yml with its name and link', JSON.stringify(rn));
+
+  // 「予約」: a job at a set time — the workflow's own inputs (read from its file), said in words, kept in
+  // .github/bds-lab-schedule.json on the default branch (schedule.yml starts it each hour)
+  await tab('予約');
+  check(await waitText(/まだ予約はありません/), '予約: none yet', await text());
+  await page.locator('#schedule button', { hasText: '予約を足す' }).click();
+  await page.waitForSelector('#scheduleform');
+  await page.selectOption('#scheduleform select[aria-label="ワークフロー"]', 'unit.yml');
+  await page.waitForSelector('#scheduleform select[aria-label="job"]', { timeout: 5000 }).catch(() => {});
+  await page.selectOption('#scheduleform select[aria-label="job"]', 'test');
+  await page.fill('#scheduleform input[aria-label="unit"]', 'coins');
+  await page.selectOption('#scheduleform select[aria-label="時刻"]', '03:00');
+  await page.fill('#scheduleform input[aria-label="時間帯"]', 'Asia/Tokyo');
+  p0 = G.filesPut.length;
+  await page.locator('#scheduleform button', { hasText: '予約する' }).click();
+  await page.waitForTimeout(800);
+  const sput = G.filesPut.slice(p0).find((x) => x.f === '.github/bds-lab-schedule.json'), sj = sput ? JSON.parse(Buffer.from(sput.body.content, 'base64').toString('utf8')) : null, sjob = sj?.jobs?.[0];
+  check(sjob && sjob.workflow === 'unit.yml' && sjob.inputs.job === 'test' && sjob.inputs.unit === 'coins' && sjob.every === 'day' && sjob.at === '03:00' && sjob.timezone === 'Asia/Tokyo' && sjob.enabled === true && !sput.body.sha,
+    'a job kept in .github/bds-lab-schedule.json: the workflow, its inputs, when, the time zone (a new file: no sha)', JSON.stringify(sj));
+  check(await waitText(/毎日 03:00（Asia\/Tokyo）/) && /次: /.test(await text()), 'said in words, with when it runs next', await text());
+
+  // 「統計」: the runs as charts (inline SVG, no library), each with its numbers as a table; the period changed in place
+  await tab('統計');
+  check(await waitText(/この 30 日/) && await page.locator('#tabbody svg').count() >= 2 && /数字で見る/.test(await text()) && /verify/.test(await text()), '統計: charts drawn in the page, each with its numbers; the workflows', await text());
+  await page.locator('#tabbody button[data-days="7"]').click();
+  check(await waitText(/この 7 日/), 'the period: 7 days, without reading again', await text());
+
+  // 「概要」: the lab's health in points and a letter, what would raise it (each a tap to its tab), the report as a file made here
+  await tab('概要');
+  await page.waitForFunction(() => /評価 [A-E]|まだ測れません/.test(document.querySelector('#labhealth')?.innerText ?? ''), null, { timeout: 10_000 }).catch(() => {});
+  check(/評価 [A-E]|まだ測れません/.test(await page.locator('#labhealth').innerText()) && /数字で見る/.test(await page.locator('#labhealth').innerText()), 'the lab\'s health: points, a letter, what raises it, the numbers behind it', await page.locator('#labhealth').innerText().catch(() => ''));
+  await page.locator('#healthreport button', { hasText: '報告書を作る' }).click();
+  await page.waitForSelector('#healthreport a[download]', { timeout: 10_000 }).catch(() => {});
+  check(/^blob:/.test(await page.locator('#healthreport a[download]').getAttribute('href').catch(() => '')) && /\.md$/.test(await page.locator('#healthreport a[download]').getAttribute('download').catch(() => '')),
+    'the report for a company: a Markdown file made in this page (a blob: link, sent nowhere)', await page.locator('#healthreport').innerText().catch(() => ''));
+
+  // 「秘密」: many at once from a .env — the names shown, never the values; each sealed and sent; the box emptied
+  await tab('秘密');
+  await page.fill('#bulk textarea', 'export BULK_ONE=first-value\nBULK_TWO="second value"\n# a comment\n');
+  await page.waitForFunction(() => /BULK_TWO/.test(document.querySelector('#bulknames')?.innerText ?? ''), null, { timeout: 3000 }).catch(() => {});
+  check(/BULK_ONE/.test(await page.locator('#bulk').innerText()) && /BULK_TWO/.test(await page.locator('#bulk').innerText()) && !/first-value|second value/.test(await page.locator('#bulk').innerText()), 'a .env pasted: its names, never its values', await page.locator('#bulk').innerText());
+  const sb = G.secretsPut.length;
+  await page.locator('#bulkgo').click();
+  await page.waitForTimeout(1200);
+  const bulkPut = G.secretsPut.slice(sb);
+  check(JSON.stringify(bulkPut.map((x) => x.name)) === JSON.stringify(['BULK_ONE', 'BULK_TWO']) && bulkPut.every((x) => x.body.encrypted_value && !/first-value|second value/.test(JSON.stringify(x.body))) && (await page.locator('#bulk textarea').inputValue()) === '',
+    'registered one by one, each sealed in the page (GitHub never sees the value); the box emptied', JSON.stringify(bulkPut.map((x) => x.name)));
+  // (GitHub's key opens each to what the .env said — sealed again with the same throwaway key, the same bytes)
+  const opensTo = (b, v) => { const x = SEAL.fromB64(b.encrypted_value), e = x.subarray(0, 32); return Buffer.from(SEAL.box(new TextEncoder().encode(v), SEAL.blake2b(Buffer.concat([e, PK]), 24), e, SK)).equals(Buffer.from(x.subarray(32))); };
+  check(bulkPut.length === 2 && opensTo(bulkPut[0].body, 'first-value') && opensTo(bulkPut[1].body, 'second value'), 'GitHub\'s key opens each to what the .env said (export and quotes taken off)');
+
+  // 🔔 「お知らせ」: what happened while away, kept in this browser per account and lab; a piece opened → its tab and run
+  await page.evaluate((k) => localStorage.setItem(k, JSON.stringify({ v: 1, items: [{ id: 'run:100:1:failure', kind: 'failure', title: '❌ verify が失敗しました', body: 'main · author1', tab: 'runs', at: new Date().toISOString(), level: 'bad', run: '100', repo: 'author1/bds-lab', url: 'https://github.com/author1/bds-lab/actions/runs/100', read: false }] })), `bdslab.panel.inbox.author1.${LAB}`);
+  await tab('概要');
+  check((await page.locator('#bell').innerText()) === '🔔 1', 'the bell: one not read', await page.locator('#who').innerText());
+  await page.locator('#bell').click();
+  check(/verify が失敗しました/.test(await page.locator('#inbox').innerText().catch(() => '')), 'the list at the top of the page', await page.locator('main').innerText());
+  await page.locator('#inbox li', { hasText: 'verify が失敗しました' }).locator('button', { hasText: '開く' }).click();
+  check((await page.locator('nav.tabs button.on').innerText()) === '進み具合' && await waitText(/考えられる原因と直し方|offline/) && (await page.locator('#bell').innerText()) === '🔔', 'opened: its tab, its run, and read', await page.locator('nav.tabs button.on').innerText());
+
   // members: someone invited as an administrator (asked first), a writer made a reader, the owner and oneself untouchable
   await tab('メンバー');
   check(await waitText(/helper1/) && await page.locator('[data-member="author1"] select').isDisabled() && /持ち主/.test(await text()), 'the lab\'s people: the owner (not changeable here), a writer', await text());
@@ -540,7 +683,7 @@ try {
   // back to the author with a tap: their own settings (the host they borrow, the vault key) as they left them
   await page.selectOption('#acct', 'author1');
   await waitText(/管理者/);
-  check(JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()) === JSON.stringify(['概要', '進み具合', '実行', '成果物', 'Discord', '秘密', '端末', '貸し借り', 'メンバー', '準備', '監査', '設定']), 'switched: the author\'s tabs', JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()));
+  check(JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()) === JSON.stringify(['概要', '進み具合', '実行', 'アドオン', '配布', '成果物', '予約', '統計', 'Discord', '秘密', '端末', '貸し借り', 'メンバー', '準備', '監査', '設定']), 'switched: the author\'s tabs', JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()));
   check(await waitText(/期限（\d{4}-\d\d-\d\d）を過ぎました/) && /借り手/.test(await text()), 'the host the author borrows (their own list), now stopped by its lender', await text());
   await tab('設定');
   check((await page.locator('#tabbody input[type=password]').inputValue()) === VKEY && /lender1/.test(await text()) && /author1\/bds-lab・ホスト 1/.test(await text()), 'the author\'s vault key kept for the author; both accounts listed with their own settings', await text());
@@ -634,12 +777,31 @@ try {
   check(G.secretsPut.length === before2 && /秘密を登録するは、あなたの役割（write）には許されていません/.test(await p2.locator('#toast').innerText()), 'a writer may not set a secret: the policy says so before GitHub is asked', await p2.locator('#toast').innerText());
   await ctx2.close();
 
+  // the panel on the device (sw.js): its shell kept by version, opened again with no network; GitHub's API never kept
+  const ctx3 = await browser.newContext({ viewport: { width: 390, height: 800 } }), p3 = await ctx3.newPage();
+  await ctx3.route('https://api.github.com/**', api);
+  p3.on('pageerror', (e) => errors.push(`pageerror (offline): ${e.message}`));
+  await p3.goto(URL3);
+  await p3.waitForSelector('#tok');
+  const kept = await p3.evaluate(async () => {
+    await Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(r, 8000))]);
+    const name = (await globalThis.caches.keys()).find((n) => n.startsWith('bdslab-panel:'));
+    return name ? { name, urls: (await (await globalThis.caches.open(name)).keys()).map((r) => r.url) } : (await globalThis.caches.keys());
+  });
+  const paths = (kept?.urls ?? []).map((u) => new URL(u).pathname);
+  check(kept?.name?.endsWith(`:${'ab'.repeat(20)}`) && ['/index.html', '/panel.css', '/panel.js', '/config.json', '/lib/inbox.mjs', '/ui/units.mjs'].every((x) => paths.includes(x)) && !kept.urls.some((u) => !u.startsWith(URL3)),
+    'the panel kept on the device: its own files only (index, style, config, every module), in a cache named for this version', JSON.stringify(kept));
+  await ctx3.setOffline(true);
+  await p3.reload();
+  check(await p3.waitForSelector('#tok', { timeout: 8000 }).then(() => true, () => false), 'no network: the panel opens all the same (the kept copy)', await p3.locator('main').innerText().catch(() => ''));
+  await ctx3.close();
+
   check(!errors.length, 'no page error, no CSP report', errors.join('\n'));
 } catch (e) {
   check(false, 'the run went through', e.stack);
 } finally {
   await browser.close();
-  srv.close(); srv2.close(); fs.rmSync(BUILT, { recursive: true, force: true });
+  srv.close(); srv2.close(); srv3.close(); fs.rmSync(BUILT, { recursive: true, force: true }); fs.rmSync(BUILT3, { recursive: true, force: true });
 }
 console.log(bad ? `FAIL panel-browser (${bad})` : 'PASS panel-browser');
 process.exit(bad ? 1 : 0);
