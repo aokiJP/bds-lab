@@ -173,6 +173,23 @@ export function hostNow(rules, used, now = new Date(), running = false) {
   return { ok: !why.length, why, used, limit: rules.minutesPerMonth, stopAt, remaining: Math.max(0, stopAt - used) };
 }
 // ---- where a job runs: this lab's own Actions, or a lender's (a host) through hostrun.yml ----
+/** may this repository become this person's host (pure) → { ok, errors, warns }: their own (admin), not a fork, not archived;
+ *  public is allowed but said (the jobs pushed there are public then) */
+export function newHostCheck(repo, me) {
+  const errors = [], warns = [];
+  if (!repo) return { ok: false, errors: ['そのリポジトリが見えません（まだ作っていないか、ラボの App をそこに入れていません）'], warns };
+  if (roleOf(repo.permissions) !== 'admin' || String(repo.owner?.login ?? '').toLowerCase() !== String(me ?? '').toLowerCase()) errors.push('あなた自身のリポジトリだけをホストにできます（持ち主として）');
+  if (repo.fork) errors.push('フォークはホストにできません: 新しいリポジトリを作ってください');
+  if (repo.archived) errors.push('アーカイブされています');
+  if (!repo.private && repo.visibility !== 'private' && repo.visibility !== 'internal') warns.push('公開リポジトリです: 押し込まれた試験も公開になります（private がおすすめ）');
+  return { ok: !errors.length, errors, warns };
+}
+/** the files a new host gets (pure): the template's README and host.yml as they are, .lab-host.json from the lender's rules */
+export function newHostFiles(template, rules) {
+  const c = checkRules(rules);
+  if (c.errors.length) return { files: null, errors: c.errors };
+  return { files: { ...template, '.lab-host.json': JSON.stringify({ lab: 1, ...rules }, null, 2) + '\n' }, errors: [] };
+}
 export const HOST_UNIT_JOBS = ['test', 'go', 'sim'];
 export const HOST_JOB_WORDS = { gate: 'ラボの試験（gate）', 'gate-all': '全部の試験', test: 'ユニットの試験（test）', go: 'ユニットを仕上げる（go: .mcaddon も）', sim: 'ユニットをすばやく（sim）', upkeep: '新しい Minecraft に合わせる（upkeep）', 'dev-bds': 'BDS の開発版で' };
 /** the form for a job on a host → { inputs } for hostrun.yml, or { error } (pure): the lender's rules allow the job, a unit

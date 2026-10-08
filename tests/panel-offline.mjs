@@ -216,6 +216,46 @@ await t('each workflow\'s health, a secret\'s age, the keys, the role presets an
   eq(MB.invitationUrl('o/lab'), 'https://github.com/o/lab/invitations');
 });
 
+await t('debug: the calls kept (a ring), the errors among them, whether this page is the newest published, a report with no token in it (pure)', async () => {
+  const D = await imp('panel/lib/debug.mjs');
+  let now = Date.parse('2026-10-08T01:02:03Z');
+  const log = D.debugLog(3, () => now++);
+  log.add({ method: 'GET', path: '/user', status: 200, ms: 5 }); log.add({ method: 'GET', path: '/repos/o/r/contents/x', status: 404, ms: 7 });
+  log.add({ kind: 'error', message: 'boom', where: 'panel.js:3' }); log.add({ method: 'POST', path: '/repos/o/r/actions/runs/1/cancel', status: 0, ms: 9 });
+  eq(log.list().map((e) => e.status ?? e.kind), [0, 'error', 404], 'the last three, newest first');
+  eq(log.errors().length, 3);
+  const P = 'a'.repeat(40), N = 'b'.repeat(40), run = (head_sha, status, conclusion) => ({ head_sha, status, conclusion });
+  eq([D.versionState(null).state, D.versionState(P, []).state, D.versionState(P, [run(P, 'completed', 'success')]).state, D.versionState(P, [run(N, 'in_progress', null)]).state, D.versionState(P, [run(N, 'completed', 'success')]).state, D.versionState(P, [run(N, 'completed', 'failure')]).state],
+    ['unknown', 'unknown', 'live', 'deploying', 'newer', 'failed']);
+  ok(/bbbbbbb/.test(D.versionState(P, [run(N, 'completed', 'success')]).say), 'the new version named');
+  const r = D.report({ version: P, url: 'https://x.github.io/bds-lab/#bdslab-auth=ghu_abcdefghijklmnop', agent: 'test', login: 'me', kind: 'oauth', lab: 'o/r', role: 'admin', tab: 'runs', remaining: 4999, log });
+  ok(/✘ 届かない POST \/repos\/o\/r\/actions\/runs\/1\/cancel/.test(r) && /✘ boom \(panel\.js:3\)/.test(r) && /GitHub でサインイン/.test(r) && !/ghu_|#/.test(r.split('\n')[2]), r);
+  eq(D.redact('a ghp_0123456789abcdef b github_pat_11AB_cd lab-sealed:v1:xyz'), 'a [消しました] b [消しました] [消しました]');
+});
+
+await t('a stranger lends: their own new repository becomes a host — the template as the lab checks it, their rules; nothing else (pure)', async () => {
+  const PC = await imp('common/panel-config.mjs'), { HOST_FILES } = await imp('panel/lib/hosttemplate.mjs');
+  eq(fs.readFileSync(path.join(TOP, PC.HOST_MODULE), 'utf8'), PC.hostTemplateModule(), 'panel/lib/hosttemplate.mjs is host/template now (node common/panel-config.mjs --host-template)');
+  const mine = { owner: { login: 'Lee' }, permissions: { admin: true }, private: true, visibility: 'private' };
+  ok(M.newHostCheck(mine, 'lee').ok && !M.newHostCheck(null, 'lee').ok, 'their own: yes; none: no');
+  ok(/あなた自身/.test(M.newHostCheck({ ...mine, owner: { login: 'other' } }, 'lee').errors.join()) && /あなた自身/.test(M.newHostCheck({ ...mine, permissions: { push: true } }, 'lee').errors.join()), 'another\'s repository: never (not even one they may write)');
+  ok(/フォーク/.test(M.newHostCheck({ ...mine, fork: true }, 'lee').errors.join()) && /アーカイブ/.test(M.newHostCheck({ ...mine, archived: true }, 'lee').errors.join()));
+  ok(M.newHostCheck({ ...mine, private: false, visibility: 'public' }, 'lee').ok && /公開/.test(M.newHostCheck({ ...mine, private: false, visibility: 'public' }, 'lee').warns.join()), 'public: allowed, said');
+  const rules = { minutesPerMonth: 300, jobs: ['gate', 'sim'], hours: '22:00-06:00', timezone: 'Asia/Tokyo', until: '2027-01-31', contact: 'lee' };
+  const r = M.newHostFiles(HOST_FILES, rules);
+  ok(!r.errors.length && r.files['.github/workflows/host.yml'] === fs.readFileSync(path.join(TOP, 'host/template/.github/workflows/host.yml'), 'utf8').replace(/\r\n/g, '\n') && M.checkRules(JSON.parse(r.files['.lab-host.json'])).rules.minutesPerMonth === 300, JSON.stringify(Object.keys(r.files)));
+  ok(/jobs/.test(M.newHostFiles(HOST_FILES, { ...rules, jobs: ['make'] }).errors.join()) && M.newHostFiles(HOST_FILES, { ...rules, jobs: ['make'] }).files === null, 'an AI job is never lent');
+});
+
+await t('panel check: a changed file → the checks it needs (ESLint, the offline tests, the browser unless quick); failures\' lines (pure)', async () => {
+  const PN = await imp('common/panel.mjs');
+  eq(PN.plan(['panel/lib/members.mjs']), { lint: ['panel/lib/members.mjs'], tests: ['tests/panel-offline.mjs', 'tests/governance-offline.mjs', 'tests/panel-browser.mjs'] });
+  eq(PN.plan(['panel/ui/signin.mjs', 'auth/handler.mjs'], { quick: true }).tests, ['tests/panel-offline.mjs', 'tests/session-offline.mjs', 'tests/auth-offline.mjs']);
+  eq(PN.plan(['README.md', 'bds/lab.mjs']), { lint: [], tests: [] }, 'not the panel: nothing');
+  eq(PN.plan(['host/template/.lab-host.json', 'tests/setup-offline.mjs']).tests, ['tests/panel-offline.mjs', 'tests/setup-offline.mjs']);
+  eq(PN.failLines('ok a\nFAIL b\n  why\nok c').slice(0, 2), ['FAIL b', '  why']);
+});
+
 await t('the secret sealed as libsodium seals it (crypto_box_seal; vectors from libsodium) and its parts against Node\'s own X25519 and BLAKE2b', () => {
   // (made with libsodium-wrappers 0.7.15: seed keypair from 32 bytes of i+1, ephemeral secret 32 bytes of 100+i; sha256 of the box)
   const V = [['', '1b1b58dd50ea14b60da17b790cd02754d970c9bab864ebb3c0f3016fe51d3f57', '138d5a94edadcd0cb3573cbbad620463cd344c38f5017230d1a0d5eb53a52b7b'],

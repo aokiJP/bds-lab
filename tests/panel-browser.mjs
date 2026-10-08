@@ -35,6 +35,7 @@ const CORP = 'acme/corp-lab', ADMIN = { admin: true, push: true, pull: true };
 const people = {
   'tok-author': { login: 'author1', repos: { [LAB]: { admin: true, push: true, pull: true }, [HOST]: { push: true, pull: true } } },
   'tok-stranger': { login: 'stranger', repos: { [LAB]: { pull: true } } },
+  'tok-newlender': { login: 'newlender', repos: { [LAB]: { pull: true }, 'newlender/bds-lab-host': { admin: true, push: true, pull: true }, 'someone/their-repo': { push: true, pull: true } } },
   'tok-lender': { login: 'lender1', repos: { [HOST]: { admin: true, push: true, pull: true } } },
   ghu_ceo1: { login: 'ceo1', repos: { [CORP]: ADMIN } }, ghu_ceo2: { login: 'ceo1', repos: { [CORP]: ADMIN } },
   'tok-writer': { login: 'writer1', repos: { [CORP]: { push: true, pull: true } } },
@@ -235,10 +236,29 @@ let shots = 0;
 try {
   // a stranger: GitHub gives this token no write on the lab and no host
   await signIn('tok-stranger');
-  check(await waitText(/使えません/) && /書き込める人/.test(await text()) && !/進み具合/.test(await page.locator('body').innerText()), 'a token with no write and no host: locked out, no tabs', await text());
+  check(await waitText(/時間を貸す/) && /書き込める人/.test(await text()) && !/進み具合/.test(await page.locator('body').innerText()) && await page.locator('nav.tabs').count() === 0, 'a token with no write and no host: the lab shut, lending its only door, no tabs', await text());
+
+  // a stranger who lends: their own new repository made a host from the page — someone else's never — and then lending is
+  // all they have (no lab tabs)
+  await page.click('text=別のアカウントで入る');
+  await signIn('tok-newlender');
+  await waitText(/時間を貸す/);
+  await page.fill('#lend input[aria-label="ホストのリポジトリ"]', 'someone/their-repo');
+  await page.locator('#lend button', { hasText: 'ホストを整える' }).click();
+  await page.waitForTimeout(500);
+  check(/あなた自身のリポジトリだけ/.test(await page.locator('#toast').innerText()) && !G.filesPut.some((f) => f.slug === 'someone/their-repo'), 'another\'s repository is never made a host', await page.locator('#toast').innerText());
+  await page.fill('#lend input[aria-label="ホストのリポジトリ"]', 'newlender/bds-lab-host');
+  await page.fill('#lend input[aria-label="1 か月に貸す分"]', '300');
+  await page.locator('#lend button', { hasText: 'ホストを整える' }).click();
+  await waitText(/貸す条件（あなたのホスト）/, 8000);
+  const made = G.filesPut.filter((f) => f.slug === 'newlender/bds-lab-host').map((f) => f.f).sort();
+  const tabsNow = await page.locator('nav.tabs button').allInnerTexts();
+  check(JSON.stringify(made) === JSON.stringify(['.github/workflows/host.yml', '.lab-host.json', 'README.md']) && JSON.parse(G.files['newlender/bds-lab-host:.lab-host.json']).minutesPerMonth === 300
+    && G.files['newlender/bds-lab-host:.github/workflows/host.yml'] === fs.readFileSync(path.join(TOP, 'host/template/.github/workflows/host.yml'), 'utf8'), 'the host made: the template\'s host.yml as the lab checks it, their rules', JSON.stringify(made));
+  check(JSON.stringify(tabsNow) === JSON.stringify(['概要', '貸し借り', '設定']) && /貸し手/.test(await text()), 'then a lender: lending is all there is (no runs, secrets, members …)', JSON.stringify(tabsNow));
+  await page.locator('#who button', { hasText: '出る' }).click();
 
   // the author
-  await page.click('text=別のアカウントで入る');
   await signIn('tok-author');
   check(await waitText(/管理者/) && await waitText(/✅ Discord の DM で端末を操作/) && /⚠️ 本物のアプリで確かめる/.test(await text()) && /GOOGLE_EMAIL・GOOGLE_AAS_TOKEN が要ります/.test(await text()), 'the author: admin; what their own secrets allow (Discord yes, the app lab not yet: what is missing said)', await text());
   check(await waitText(/動いている 1・失敗 1/), 'the overview counts the runs', await text());
@@ -281,6 +301,14 @@ try {
   await page.locator('button', { hasText: '操作する' }).click();
   check(await waitText(/封じられています/), 'without the vault key the reply is said to be sealed', await text());
   await tab('設定');
+  // debug: the last GitHub calls on this device, no token in them; an error on the page shown at once at the top
+  check(/GET \/repos\/author1\/bds-lab/.test(await page.locator('#debuglog').innerText()) && !/tok-author/.test(await page.locator('#debug').innerText()), 'the debug card: the last calls, never the token', await page.locator('#debug').innerText());
+  await page.evaluate(() => window.dispatchEvent(new ErrorEvent('error', { message: 'boom ghp_abcdefghijklmnop1234', filename: 'x/panel.js', lineno: 9 })));
+  check(await page.locator('#faults').innerText() === '⚠ 1', 'an error on the page: a mark at the top at once', await page.locator('#who').innerText());
+  await page.locator('#debug button', { hasText: '読み直す' }).click();
+  check(/boom \[消しました\] \(panel\.js:9\)/.test(await page.locator('#debuglog').innerText()), 'the error in the debug card, a token in it taken out', await page.locator('#debuglog').innerText());
+  await page.locator('#debug button', { hasText: '消す' }).click();
+  check(await page.locator('#faults').count() === 0, 'cleared: the mark gone');
   await page.locator('#tabbody input[type=password]').fill(VKEY);
   await page.locator('#tabbody button', { hasText: '保存' }).click();
   await waitText(/管理者/);

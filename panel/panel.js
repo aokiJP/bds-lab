@@ -22,6 +22,8 @@ import { signInCard, tokenHelp } from './ui/signin.mjs';
 import { setupTab, takeAppReturn } from './ui/setup.mjs';
 import { auditTab } from './ui/audit.mjs';
 import { membersTab } from './ui/members.mjs';
+import * as DBG from './lib/debug.mjs';
+import { lendStart } from './ui/lend.mjs';
 
 // ---- the browser's storage (one that refuses it — a private window may — still works for the tab) ----
 const storage = (name) => { try { const s = window[name]; s.setItem('bdslab.probe', '1'); s.removeItem('bdslab.probe'); return s; } catch { return memoryStorage(); } };
@@ -41,7 +43,14 @@ if (HANDOFF) { history.replaceState(null, '', location.pathname + location.searc
 
 // ---- the page's own config (pages.yml writes it from the lab's variables: common/panel-config.mjs) ----
 const RAW = await fetch('./config.json', { cache: 'no-store', credentials: 'omit' }).then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
-const CONFIG = { authUrl: S.authBase(RAW?.authUrl), appSlug: /^[a-z0-9][a-z0-9-]{0,62}$/.test(String(RAW?.appSlug ?? '')) ? RAW.appSlug : null, appClientId: /^[A-Za-z0-9._-]{1,64}$/.test(String(RAW?.appClientId ?? '')) ? RAW.appClientId : null };
+const CONFIG = { version: /^[0-9a-f]{40}$/.test(String(RAW?.version ?? '')) ? RAW.version : null, authUrl: S.authBase(RAW?.authUrl), appSlug: /^[a-z0-9][a-z0-9-]{0,62}$/.test(String(RAW?.appSlug ?? '')) ? RAW.appSlug : null, appClientId: /^[A-Za-z0-9._-]{1,64}$/.test(String(RAW?.appClientId ?? '')) ? RAW.appClientId : null };
+
+// ---- debug: the last GitHub calls and the page's errors on this device (lib/debug.mjs; 「設定」→「デバッグ」) ----
+const LOG = DBG.debugLog();
+const loud = () => LOG.errors().filter((e) => e.kind === 'error' || e.status === 0 || e.status >= 500).length;
+const fault = (message, where) => { LOG.add({ kind: 'error', message: DBG.redact(message), where: DBG.redact(where ?? '') }); try { if (st.login) renderWho(); } catch { /* before the page is up */ } };
+window.addEventListener('error', (e) => fault(e.message ?? String(e.error), e.filename ? `${String(e.filename).split('/').pop()}:${e.lineno}` : ''));
+window.addEventListener('unhandledrejection', (e) => fault(e.reason?.message ?? String(e.reason), e.reason?.path ?? ''));
 
 // ---- the accounts of this browser, each with its own token and settings ----
 const DEFAULT_LAB = M.repoFromLocation(location) ?? 'aokiJP/bds-lab';
@@ -103,7 +112,7 @@ async function freshen(login = st.login) {
 }
 /** the GitHub client for the account in use, made again only when its token changed */
 function useToken(t) {
-  if (t && t !== st.apiToken) { st.api = gh({ token: t }); st.apiToken = t; }
+  if (t && t !== st.apiToken) { st.api = gh({ token: t, onCall: (c) => LOG.add(c) }); st.apiToken = t; }
 }
 for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, () => { st.lastActive = Date.now(); }, { passive: true });
 setInterval(async () => {
@@ -121,6 +130,8 @@ function renderWho() {
   else if (st.me) kids.push(st.me.login);
   kids.push(h('button', { title: 'アカウントを加える', 'aria-label': 'アカウントを加える', onclick: () => renderSignIn('', { adding: true }) }, '＋'));
   if (st.login) kids.push(h('button', { onclick: () => signOut() }, '出る'));
+  // (an error on this page or GitHub not answering: shown at once, a tap to what happened)
+  const n = loud(); if (n && st.login) kids.unshift(h('button', { class: 'danger', id: 'faults', title: 'このページで起きたこと（設定 → デバッグ）', onclick: () => { st.tab = 'settings'; go('settings'); $('debug')?.scrollIntoView({ block: 'start' }); } }, `⚠ ${n}`));
   $('who').replaceChildren(...kids);
 }
 function switchTo(login) { if (!A.use(login)) return; st.tab = 'overview'; st.me = null; st.target = 'lab'; history.replaceState(null, '', location.pathname + location.search); connect(); }
@@ -160,8 +171,11 @@ function renderSignIn(err = '', { adding = false, login = null } = {}) {
   st.signinErr = null;
 }
 function renderLocked(why) {
+  // (someone the lab's owner did not invite: the one thing offered is to lend their own Actions minutes — ui/lend.mjs)
+  if (st.me) return main().replaceChildren(h('p', { class: 'muted' }, why), lendStart({ api: st.api, me: st.me, labSlug: settings().lab, oauth: A.session(st.login)?.kind === 'oauth', appSlug: CONFIG.appSlug,
+    onReady: (slug) => { saveSettings({ hosts: [...new Set([...settings().hosts, slug])] }); st.tab = 'hosts'; st.routed = true; connect(); },
+    other: () => { A.remove(st.login); Object.assign(st, { login: null, me: null }); renderWho(); renderSignIn(); } }));
   main().replaceChildren(h('div', { class: 'card' }, h('h2', {}, '🔒 使えません'), h('p', {}, why),
-    h('p', { class: 'muted' }, `ログイン: ${st.me?.login ?? '?'}。${A.session(st.login)?.kind === 'oauth' ? `ラボ（${settings().lab}）か自分のホストに、ラボの GitHub App が入っているか` : `トークンの対象にラボ（${settings().lab}）か自分のホストが入っているか`}、確かめてください。`),
     h('button', { onclick: () => { A.remove(st.login); Object.assign(st, { login: null, me: null }); renderWho(); renderSignIn(); } }, '別のアカウントで入る')));
 }
 
@@ -307,6 +321,19 @@ setInterval(async () => {
   }
 }, 45_000);
 
+// ---- is this page the newest the lab published? (config.json's version against pages.yml's last run) — a change pushed
+// is said when it is live, with a way to read it again ----
+st.version = DBG.versionState(CONFIG.version, []);
+async function checkVersion() {
+  if (!st.lab || !st.api || !CONFIG.version) return st.version;
+  let rs; try { rs = await st.api.runs(st.lab.slug, { per: 1, workflow: 'pages.yml' }); } catch { return st.version; }
+  const was = st.version.state, v = DBG.versionState(CONFIG.version, rs);
+  st.version = v;
+  if (v.state !== was && (v.state === 'newer' || v.state === 'failed')) toast(v.say, v.state === 'failed');
+  return v;
+}
+setInterval(() => { if (document.visibilityState === 'visible') checkVersion(); }, 120_000);
+
 // ---- keys (outside a text box): 1–9, 0 the tabs shown, / search the runs, r read again, ? which keys ----
 const shownTabs = () => [...document.querySelectorAll('nav.tabs button')].map((b) => b.dataset.tab);
 const KEYS_HELP = '1〜9・0: タブ　/: 実行を探す　r: 読み直す　?: この知らせ';
@@ -328,7 +355,9 @@ function overview(body) {
     h('p', { class: 'muted' }, ses?.kind === 'oauth' ? `GitHub でサインイン（ラボの App）${ses.expiresAt ? `・${new Date(ses.expiresAt).toLocaleTimeString()} まで（自動で更新）` : ''}` : 'トークンで入っています', `・GitHub の残り回数: ${st.api.state.remaining ?? '?'}`),
     // (the lab's policy as it was read: a broken one allows nothing — said, with what is wrong, to whoever can fix it)
     st.policyErrors.length ? h('div', { class: 'bad' }, `${P.POLICY_FILE} が正しくありません: パネルは何も許しません（直すまで）`, h('ul', {}, st.policyErrors.map((e) => h('li', {}, e)))) : null,
+    h('div', { id: 'version' }),
     !CONFIG.authUrl && st.lab?.role === 'admin' ? h('p', { class: 'warn' }, '「GitHub でサインイン」はまだ使えません: ', h('button', { onclick: () => go('setup') }, '「準備」で整える'), '（App・サインインのサービス・Pages）') : null));
+  checkVersion().then((v) => $('version')?.replaceChildren(...(v.state === 'newer' ? [h('p', { class: 'warn' }, v.say, ' ', h('button', { onclick: () => location.reload() }, '読み直す'))] : v.state === 'deploying' || v.state === 'failed' ? [h('p', { class: v.state === 'failed' ? 'bad' : 'muted' }, v.say)] : [])));
   if (st.lab && st.lab.caps) {
     body.append(h('div', { class: 'card' }, h('h2', {}, st.lab.slug, h('span', { class: 'chip' }, M.ROLE_NAMES[st.lab.role]), h('span', { class: 'chip' }, st.lab.repo.visibility), link(st.lab.repo.html_url, 'GitHub')),
       h('h3', {}, 'このリポジトリの設定でできること'),
@@ -728,6 +757,22 @@ function settingsTab(body) {
   });
   body.append(h('div', { class: 'card' }, h('h2', {}, 'この端末'), h('label', {}, on, ' 実行が終わったら知らせる（パネルを開いている間。タブの題に動いている数）'),
     h('p', { class: 'muted' }, 'スマホではブラウザのメニューの「ホーム画面に追加」で、アプリのように開けます。'), h('p', { class: 'muted' }, `キー: ${KEYS_HELP}`)));
+  body.append(debugCard());
+}
+/** 「デバッグ」: this page's version, its errors and the last GitHub calls; a report to paste (tokens taken out) */
+function debugCard() {
+  const ver = h('p', { class: 'muted' }, st.version.say), list = h('pre', { id: 'debuglog' });
+  const show = () => { const r = report(); list.textContent = r.split('\n').slice(r.split('\n').indexOf('エラー:')).join('\n'); };
+  const report = () => DBG.report({ version: CONFIG.version, versionSay: st.version.say, url: location.href, agent: navigator.userAgent, login: st.login, kind: A.session(st.login)?.kind, lab: st.lab?.slug, role: roleName(), tab: st.tab, remaining: st.api?.state.remaining, log: LOG });
+  checkVersion().then((v) => { ver.textContent = v.say; show(); });
+  show();
+  return h('div', { class: 'card', id: 'debug' }, h('h2', {}, 'デバッグ'), ver,
+    h('p', { class: 'muted' }, 'このページで起きたエラーと、最近の GitHub への呼び出し（このブラウザの中だけ。トークン・中身は入りません）。おかしいときは「写す」で貼ってください。'),
+    h('div', { class: 'row' }, h('button', { onclick: () => { const r = report(); (navigator.clipboard?.writeText(r) ?? Promise.reject(new Error())).then(() => toast('写しました（トークンは入っていません）'), () => prompt('写してください', r)); } }, '📋 写す'),
+      h('button', { onclick: show }, '読み直す'), h('button', { onclick: () => { LOG.clear(); show(); renderWho(); } }, '消す'),
+      CONFIG.version ? link(`https://github.com/${st.lab?.slug ?? DEFAULT_LAB}/commit/${CONFIG.version}`, 'この版のコミット') : null,
+      link(`https://github.com/${st.lab?.slug ?? DEFAULT_LAB}/actions/workflows/pages.yml`, 'pages.yml')),
+    list);
 }
 
 if (FRAMED) main().replaceChildren(h('p', { class: 'bad' }, 'このパネルは、ほかのページの中では開きません（そのページのアドレスではなく、パネルのアドレスで開いてください）。'));
