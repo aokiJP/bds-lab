@@ -61,19 +61,30 @@ function imports(text, base) {
 }
 
 /** the shell fetched afresh (past the browser's own cache) and written to this version's cache — nothing is written unless the
- *  files that make the page are all there; a module that is missing is no trouble (it is kept when it is first asked for) */
+ *  files that make the page are all there; a module that is missing is no trouble (it is kept when it is first asked for). Each
+ *  answer's body is read the moment it comes, a failure's too, and what is kept is an answer made of what was read: an answer
+ *  left unread holds its connection, and over HTTP/1.1 (a few connections to a host) the first answers would hold them all while
+ *  waiting for the rest — the rest never asked of the host, the install never ending */
 async function precache() {
   const got = new Map(), tried = new Set();
   let wave = SHELL.map((p) => new URL(p, SCOPE).href);
   while (wave.length && tried.size < MAX_FILES) {
     const now = [...new Set(wave)].filter((u) => !tried.has(u)).slice(0, MAX_FILES - tried.size);
     for (const u of now) tried.add(u);
-    const done = await Promise.all(now.map(async (u) => { try { const r = await fetch(u, { cache: 'reload' }); return r.ok ? [u, r] : null; } catch { return null; } }));
+    const done = await Promise.all(now.map(async (u) => {
+      try {
+        const r = await fetch(u, { cache: 'reload' }), body = await r.blob();
+        if (!r.ok) return null;
+        // (a module's imports are found in what was read, not in a clone of the answer)
+        const js = /\.m?js$/.test(new URL(u).pathname) ? await body.text() : '';
+        return [u, new Response(body, { status: r.status, statusText: r.statusText, headers: r.headers }), js];
+      } catch { return null; }
+    }));
     wave = [];
     for (const d of done) {
       if (!d) continue;
       got.set(d[0], d[1]);
-      if (/\.m?js$/.test(new URL(d[0]).pathname)) wave.push(...imports(await d[1].clone().text(), d[0]));
+      wave.push(...imports(d[2], d[0]));
     }
   }
   for (const p of MUST) if (!got.has(new URL(p, SCOPE).href)) throw new Error(`${p} が取れません`);

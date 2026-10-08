@@ -3,9 +3,10 @@
 // version) and the list that keeps it (200 at most, each once, read or not, in a storage that may refuse); a .env text read
 // into secrets (quotes, comments, several lines, what is refused — and no value ever in a message); the service worker's file
 // run in node:vm against a fake cache, network and windows (where each request goes, the shell kept at install all or
-// nothing, the network first for the page and config.json — the page kept only when it is html, and never taken the place of by
-// a README.md or an icon opened in a tab —, the kept copy first for the rest, GitHub and every other origin never touched, a
-// tapped notification opening the panel); and the three screens on a small fake DOM.
+// nothing — and whole from a host that answers 3 at a time, as over HTTP/1.1 —, the network first for the page and
+// config.json — the page kept only when it is html, and never taken the place of by a README.md or an icon opened in a tab —,
+// the kept copy first for the rest, GitHub and every other origin never touched, a tapped notification opening the panel); and
+// the three screens on a small fake DOM.
 // node tests/inbox-offline.mjs
 import fs from 'node:fs';
 import path from 'node:path';
@@ -293,9 +294,22 @@ const TYPES = { html: 'text/html; charset=utf-8', css: 'text/css; charset=utf-8'
 const typeOf = (u) => { const p = new URL(u).pathname; return TYPES[/\.([a-z]+)$/.exec(p)?.[1]] ?? (p.endsWith('/') ? TYPES.html : 'application/octet-stream'); };
 /** panel/sw.js loaded as a browser loads it (a classic script in a worker's global scope) over a fake CacheStorage, network and
  *  window list. site: address → body | { body, status, type } (type: its content-type — the host's, by the file's name, when it is
- *  not given; null: none at all); kept: caches there already (name → { address: body }) */
-function loadSw({ href = `${B}sw.js?v=v1`, site = {}, kept = {}, windows = [] } = {}) {
+ *  not given; null: none at all); kept: caches there already (name → { address: body }); conns: how many requests the host
+ *  answers at once, as over HTTP/1.1 — an answer holds its connection until its body is read to the end or dropped, and a request
+ *  past that waits for one to be freed (0: no limit) */
+function loadSw({ href = `${B}sw.js?v=v1`, site = {}, kept = {}, windows = [], conns = 0 } = {}) {
   const listeners = {}, log = { fetched: [], skipped: 0, claimed: 0, opened: [] }, net = { offline: false };
+  // (the host's connections: how many answers hold one, the requests waiting for one, how many ever waited, what was answered)
+  const line = { busy: 0, waiting: [], waited: 0, answered: [] };
+  const take = () => { if (line.busy < conns) { line.busy++; return undefined; } line.waited++; return new Promise((go) => line.waiting.push(go)); };
+  // (a freed connection goes straight to the next request waiting: it is never counted free in between)
+  const give = () => { const next = line.waiting.shift(); if (next) next(); else line.busy--; };
+  /** a body that frees its connection when it is read to the end or dropped — and is not read before somebody asks (highWaterMark 0) */
+  const held = (bytes) => {
+    let on = true;
+    const free = () => { if (on) { on = false; give(); } };
+    return new ReadableStream({ pull(c) { if (bytes.length) c.enqueue(bytes); c.close(); free(); }, cancel: free }, { highWaterMark: 0 });
+  };
   const store = new Map(Object.entries(kept).map(([n, files]) => [n, new Map(Object.entries(files).map(([u, body]) => [u, { body, status: 200 }]))]));
   const urlOf = (r) => (typeof r === 'string' ? r : r.url);
   const cacheOf = (name) => {
@@ -312,7 +326,9 @@ function loadSw({ href = `${B}sw.js?v=v1`, site = {}, kept = {}, windows = [] } 
       const u = urlOf(req); log.fetched.push({ url: u, cache: init?.cache });
       if (net.offline) throw new TypeError('Failed to fetch');
       const e = site[u], type = e?.type === undefined ? typeOf(u) : e.type;
-      const r = new Response(e === undefined ? 'not found' : typeof e === 'string' ? e : e.body, { status: e === undefined ? 404 : e.status ?? 200, headers: type === null ? {} : { 'content-type': type } });
+      const head = { status: e === undefined ? 404 : e.status ?? 200, headers: type === null ? {} : { 'content-type': type } };
+      let r = new Response(e === undefined ? 'not found' : typeof e === 'string' ? e : e.body, head);
+      if (conns) { const bytes = new Uint8Array(await r.arrayBuffer()); await take(); line.answered.push(u); r = new Response(held(bytes), head); }
       Object.defineProperty(r, 'type', { value: 'basic' });
       return r;
     },
@@ -337,7 +353,7 @@ function loadSw({ href = `${B}sw.js?v=v1`, site = {}, kept = {}, windows = [] } 
     return res;
   };
   const kept2 = (name) => { const m = store.get(name); return m ? Object.fromEntries([...m].map(([u, x]) => [u, x.body])) : null; };
-  return { sandbox, route: sandbox.route, target: sandbox.target, isPage: sandbox.isPage, listeners, log, net, store, fire, request, kept: kept2, site };
+  return { sandbox, route: sandbox.route, target: sandbox.target, isPage: sandbox.isPage, listeners, log, net, line, store, fire, request, kept: kept2, site };
 }
 const SITE = () => ({
   [`${B}index.html`]: '<!doctype html>INDEX', [`${B}panel.css`]: 'css', [`${B}manifest.webmanifest`]: '{}', [`${B}icon.svg`]: '<svg/>', [`${B}config.json`]: '{"version":"v1"}',
@@ -351,6 +367,8 @@ const opened = async (w, u, answer = w.site[u]) => {
   const had = w.site[u]; w.site[u] = answer;
   try { const r = await w.request(u, { mode: 'navigate' }); return [r.status, await r.text()]; } finally { if (had === undefined) delete w.site[u]; else w.site[u] = had; }
 };
+/** p's value, or 'stuck' when it has not come in ms (the timer does not keep node waiting once p has come) */
+const within = (ms, p) => { let timer; return Promise.race([p, new Promise((go) => { timer = setTimeout(() => go('stuck'), ms); })]).finally(() => clearTimeout(timer)); };
 
 await t('sw.js route(url, origin): the page and config.json network first, the panel\'s other files cache first, GitHub\'s API, every other origin and the worker itself not touched (node:vm)', () => {
   const { route } = loadSw();
@@ -388,6 +406,32 @@ await t('sw.js install: the shell fetched afresh — every module found by readi
   eq([...bare.store.keys()], ['bdslab-panel:/bds-lab/:unversioned']);
   // a version that is not a plain token is no version
   eq([...(await (async () => { const x = loadSw({ href: `${B}sw.js?v=a%20b/..`, site: SITE() }); await x.fire('install'); return x.store.keys(); })())], ['bdslab-panel:/bds-lab/:unversioned']);
+});
+
+await t('sw.js install: each answer\'s body is read as soon as it comes — a host over HTTP/1.1 (3 answers at a time, each holding its connection until its body is read) still gives the whole shell, the install ends, and offline the page opens (node:vm)', async () => {
+  // the host is that strict: a fourth request waits while three answers lie unread, and is answered when one of them is read
+  const h = loadSw({ site: SITE(), conns: 3 }), asked = ['index.html', 'panel.css', 'panel.js', 'icon.svg'].map((p) => h.sandbox.fetch(B + p));
+  const three = await Promise.all(asked.slice(0, 3));
+  eq(await within(50, asked[3]), 'stuck', 'a fourth request waits while three answers lie unread');
+  await three[1].text();
+  const fourth = await within(50, asked[3]);
+  ok(fourth !== 'stuck', 'one read: the fourth is answered');
+  eq(await fourth.text(), '<svg/>');
+  // the install: an answer kept unread until all the others have come holds its connection, the rest never reach the host, and
+  // the install never ends (the worker stays installing, nothing is kept, the panel does not open offline)
+  const w = loadSw({ site: SITE(), conns: 3 });
+  eq(await within(2000, w.fire('install').then(() => 'installed')), 'installed', `the install ends — answered: ${w.line.answered.map((u) => u.slice(B.length)).join(' ')}; still waiting: ${w.line.waiting.length}`);
+  const site = SITE(), kept = w.store.get(CACHE_V1);
+  eq([...kept.keys()].sort(), [`${B}config.json`, `${B}icon.svg`, `${B}index.html`, `${B}lib/lazy.mjs`, `${B}lib/model.mjs`, `${B}lib/q.mjs`, `${B}lib/re.mjs`, `${B}lib/seal.mjs`, `${B}lib/side.mjs`, `${B}manifest.webmanifest`, `${B}panel.css`, `${B}panel.js`, `${B}ui/dom.mjs`].sort(), 'the shell and every module it imports');
+  for (const [u, x] of kept) eq([x.body, x.status, x.type], [site[u], 200, typeOf(u)], `${u}: kept as it came, its content-type with it`);
+  ok(w.line.waited > 0, 'the host did make requests wait');
+  eq([w.line.busy, w.line.waiting.length], [0, 0], 'every answer read, a 404 too: no connection is left held (three 404s left unread would hold the host as well)');
+  eq(w.log.skipped, 1);
+  await w.fire('activate');
+  w.net.offline = true;
+  eq(await opened(w, B), [200, '<!doctype html>INDEX'], 'offline: the page opens from what was kept');
+  eq((await w.request(B, { mode: 'navigate' })).headers.get('content-type'), 'text/html; charset=utf-8', 'as a page');
+  eq(await (await w.request(`${B}lib/seal.mjs`)).text(), 'export const y = 2;', 'and a module found by reading the imports');
 });
 
 await t('sw.js install: all or nothing — a file the page cannot do without missing, and nothing is written (the old worker stays); a module or config.json missing is no trouble', async () => {
