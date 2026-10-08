@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -40,6 +41,7 @@ function fakeGitHub({ files = {}, releases = [], big = [], fail = {} } = {}) {
     if (no && (!no.method || no.method === init.method)) return send(no.status, { message: no.message ?? 'Resource not accessible by integration' });
     let m;
     if ((m = /^\/repos\/o\/lab\/git\/ref\/heads\/(.+)$/.exec(p)) && init.method === 'GET') return st.refs.has(m[1]) ? send(200, { ref: `refs/heads/${m[1]}`, object: { type: 'commit', sha: st.refs.get(m[1]) } }) : send(404, { message: 'Not Found' });
+    if ((m = /^\/repos\/o\/lab\/git\/matching-refs\/heads\/(.*)$/.exec(p)) && init.method === 'GET') return send(200, [...st.refs].filter(([b]) => b.startsWith(m[1])).map(([b, x]) => ({ ref: `refs/heads/${b}`, object: { type: 'commit', sha: x } })));
     if (p === '/repos/o/lab/git/refs' && init.method === 'POST') {
       const b = /^refs\/heads\/(.+)$/.exec(String(body?.ref ?? ''))?.[1];
       if (!b || !/^[0-9a-f]{40}$/.test(String(body?.sha ?? ''))) return send(422, { message: 'Invalid request.' });
@@ -473,8 +475,13 @@ await t('the 「アドオン」 tab (fake DOM, fake GitHub): a card per unit —
   const f = fakeGitHub({ files: LAB, releases: RELEASES });
   const { ctx, log } = ctxOf(f.api, { runUnit: (x) => log.ran.push(x), edit: (u) => log.edited.push(u.ref), aiMake: (x) => log.ai.push(x) });
   const body = new E('div');
+  f.st.refs.set('lab-unit/coins-42', MAIN); f.st.refs.set('lab-unitx/other', MAIN);
   const us = await UI.unitsTab(body, ctx);
   eq(us.map((u) => u.ref), ['bds/coins', 'bds/daily', 'end/hub', 'll/hub']);
+  // (a unit unit.yml left on a branch of its own — the default branch protected — a pull request away; only lab-unit/ ones)
+  const wait = body.byId('unitwaiting');
+  ok(wait && /PR を待っているユニット（1）/.test(wait.textContent) && /lab-unit\/coins-42/.test(wait.textContent) && !/lab-unitx/.test(wait.textContent)
+    && wait.all((e) => e.tagName === 'A').some((a) => a.attrs.href === 'https://github.com/o/lab/compare/main...lab-unit/coins-42?expand=1'), wait?.textContent ?? body.textContent);
   const cards = () => body.all((e) => e.attrs['data-unit'] && e.className === 'card');
   eq(cards().map((c) => c.attrs['data-unit']), ['bds/coins', 'bds/daily', 'end/hub', 'll/hub']);
   const coins = cards()[0].textContent;
@@ -661,6 +668,45 @@ await t('the new files: text never parsed as HTML, no eval, no address but GitHu
   }
   const ci = fs.readFileSync(path.join(TOP, 'common', 'unitci.mjs'), 'utf8');
   ok(/^\/\/ node lab\.mjs unitci/.test(ci) && [...ci.matchAll(/from 'node:child_process'/g)].length === 1 && /^import \{ spawnSync \} from 'node:child_process';$/m.test(ci) && !/shell\s*:/.test(ci), 'unitci: says what it is; spawnSync alone, no shell');
+});
+
+await t('unit.yml keeps a unit on its branch — or, when that branch refuses a direct push (protected: a pull request needed), on a branch of its own, lab-unit/<name>-<run>, with the link to its pull request: the step\'s own script, run by bash -e and git against a local repository whose hook refuses the default branch as GitHub does', async () => {
+  const yml = fs.readFileSync(path.join(TOP, '.github/workflows/unit.yml'), 'utf8');
+  // (the step's script as GitHub runs it: the block under 「run: |」 of 「keep the unit」, its indent taken off)
+  const at = yml.indexOf('- name: keep the unit'), from = yml.indexOf('run: |', at), lines = [];
+  for (const l of yml.slice(from).split('\n').slice(1)) { if (l.trim() && !l.startsWith('          ')) break; lines.push(l.slice(10)); }
+  const script = lines.join('\n');
+  ok(at > 0 && /lab-unit\/\$MADE-\$GITHUB_RUN_ID/.test(script), script);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'unit-keep-'));
+  const sh = (cmd, cwd, env = {}) => spawnSync('bash', ['-e', '-c', cmd], { cwd, encoding: 'utf8', env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', ...env } });
+  const setup = (protect) => {
+    const dir = fs.mkdtempSync(path.join(tmp, protect ? 'p-' : 'o-'));
+    const r = sh('git init -q --bare origin.git && git -C origin.git symbolic-ref HEAD refs/heads/main && git clone -q origin.git work 2>/dev/null && cd work && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m first && git push -q origin HEAD:main', dir);
+    ok(r.status === 0, r.stderr);
+    // (as GitHub refuses a protected branch: GH006, a pull request needed)
+    if (protect) fs.writeFileSync(path.join(dir, 'origin.git', 'hooks', 'pre-receive'), '#!/bin/sh\nwhile read old new ref; do if [ "$ref" = refs/heads/main ]; then echo "error: GH006: Protected branch update failed for refs/heads/main." >&2; echo "error: Changes must be made through a pull request." >&2; exit 1; fi; done\nexit 0\n', { mode: 0o755 });
+    fs.mkdirSync(path.join(dir, 'work', 'bds', 'addons', 'trial'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'work', 'bds', 'addons', 'trial', 'TASK.md'), '# Trial\n');
+    return dir;
+  };
+  const env = (dir) => ({ JOB: 'new', MADE: 'trial', GITHUB_REF_NAME: 'main', GITHUB_RUN_ID: '42', GITHUB_SERVER_URL: 'https://github.com', GITHUB_REPOSITORY: 'o/lab', GITHUB_STEP_SUMMARY: path.join(dir, 'summary.md') });
+  const head = (dir, b) => sh(`git log -1 --format=%s ${b} 2>/dev/null || true`, path.join(dir, 'origin.git')).stdout.trim();
+  try {
+    // the branch takes it
+    const open = setup(false), r1 = sh(script, path.join(open, 'work'), env(open));
+    ok(r1.status === 0, r1.stdout + r1.stderr);
+    eq([head(open, 'main'), head(open, 'lab-unit/trial-42')], ['unit: new trial（管理パネルから）', ''], 'on the branch it ran on, no other branch');
+    ok(/kept bds\/addons\/trial on main/.test(fs.readFileSync(path.join(open, 'summary.md'), 'utf8')), 'said in the summary');
+    // a protected branch: the unit on a branch of its own, the way to its pull request said
+    const prot = setup(true), r2 = sh(script, path.join(prot, 'work'), env(prot));
+    ok(r2.status === 0, r2.stdout + r2.stderr);
+    eq([head(prot, 'main'), head(prot, 'lab-unit/trial-42')], ['first', 'unit: new trial（管理パネルから）'], 'the default branch untouched, the unit on lab-unit/trial-42');
+    ok(r2.stdout.includes('::warning title=unit new::main は直接の push を受け付けません') && r2.stdout.includes('https://github.com/o/lab/compare/main...lab-unit/trial-42?expand=1'), r2.stdout);
+    ok(/\[PR を作る\]\(https:\/\/github\.com\/o\/lab\/compare\/main\.\.\.lab-unit\/trial-42\?expand=1\)/.test(fs.readFileSync(path.join(prot, 'summary.md'), 'utf8')), 'the summary links its pull request');
+    // nothing new to keep: said, nothing pushed
+    const same = sh(script, path.join(open, 'work'), env(open));
+    ok(same.status === 0 && /nothing to keep/.test(same.stdout), same.stdout + same.stderr);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

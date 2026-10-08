@@ -58,10 +58,22 @@ export function unitsTab(body, ctx) {
     list.replaceChildren(...(!units.length ? [none()] : shown.length ? shown.map(card) : [h('p', { class: 'muted' }, '当てはまるアドオンがありません。')]));
   };
   q.addEventListener('input', draw);
+  // (units unit.yml could not put on the default branch — it takes no direct push: protected — and left on a branch of their
+  // own, lab-unit/<name>-<run>, each a pull request away)
+  const waiting = h('div', {});
+  const drawWaiting = (refs) => {
+    const names = (Array.isArray(refs) ? refs : []).map((r) => String(r?.ref ?? '').replace(/^refs\/heads\//, '')).filter((b) => /^lab-unit\/[\w.-]{1,120}$/.test(b));
+    waiting.replaceChildren(...(names.length ? [h('div', { class: 'card', id: 'unitwaiting' }, h('h2', {}, `🔀 PR を待っているユニット（${names.length}）`),
+      h('p', { class: 'muted' }, `既定の枝（${branch}）が直接の変更を受け付けないので（守られた枝）、unit.yml が別の枝に置きました。PR を作って入れてください（入れたら、その枝は消してかまいません）。`),
+      h('ul', { class: 'plain' }, names.map((b) => h('li', { class: 'row', 'data-waiting': b }, h('span', { class: 'grow' }, b),
+        link(encodeURI(`https://github.com/${slug}/compare/${branch}...${b}?expand=1`), 'PR を作る'), link(encodeURI(`https://github.com/${slug}/tree/${b}`), 'GitHub')))))] : []));
+  };
   const load = (fresh = false) => act(async () => {
     // (not readable: why, where the list would be — and as a toast)
-    const [us, rs] = await Promise.all([U.listUnits(ctx.api, slug, { fresh }).catch((e) => { list.replaceChildren(h('p', { class: 'bad' }, e.message)); throw e; }), R.listReleases(ctx.api, slug).catch(() => [])]);
+    const [us, rs, refs] = await Promise.all([U.listUnits(ctx.api, slug, { fresh }).catch((e) => { list.replaceChildren(h('p', { class: 'bad' }, e.message)); throw e; }), R.listReleases(ctx.api, slug).catch(() => []),
+      ctx.api.call('GET', `/repos/${slug}/git/matching-refs/heads/lab-unit/`).catch(() => [])]);
     units = us; latest = R.latestByUnit(rs, us);
+    drawWaiting(refs);
     draw();
     return units;
   });
@@ -69,6 +81,6 @@ export function unitsTab(body, ctx) {
     h('div', { class: 'card', id: 'units' }, h('h2', {}, `アドオン（${slug}）`),
       h('p', { class: 'muted' }, '「試験」は tests.txt を本物のサーバーとプレイヤーで、「仕上げる」は試験・QA のあと .mcaddon を作ります（unit.yml・「進み具合」で見られます。.mcaddon は実行の成果物に）。'),
       h('div', { class: 'row' }, q, h('button', { onclick: () => load(true) }, '読み直す'), count)),
-    list);
+    waiting, list);
   return load();
 }

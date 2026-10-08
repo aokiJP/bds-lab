@@ -62,6 +62,7 @@ node lab.mjs login ai           # ANTHROPIC_API_KEY / OPENAI_API_KEY を確か�
   最新の .mcaddon）、新しく作る・人のアドオン（.mcaddon・.mcpack・.zip）を取り込む・ファイルを直す（読んだときの sha つきで既定の
   枝に commit: ほかの人の変更を上書きしません）・試験・仕上げ（.mcaddon）・AI で変える、を GitHub の Actions（`unit.yml`）で。
   取り込むパックは専用の枝 `lab-incoming/…` に置き、ユニットにできたら枝を消します（既定の枝の履歴にパックを残しません）。
+  既定の枝が守られている（PR が要る）ラボでは、できたユニットを別の枝に置いて「PR を作る」のリンクを出します。
 - **配布**: 「配布」でリリースのファイル・大きさ・ダウンロードの数・合計、リンクを写す、Discord に知らせる（notify.yml）。
 - **予約**: 「予約」で、決めた時刻にワークフローを自動で始めます（何時間ごと・毎日・毎週、時間帯つき）。予約は
   `.github/bds-lab-schedule.json` に入り、毎時の `schedule.yml` がラボの Actions で始めます（だれのトークンも PC も要りません）。
