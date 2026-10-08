@@ -49,10 +49,13 @@
 //   slot <1〜9|next|prev>       持つものを替える       inventory   持ち物（Y）     drop [回数]   落とす（Q）
 //   cmd </コマンド>             プレイヤーとしてコマンド    perspective   視点の切り替え（F5）   pause   ポーズ（START）
 //   release                     スティック・トリガー・ボタンを全部はなす
+//   move <向き>… | move stop     歩き続ける / 止まる    turn <向き> [強さ%] | turn stop   視点を回し続ける    mine|use on|off   押し続ける
+//   where   いる所・向き・体力・手のもの（サーバーに聞く）   items   持ち物の一覧   face <north|south|east|west|角度> [上下]   その向き
+//   lookat <x> <y> <z>          その場所を見る            goto <x> <z> [秒]   そこまで歩く（向きを合わせて前へ、を繰り返す）
 // 行末の ` # …` はコメント。正規表現の頭に (?i) で大文字小文字を無視。失敗した手順で止まり、その画面を fail-line<行>.png に撮る。
 import fs from 'node:fs';
 import path from 'node:path';
-import { GAME_VERBS, gameStep, playGame } from './play.mjs';
+import { GAME_VERBS, gameStep, playGame, playServer } from './play.mjs';
 import { ANDROID_KEYS, androidKey, linuxKey, findText, firstRunButton, titleWords, joinPromptButton, joinRefusal, joinPromptKind, ownWorldListed, loadingScreen, playScreen, backToTitle, buttonFocused, focusRing, lanCardWord, titlePlay, holdScript, inputText, keyboardDevice, meminfoMb, gameLayer, framesIn, recPath } from './client.mjs';
 
 // APP_TIME_SCALE (0..1, tests on the fake device): every fixed pause shorter; deadlines stay in real time
@@ -67,7 +70,7 @@ const VERBS = new Set(['launch', 'stop', 'join', 'wait', 'shot', 'tap', 'swipe',
   'mouse', 'pad', 'screen', 'background', 'foreground', 'trim', ...GAME_VERBS]);
 // a game controller's buttons (Android key names): the game's UI moves its focus with them, a path touch never takes
 // steps that leave the game as it is (the rest act on it)
-const STILL = new Set(['launch', 'until', 'wait', 'shot', 'section', 'do', 'expect', 'absent', 'changed', 'perf', 'record', 'pull', 'sh']);
+const STILL = new Set(['launch', 'until', 'wait', 'shot', 'section', 'do', 'expect', 'absent', 'changed', 'perf', 'record', 'pull', 'sh', 'where', 'items']);
 export const PAD = { A: 'BUTTON_A', B: 'BUTTON_B', X: 'BUTTON_X', Y: 'BUTTON_Y', L1: 'BUTTON_L1', R1: 'BUTTON_R1', L2: 'BUTTON_L2', R2: 'BUTTON_R2', START: 'BUTTON_START', SELECT: 'BUTTON_SELECT',
   THUMBL: 'BUTTON_THUMBL', THUMBR: 'BUTTON_THUMBR', UP: 'DPAD_UP', DOWN: 'DPAD_DOWN', LEFT: 'DPAD_LEFT', RIGHT: 'DPAD_RIGHT' };
 // the scenario's names for the controller's buttons → the device controller's words (app/relay/lab-pad.c)
@@ -361,9 +364,11 @@ export async function runScenario(steps, ctx) {
     // the game played by name (walk, look, attack…): the controller's sticks, triggers and buttons (lib/play.mjs)
     if (GAME_VERBS.has(s.verb)) {
       if (clearDialog(s)) await sleep(1000);
-      ocrLast = null;
-      if (!adb.pad) throw new Error('この端末ではコントローラーを使えません');
-      return await playGame(adb, gameStep(s.verb, a.filter((x) => x !== '')), { ensurePad: () => Boolean(adb.padReady) || Boolean(ctx.ensurePad?.()), sleep });
+      const g = gameStep(s.verb, a.filter((x) => x !== '')), ensurePad = () => Boolean(adb.padReady) || Boolean(ctx.ensurePad?.());
+      if (!(g.server === 'where' || g.server === 'items')) ocrLast = null;
+      if (!adb.pad && g.server !== 'where' && g.server !== 'items' && g.server !== 'face' && g.server !== 'lookat') throw new Error('この端末ではコントローラーを使えません');
+      // (where, face, goto…: the server's word on the player — the lab's BDS of the run)
+      return g.server ? await playServer(adb, g, { server, sleep, ensurePad }) : await playGame(adb, g, { ensurePad, sleep });
     }
     switch (s.verb) {
       case 'tap': {

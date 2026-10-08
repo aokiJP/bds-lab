@@ -77,6 +77,8 @@ jobs:
       - run: node ../lab.mjs scratch selftest --real
       # why, chaos, shrink, gaps, record, harden (a scripted AI) and mutate on the real server, end to end
       - run: node ../tests/dev-bds.mjs
+      # the server's side of the app lab's game verbs (where, items, face, lookat: their very js) with a real client joined
+      - run: node ../tests/play-bds.mjs
       - name: test and pack every addon
         run: |
           set -e

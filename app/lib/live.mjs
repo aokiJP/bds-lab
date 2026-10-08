@@ -39,6 +39,7 @@ export const HELP = [
   'signin | code <数字>        ゲームを Microsoft アカウントにサインイン（secrets の MS_EMAIL / MS_PASSWORD。二段階の確認は承認かコード）',
   'world [restart]             自分のワールドを端末に置く（新しい人の流れを避ける。restart: ゲームを起動し直して一覧に）',
   'seal                        いまの状態をスナップショットにして、準備済みの端末として非公開のキャッシュに入れる',
+  'clip [秒] | clip start | clip stop   画面の動画（既定 10 秒、30 秒まで。Discord には動画のファイルで届く）',
   'stop                        終わる（hold を抜けて、ジョブの残りへ）',
   '--- ゲームを人のように遊ぶ（ワールドの中で。端末のコントローラーのスティック・トリガー・ボタン）',
   ...GAME_HELP,
@@ -51,7 +52,7 @@ export const HELP = [
 ].join('\n');
 // app.txt's steps live runs as they are (lib/scenario.mjs on the device as it is): the ones live has no verb of its own for
 export const STEP_VERBS = new Set(['shot', 'do', 'until', 'expect', 'absent', 'push', 'chat', 'press', 'hold', 'record', 'perf', 'changed', 'network', 'size', 'density', 'cutout', 'mouse', 'background', 'foreground', 'trim']);
-const VERBS = new Set(['screen', 'tap', 'pad', 'swipe', 'key', 'text', 'wait', 'sh', 'logcat', 'input', 'windows', 'fps', 'gpu', 'files', 'relay', 'join', 'bds', 'launch', 'kill', 'options', 'title', 'run', 'ui', 'pull', 'last', 'bdslog', 'answer', 'signin', 'code', 'world', 'seal', 'stop', 'help',
+const VERBS = new Set(['screen', 'tap', 'pad', 'swipe', 'key', 'text', 'wait', 'sh', 'logcat', 'input', 'windows', 'fps', 'gpu', 'files', 'relay', 'join', 'bds', 'launch', 'kill', 'options', 'title', 'run', 'ui', 'pull', 'last', 'bdslog', 'answer', 'signin', 'code', 'world', 'seal', 'stop', 'help', 'clip',
   'step', 'steps', ...STEP_VERBS, ...GAME_VERBS]);
 /** verbs that take minutes (a whole run on the device): `app live` waits longer for them */
 export const LONG = new Set(['run', 'ui', 'title', 'seal', 'pull', 'signin', 'steps']);
@@ -201,32 +202,53 @@ export function api({ base = 'https://api.github.com', repo, token, fetchImpl = 
 }
 
 // ---- Discord: the controller of buttons under the screen (app hold with DISCORD_BOT_TOKEN / DISCORD_USER_ID) ----
-// 5 rows of 5 (Discord's most): moving, the camera, the hands, the menus' controller, and the rest. A press is one live
-// command (its button's id: "lab:<command>"); "#…" opens a form instead
-export const PANEL = [
-  [['⬆️ 前へ', 'walk forward 1', 1], ['⬅️ 左へ', 'walk left 1', 1], ['⬇️ 後ろへ', 'walk back 1', 1], ['➡️ 右へ', 'walk right 1', 1], ['🦘 ジャンプ', 'jump', 1]],
-  [['↩️ 左を見る', 'look left 300'], ['↪️ 右を見る', 'look right 300'], ['🔼 上を見る', 'look up 250'], ['🔽 下を見る', 'look down 250'], ['🏃 走る', 'sprint 2', 1]],
-  [['⛏️ 壊す', 'mine 1.5', 3], ['⚔️ 殴る', 'attack', 3], ['✋ 使う・置く', 'use', 3], ['🎒 持ち物', 'inventory', 3], ['🔁 次の物', 'slot next', 3]],
-  [['Ⓐ 決定', 'pad A'], ['Ⓑ 戻る', 'pad B'], ['▲', 'pad UP'], ['▼', 'pad DOWN'], ['☰ ポーズ', 'pause']],
-  [['◀', 'pad LEFT'], ['▶', 'pad RIGHT'], ['💬 チャット', '#chat', 1], ['⌨️ 命令', '#cmd', 1], ['📷 画面', 'screen', 2]],
-];
-/** the controller's rows for a message (pure); disabled: shown greyed (the session has ended) */
-export const panel = (disabled = false) => PANEL.map((r) => row(...r.map(([label, cmd, style = 2]) => button(label, `lab:${cmd}`, style, disabled))));
-/** a press's button id → its command, or a form's name ('#chat', '#cmd'); null when it is not the controller's (pure) */
-export function panelCommand(customId) {
-  const m = /^lab:(.+)$/s.exec(String(customId ?? ''));
-  return m ? m[1] : null;
-}
-/** the forms behind the controller's chat and command buttons (pure) */
-export const FORMS = {
-  '#chat': modal('lab-form:chat', 'チャット（/ で始めればコマンド）', [{ id: 'text', label: '言うこと', max: 250, placeholder: 'こんにちは / /give @s diamond 3' }]),
-  '#cmd': modal('lab-form:cmd', 'live の命令（1 行 1 つ）', [{ id: 'cmds', label: '命令', long: true, max: 4000, placeholder: 'walk forward 2\nlook right 600\nmine 2\nscreen' }]),
+// Pages of 5 rows of 5 (Discord's most a message): play (moving, the camera, the hands), menu (the menus' controller, the
+// hotbar), tools (the server, the world, the view). A press is a live command (" && " between several), its button's id
+// "lab:<page>:<command>"; "#chat" / "#cmd" open a form, "#page:<name>" shows another page (no device step: at once)
+export const PAGES = {
+  play: [
+    [['⬆️ 前へ', 'walk forward 1', 1], ['⬅️ 左へ', 'walk left 1', 1], ['⬇️ 後ろへ', 'walk back 1', 1], ['➡️ 右へ', 'walk right 1', 1], ['🦘 ジャンプ', 'jump', 1]],
+    [['↩️ 左を見る', 'look left 300'], ['↪️ 右を見る', 'look right 300'], ['🔼 上を見る', 'look up 250'], ['🔽 下を見る', 'look down 250'], ['🏃 走る', 'sprint 2', 1]],
+    [['⛏️ 壊す', 'mine 1.5', 3], ['⚔️ 殴る', 'attack', 3], ['✋ 使う・置く', 'use', 3], ['🎒 持ち物', 'inventory', 3], ['🔁 次の物', 'slot next', 3]],
+    [['⏩ 進み続ける', 'move forward', 1], ['⏹️ 止まる', 'release', 4], ['🧎 しゃがむ', 'sneak'], ['📍 どこ', 'where'], ['🎥 5 秒', 'clip 5']],
+    [['💬 チャット', '#chat', 1], ['⌨️ 命令', '#cmd', 1], ['📷 画面', 'screen'], ['🎮 メニュー', '#page:menu'], ['🧰 道具', '#page:tools']],
+  ],
+  menu: [
+    [['Ⓐ 決定', 'pad A', 1], ['Ⓑ 戻る', 'pad B', 4], ['Ⓧ', 'pad X'], ['Ⓨ', 'pad Y'], ['☰ ポーズ', 'pause']],
+    [['▲', 'pad UP', 1], ['▼', 'pad DOWN', 1], ['◀', 'pad LEFT', 1], ['▶', 'pad RIGHT', 1], ['⎋ 閉じる', 'key ESCAPE']],
+    [['1', 'slot 1'], ['2', 'slot 2'], ['3', 'slot 3'], ['4', 'slot 4'], ['5', 'slot 5']],
+    [['6', 'slot 6'], ['7', 'slot 7'], ['8', 'slot 8'], ['9', 'slot 9'], ['🗑️ 落とす', 'drop']],
+    [['⏪ LB', 'pad LB'], ['⏩ RB', 'pad RB'], ['📷 画面', 'screen'], ['🕹️ 遊ぶ', '#page:play', 3], ['🧰 道具', '#page:tools']],
+  ],
+  tools: [
+    [['🖧 サーバーを立てる', 'bds up', 1], ['🔗 参加', 'relay && step join', 1], ['🚪 タイトルまで', 'title 5'], ['🔄 視点', 'perspective'], ['🧭 北を向く', 'face north']],
+    [['🌞 昼に', 'bds do time set day'], ['☀️ 晴れに', 'bds do weather clear'], ['🛠️ クリエ', 'bds do gamemode creative @a'], ['⚔️ サバイバル', 'bds do gamemode survival @a'], ['❤️ 回復', 'bds do effect @a instant_health 1 10']],
+    [['📍 どこ', 'where'], ['🎒 持ち物の一覧', 'items'], ['⚡ 描画の速さ', 'fps'], ['📜 BDS のログ', 'bdslog 20'], ['🎥 10 秒', 'clip 10']],
+    [['▶️ ゲーム起動', 'launch'], ['🆗 ダイアログ', 'answer'], ['🧪 app.txt', 'run'], ['⏹️ 全部はなす', 'release', 4], ['❓ 使い方', 'help']],
+    [['💬 チャット', '#chat', 1], ['⌨️ 命令', '#cmd', 1], ['📷 画面', 'screen'], ['🕹️ 遊ぶ', '#page:play', 3], ['🎮 メニュー', '#page:menu']],
+  ],
 };
-/** a submitted form → its commands (pure): the chat form → one `chat …`, the command form → its lines; null when it is not ours */
+export const PANEL = PAGES.play;
+/** a page's rows for a message (pure); disabled: shown greyed (the session has ended) */
+export const panel = (page = 'play', disabled = false) => (PAGES[page] ?? PAGES.play).map((r) => row(...r.map(([label, cmd, style = 2]) => button(label, `lab:${PAGES[page] ? page : 'play'}:${cmd}`, style, disabled))));
+/** a press's button id → { page, cmd } (cmd: a live command, '#chat' / '#cmd' a form, '#page:<name>' a page); null when it
+ *  is not the controller's (pure). "lab:<cmd>" (no page) is the play page's */
+export function panelCommand(customId) {
+  const m = /^lab:(?:(play|menu|tools):)?(.+)$/s.exec(String(customId ?? ''));
+  return m ? { page: m[1] ?? 'play', cmd: m[2] } : null;
+}
+/** the forms behind the controller's chat and command buttons (pure); the page they were opened from rides in their id */
+export const form = (which, page = 'play') => which === '#chat'
+  ? modal(`lab-form:chat:${page}`, 'チャット（/ で始めればコマンド）', [{ id: 'text', label: '言うこと', max: 250, placeholder: 'こんにちは / /give @s diamond 3' }])
+  : modal(`lab-form:cmd:${page}`, 'live の命令（1 行 1 つ）', [{ id: 'cmds', label: '命令', long: true, max: 4000, placeholder: 'walk forward 2\nlook right 600\nmine 2\nscreen' }]);
+export const FORMS = { '#chat': form('#chat'), '#cmd': form('#cmd') };
+/** a submitted form → { cmds, page } (pure): the chat form → one `chat …`, the command form → its lines; null when it is not ours */
 export function formCommands(customId, values) {
-  if (customId === 'lab-form:chat') { const t = String(values?.text ?? '').trim(); return t ? [`chat ${t}`] : []; }
-  if (customId === 'lab-form:cmd') return splitCommands(values?.cmds ?? '');
-  return null;
+  const m = /^lab-form:(chat|cmd)(?::(play|menu|tools))?$/.exec(String(customId ?? ''));
+  if (!m) return null;
+  const page = m[2] ?? 'play';
+  if (m[1] === 'chat') { const t = String(values?.text ?? '').trim(); return { cmds: t ? [`chat ${t}`] : [], page }; }
+  return { cmds: splitCommands(values?.cmds ?? ''), page };
 }
 /** a line typed on a phone, as live reads it (pure): a known verb its keyboard capitalized ("Walk forward 2") in lower case */
 export function phoneLine(line) {
@@ -242,16 +264,19 @@ export async function discordJobs(b, post) {
     if (type !== 'INTERACTION_CREATE') return;
     const it = { id: d.id, token: d.token, application_id: d.application_id };
     if (d.type === 3) {
-      const cmd = panelCommand(d.data?.custom_id);
-      if (cmd === null) return;
-      if (FORMS[cmd]) { await b.respond(d, 9, FORMS[cmd]); return; }
+      const p = panelCommand(d.data?.custom_id);
+      if (p === null) return;
+      if (p.cmd === '#chat' || p.cmd === '#cmd') { await b.respond(d, 9, form(p.cmd, p.page)); return; }
+      // (another page: the message's buttons changed now, its text and picture kept)
+      const to = /^#page:(play|menu|tools)$/.exec(p.cmd)?.[1];
+      if (to) { await b.respond(d, 7, { components: panel(to) }); return; }
       await b.respond(d, 6);
-      post({ cmds: [cmd], it });
+      post({ cmds: p.cmd.split(' && '), it, page: p.page });
     } else if (d.type === 5) {
-      const cmds = formCommands(d.data?.custom_id, modalValues(d))?.map(phoneLine) ?? null;
-      if (cmds === null) return;
+      const f = formCommands(d.data?.custom_id, modalValues(d));
+      if (f === null) return;
       await b.respond(d, 6);
-      if (cmds.length) post({ cmds, it });
+      if (f.cmds.length) post({ cmds: f.cmds.map(phoneLine), it, page: f.page });
     }
   });
 }

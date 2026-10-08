@@ -21,7 +21,14 @@
   （`gh secret set`、トークンは秘密 `LAB_SECRETS_TOKEN`: このリポジトリだけ・Secrets の Read and write）。値は届いた時点でログから伏せ、
   どこにも出さない。`名前=値` のメッセージでも（そのメッセージは自分で消す）。
 - app.yml の常駐の端末（mode hold）でも `MS_EMAIL` / `MS_PASSWORD` を渡す（`signin` がそこでも使える）。
-- 試験: `tests/play-offline.mjs`（14 本: コントローラーの入力イベント、手順、Discord の REST と偽の gateway、秘密のフォーム、ワークフロー）と、
+- 続けて: `move`（歩き続ける）・`turn`（視点を回し続ける）・`mine on|off`・`use on|off`、止めるのは `move stop` / `turn stop` / `release`。
+- サーバーに聞く手順: `where`（場所・向き・体力・手のもの）・`items`・`face`・`lookat`・`goto <x> <z>`（向きを合わせて前へ、を繰り返す。進めなければ跳ぶ）。
+  ラボのアドオンの js を `do` で送る（その js は `tests/play-bds.mjs` が CI の bds ジョブで本物の BDS と本物のクライアントで確かめる）。
+  `do` が先に命令を繰り返す行（`> js …`）を答えと読まない。
+- Discord: ボタンは 3 ページ（遊ぶ・メニュー・道具。切り替えは端末を待たずにすぐ）。道具のページからサーバーを立てて参加まで。`clip [秒]` の動画が
+  DM に動画で届く。15 分を過ぎた押した合図には新しいメッセージで答える。gateway: 最初の心拍は間隔のうちの乱数の時点で、直せない閉じ方
+  （4004 など）はつなぎ直さずに言う、READY の前に閉じたら起動のときに分かる。DM を送れない（50007）などは、何を直すかを添えて言う。
+- 試験: `tests/play-offline.mjs`（17 本: コントローラーの入力イベント、手順、続けての手順、サーバーに聞く手順〔歩くと動く偽のサーバーで goto まで〕、Discord の REST と偽の gateway〔ページ・つながらないとき〕、秘密のフォーム、ワークフロー）・`tests/play-bds.mjs`（本物の BDS）と、
   `tests/app-offline.mjs` に偽の Discord（HTTP と WebSocket）で `app hold` を DM とボタンで動かす試験。
 
 ## v1.24.0 (2026-10-06)

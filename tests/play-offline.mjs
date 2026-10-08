@@ -84,6 +84,71 @@ await t('app.txt: the game verbs are steps (written wrong: the line says how), r
   delete process.env.APP_TIME_SCALE;
 });
 
+await t('continuous verbs: move / turn / mine|use on|off set a stick or trigger and leave it; stop and release let go (pure)', () => {
+  const g = (l) => P.gameLine(l);
+  eq(g('move forward').pad, 'LX=0 LY=-100'); eq(g('move forward right').pad, 'LX=100 LY=-100'); eq(g('move left').pad, 'LX=-100 LY=0', 'a new move replaces the old one'); eq(g('move stop').pad, 'LX=0 LY=0');
+  ok(g('move').error && g('move up').error && g('move left right').error, 'wrong moves');
+  eq(g('turn right').pad, 'RX=40 RY=0'); eq(g('turn up 70').pad, 'RX=0 RY=-70'); eq(g('turn stop').pad, 'RX=0 RY=0'); ok(g('turn forward').error && g('turn left 0').error, 'wrong turns');
+  eq([g('mine on').pad, g('mine off').pad, g('use on').pad, g('place off').pad], ['RT=100', 'RT=0', 'LT=100', 'LT=0']);
+  for (const l of ['move forward', 'turn right', 'mine on', 'move stop']) eq(D.padBatchMs(g(l).pad.split(' ')), 0, `${l}: back at once`);
+});
+
+await t('server verbs: where / items / face / lookat / goto through the lab\'s do (a fake server whose player walks as the controller walks); what is wrong said', async () => {
+  const st = { name: 'Steve', x: 0.5, y: -60, z: 0.5, yaw: 0, pitch: 0, hp: 20, max: 20, slot: 0, item: 'minecraft:diamond*3', dim: 'minecraft:overworld' };
+  const cmds = [], wall = { z: null };
+  const server = { do: async (c) => {
+    cmds.push(c);
+    if (c === P.STATE_JS) return { ok: true, lines: ['> js …', `W [Scripting] LAB_STATE ${JSON.stringify(st)}`] };
+    if (c === P.ITEMS_JS) return { ok: true, lines: ['LAB_ITEMS ["0:minecraft:diamond*3","5:minecraft:bread*2"]'] };
+    const m = /rotation:\{x:(-?[\d.]+),y:(-?[\d.]+)\}/.exec(c); if (m) { st.pitch = Number(m[1]); st.yaw = Number(m[2]); return { ok: true, lines: ['LAB_FACE ok'] }; }
+    const f = /facingLocation:\{x:(-?[\d.]+),y:(-?[\d.]+),z:(-?[\d.]+)\}/.exec(c); if (f) { st.yaw = P.yawTo(st, { x: Number(f[1]), z: Number(f[3]) }); return { ok: true, lines: ['LAB_FACE ok'] }; }
+    return { ok: false, lines: ['E unknown'] };
+  } };
+  // (the controller's walk moves the player along its yaw at 4.3 blocks a second; a wall at z stops it unless it jumps)
+  const pads = [];
+  const adb = { padReady: true, shell: () => ({ status: 0 }), pad: (w) => {
+    pads.push(w);
+    const m = /LY=-100( \+A)? wait(\d+)/.exec(w); if (!m) return;
+    const d = (4.3 * Number(m[2])) / 1000, r = (st.yaw * Math.PI) / 180, nz = st.z + Math.cos(r) * d;
+    if (wall.z !== null && !m[1] && st.z < wall.z && nz >= wall.z) return;
+    st.x += -Math.sin(r) * d; st.z = nz;
+  } };
+  const run = (l, o = {}) => P.playServer(adb, P.gameLine(l), { server, sleep: async () => {}, ...o });
+  eq(await run('where'), 'Steve: (0.5, -60, 0.5)、向き 0°（南）・上下 0°、体力 20/20、手に minecraft:diamond*3（スロット 1）、overworld');
+  eq(await run('items'), '持ち物 2 個: 0:minecraft:diamond*3、5:minecraft:bread*2');
+  ok(/^向きました: .*向き 180°（北）・上下 20°/.test(await run('face north 20')), 'face north 20');
+  ok(/向き -90°（東）/.test(await run('lookat 10.5 -58 0.5')), 'lookat east');
+  const got = await run('goto 6 8');
+  ok(/^着きました（\d+ 回）/.test(got) && P.distXZ(st, { x: 6, z: 8 }) <= 1, `${got} — at ${st.x.toFixed(2)},${st.z.toFixed(2)}`);
+  ok(cmds.some((c) => /rotation:\{x:20,y:-36\.\d\}/.test(c)) && pads.every((w) => /^LY=-100( \+A)? wait\d+( -A)? LY=0$/.test(w)), 'faced toward it, then walked: ' + pads.join(' | '));
+  // a wall in the way: no headway → the next hop jumps
+  Object.assign(st, { x: 0.5, z: 0.5, yaw: 0 }); wall.z = 3; pads.length = 0;
+  const over = await run('goto 0.5 9');
+  ok(/^着きました/.test(over) && pads.some((w) => /\+A/.test(w)), `${over}: ${pads.join(' | ')}`);
+  // never there in time: said with how far
+  let far = ''; let clock = 0;
+  try { await P.playServer({ ...adb, pad: () => {} }, P.gameLine('goto 50 50 2'), { server, sleep: async () => {}, now: () => (clock += 400) }); } catch (e) { far = e.message; }
+  ok(/2 秒で着けませんでした（あと [\d.]+ ブロック）/.test(far), far);
+  // no server, a server that does not answer, no player
+  let e1 = ''; try { await P.playServer(adb, P.gameLine('where'), {}); } catch (e) { e1 = e.message; }
+  let e2 = ''; try { await P.playServer(adb, P.gameLine('where'), { server: { do: async () => ({ ok: false, lines: ['E js unavailable: the addon script did not load'] }) } }); } catch (e) { e2 = e.message; }
+  let e3 = ''; try { await P.playServer(adb, P.gameLine('where'), { server: { do: async () => ({ ok: true, lines: ['LAB_STATE {}'] }) } }); } catch (e) { e3 = e.message; }
+  ok(/bds up と join/.test(e1) && /サーバーが答えません（LAB_STATE）: E js unavailable/.test(e2) && /プレイヤーがいません/.test(e3), [e1, e2, e3].join(' | '));
+  // app.txt: where in a run asks the run's server; written wrong, the line says how
+  const r = S.parseScenario('where\nface west\nface up\ngoto 1\nlookat 1 2 3');
+  ok(r.steps.map((x) => x.verb).join() === 'where,face,lookat' && r.errors.length === 2, r.errors.join(' | '));
+  process.env.APP_TIME_SCALE = '0';
+  const sc = await S.runScenario(r.steps, { adb, runDir: path.join(tmp, 'run3'), decode: () => ({ w: 1, h: 1, data: Buffer.alloc(4) }), pkg: 'x', logcatFile: path.join(tmp, 'none'), server: { logFile: path.join(tmp, 'none'), ...server } });
+  delete process.env.APP_TIME_SCALE;
+  ok(sc.ok && /Steve: /.test(sc.results[0].note) && /向き 90°（西）/.test(sc.results[1].note), JSON.stringify(sc.results.map((x) => x.note)));
+  // (the lab echoes the command, and the command holds the word: never taken for the server's answer)
+  eq(P.serverSaid([`> ${P.STATE_JS}`, 'OK'], 'LAB_STATE'), null); eq(P.serverSaid([`> ${P.faceJs({ yaw: 1, pitch: 2 })}`, 'E js: boom'], 'LAB_FACE'), null);
+  eq(P.serverSaid([`> ${P.STATE_JS}`, '[Scripting] LAB_STATE {"name":"A"}', 'OK'], 'LAB_STATE'), { name: 'A' }); eq(P.serverSaid(['LAB_FACE ok'], 'LAB_FACE'), 'ok');
+  // the compass and the yaw toward a place
+  eq([P.yawTo({ x: 0, z: 0 }, { x: 0, z: 5 }), P.yawTo({ x: 0, z: 0 }, { x: -5, z: 0 }), P.yawTo({ x: 0, z: 0 }, { x: 0, z: -5 }), P.yawTo({ x: 0, z: 0 }, { x: 5, z: 0 })], [0, 90, 180, -90]);
+  eq([0, 45, 90, 135, 180, -135, -90, -45, 270, -180].map(P.compassOf), ['南', '南西', '西', '北西', '北', '北東', '東', '南東', '東', '北']);
+});
+
 await t('live: game verbs, app.txt steps and live\'s own verbs told apart; the help says them all (pure)', () => {
   const k = (l) => LV.liveKind(l);
   eq(['walk forward 2', 'mine 3', 'cmd /time set day'].map(k), ['game', 'game', 'game']);
@@ -98,21 +163,30 @@ await t('live: game verbs, app.txt steps and live\'s own verbs told apart; the h
   eq(['Walk forward 2', 'SCREEN', 'Chat Hello World', 'Hello'].map(LV.phoneLine), ['walk forward 2', 'screen', 'chat Hello World', 'Hello']);
 });
 
-await t('Discord: the controller of buttons (5 rows of 5), each press a live command or a form; forms → commands (pure)', () => {
-  const rows = LV.panel();
-  ok(rows.length === 5 && rows.every((r) => r.type === 1 && r.components.length === 5), 'five rows of five');
-  const all = rows.flatMap((r) => r.components);
-  ok(all.every((b) => b.type === 2 && b.custom_id.length <= 100 && b.label.length <= 80 && !b.disabled), 'buttons within Discord\'s limits');
-  ok(LV.panel(true).flatMap((r) => r.components).every((b) => b.disabled), 'greyed at the end');
-  for (const b of all) {
-    const c = LV.panelCommand(b.custom_id);
-    ok(c && (LV.FORMS[c] || !LV.parseCommand(c).error), `${b.label}: ${c}`);
-    if (LV.liveKind(c) === 'game') ok(!P.gameLine(c).error, `${c} is a good game step`);
+await t('Discord: the controller\'s pages (play, menu, tools: 5 rows of 5 each), each press a live command, a form or another page; forms → commands with their page (pure)', () => {
+  eq(Object.keys(LV.PAGES), ['play', 'menu', 'tools']);
+  for (const page of Object.keys(LV.PAGES)) {
+    const rows = LV.panel(page);
+    ok(rows.length === 5 && rows.every((r) => r.type === 1 && r.components.length === 5), `${page}: five rows of five`);
+    const all = rows.flatMap((r) => r.components);
+    ok(all.every((b) => b.type === 2 && b.custom_id.length <= 100 && b.label.length <= 80 && !b.disabled), `${page}: within Discord's limits`);
+    ok(new Set(all.map((b) => b.custom_id)).size === all.length, `${page}: no two buttons alike`);
+    ok(LV.panel(page, true).flatMap((r) => r.components).every((b) => b.disabled), `${page}: greyed at the end`);
+    for (const b of all) {
+      const p = LV.panelCommand(b.custom_id);
+      ok(p && p.page === page, `${b.label}: on its page`);
+      ok(['#chat', '#cmd'].includes(p.cmd) || /^#page:(play|menu|tools)$/.test(p.cmd) || p.cmd.split(' && ').every((c) => !LV.parseCommand(c).error), `${b.label}: ${p.cmd}`);
+      for (const c of p.cmd.split(' && ')) if (LV.liveKind(c) === 'game') ok(!P.gameLine(c).error, `${c} is a good game step`);
+    }
+    // (every page leads to the others, and to the chat, the commands and the screen)
+    const cmds = all.map((b) => LV.panelCommand(b.custom_id).cmd);
+    ok(Object.keys(LV.PAGES).filter((x) => x !== page).every((x) => cmds.includes(`#page:${x}`)) && cmds.includes('screen'), `${page}: the other pages and the screen: ${cmds.join(' / ')}`);
   }
-  eq(LV.panelCommand('other:x'), null);
-  ok(LV.FORMS['#chat'].components[0].components[0].type === 4 && LV.FORMS['#cmd'].components[0].components[0].style === 2, 'the forms: a line, a paragraph');
-  eq(LV.formCommands('lab-form:chat', { text: ' hello ' }), ['chat hello']); eq(LV.formCommands('lab-form:chat', { text: ' ' }), []);
-  eq(LV.formCommands('lab-form:cmd', { cmds: 'walk forward 2\n# x\nscreen' }), ['walk forward 2', 'screen']); eq(LV.formCommands('else', {}), null);
+  eq(LV.panelCommand('lab:walk forward 1'), { page: 'play', cmd: 'walk forward 1' }, 'an id with no page: the play page\'s');
+  eq(LV.panelCommand('other:x'), null); eq(LV.panel('nope')[0].components[0].custom_id, LV.panel('play')[0].components[0].custom_id, 'an unknown page: play');
+  ok(LV.form('#chat', 'menu').custom_id === 'lab-form:chat:menu' && LV.form('#chat').components[0].components[0].type === 4 && LV.form('#cmd').components[0].components[0].style === 2, 'the forms: a line, a paragraph, their page');
+  eq(LV.formCommands('lab-form:chat:menu', { text: ' hello ' }), { cmds: ['chat hello'], page: 'menu' }); eq(LV.formCommands('lab-form:chat', { text: ' ' }), { cmds: [], page: 'play' });
+  eq(LV.formCommands('lab-form:cmd:tools', { cmds: 'walk forward 2\n# x\nscreen' }), { cmds: ['walk forward 2', 'screen'], page: 'tools' }); eq(LV.formCommands('else', {}), null); eq(LV.formCommands('lab-form:cmd:nope', {}), null);
 });
 
 await t('Discord: who counts (the person, in the DM — never a server\'s message, a bot, someone else); the config; a form\'s values; text kept within a message (pure)', () => {
@@ -166,7 +240,10 @@ const fakeRest = (log) => async (url, init) => {
 };
 const tick = () => new Promise((r) => setTimeout(r, 20));
 
-await t('Discord gateway + live: identify with DIRECT_MESSAGES only; the person\'s message → commands; a press answered at once and queued; a form button → the form; strangers and servers unseen', async () => {
+// (until the condition holds, or 3 s: the fake gateway's events are handled in their own time)
+const until = async (fn, ms = 3000) => { for (const end = Date.now() + ms; Date.now() < end; await tick()) if (fn()) return true; return fn(); };
+
+await t('Discord gateway + live: identify with DIRECT_MESSAGES only; the person\'s message → commands; a press answered at once and queued with its page; another page at once; a form button → the form; strangers and servers unseen', async () => {
   process.env.DISCORD_API_URL = 'https://d.test/api';
   const log = [], jobs = [], me = '123456789012345678';
   const b = DC.bot({ token: 'tok', userId: me, fetchImpl: fakeRest(log), WebSocketImpl: FakeWS });
@@ -176,16 +253,21 @@ await t('Discord gateway + live: identify with DIRECT_MESSAGES only; the person\
   ws.emit('MESSAGE_CREATE', { author: { id: '999999999999999999' }, content: 'kill' });
   ws.emit('MESSAGE_CREATE', { author: { id: me }, guild_id: '5', content: 'kill' });
   ws.emit('MESSAGE_CREATE', { author: { id: me }, content: 'Walk forward 2\nscreen' });
-  ws.emit('INTERACTION_CREATE', { id: 'i1', token: 't1', application_id: 'app1', type: 3, user: { id: me }, data: { custom_id: 'lab:walk forward 1' } });
-  ws.emit('INTERACTION_CREATE', { id: 'i2', token: 't2', application_id: 'app1', type: 3, user: { id: me }, data: { custom_id: 'lab:#chat' } });
-  ws.emit('INTERACTION_CREATE', { id: 'i3', token: 't3', application_id: 'app1', type: 5, user: { id: me }, data: { custom_id: 'lab-form:chat', components: [{ components: [{ custom_id: 'text', value: '/time set day' }] }] } });
-  ws.emit('INTERACTION_CREATE', { id: 'i4', token: 't4', type: 3, user: { id: '999999999999999999' }, data: { custom_id: 'lab:stop' } });
-  await tick();
-  eq(jobs.map((j) => j.cmds), [['walk forward 2', 'screen'], ['walk forward 1'], ['chat /time set day']]);
+  ws.emit('INTERACTION_CREATE', { id: 'i1', token: 't1', application_id: 'app1', type: 3, user: { id: me }, data: { custom_id: 'lab:play:walk forward 1' } });
+  ws.emit('INTERACTION_CREATE', { id: 'i2', token: 't2', application_id: 'app1', type: 3, user: { id: me }, data: { custom_id: 'lab:menu:#chat' } });
+  ws.emit('INTERACTION_CREATE', { id: 'i3', token: 't3', application_id: 'app1', type: 5, user: { id: me }, data: { custom_id: 'lab-form:chat:menu', components: [{ components: [{ custom_id: 'text', value: '/time set day' }] }] } });
+  ws.emit('INTERACTION_CREATE', { id: 'i4', token: 't4', type: 3, user: { id: '999999999999999999' }, data: { custom_id: 'lab:play:stop' } });
+  ws.emit('INTERACTION_CREATE', { id: 'i5', token: 't5', application_id: 'app1', type: 3, user: { id: me }, data: { custom_id: 'lab:play:#page:tools' } });
+  ws.emit('INTERACTION_CREATE', { id: 'i6', token: 't6', application_id: 'app1', type: 3, user: { id: me }, data: { custom_id: 'lab:menu:slot 3' } });
+  ws.emit('INTERACTION_CREATE', { id: 'i7', token: 't7', application_id: 'app1', type: 3, user: { id: me }, data: { custom_id: 'lab:tools:relay && step join' } });
+  ok(await until(() => jobs.length >= 5 && log.filter((x) => /\/callback$/.test(x.url)).length >= 6), `answered: ${JSON.stringify(jobs)}`);
+  eq(jobs.map((j) => [j.cmds, j.page ?? null]), [[['walk forward 2', 'screen'], null], [['walk forward 1'], 'play'], [['chat /time set day'], 'menu'], [['slot 3'], 'menu'], [['relay', 'step join'], 'tools']]);
   eq(jobs[1].it, { id: 'i1', token: 't1', application_id: 'app1' });
   const cb = log.filter((x) => /\/callback$/.test(x.url)).map((x) => [x.url, x.body.type]);
-  eq(cb, [['/interactions/i1/t1/callback', 6], ['/interactions/i2/t2/callback', 9], ['/interactions/i3/t3/callback', 6]]);
-  ok(log.find((x) => x.url === '/interactions/i2/t2/callback').body.data.custom_id === 'lab-form:chat', 'the chat form');
+  eq(cb, [['/interactions/i1/t1/callback', 6], ['/interactions/i2/t2/callback', 9], ['/interactions/i3/t3/callback', 6], ['/interactions/i5/t5/callback', 7], ['/interactions/i6/t6/callback', 6], ['/interactions/i7/t7/callback', 6]]);
+  ok(log.find((x) => x.url === '/interactions/i2/t2/callback').body.data.custom_id === 'lab-form:chat:menu', 'the chat form, of the menu page');
+  const page = log.find((x) => x.url === '/interactions/i5/t5/callback').body.data;
+  ok(page.components.length === 5 && page.components[0].components[0].custom_id.startsWith('lab:tools:') && page.content === undefined && page.attachments === undefined, 'the tools page at once; the text and picture kept: ' + JSON.stringify(page).slice(0, 200));
   // the answer: the message the press was on changed (a new picture), a new message for a typed one
   await b.editReply(jobs[1].it, { content: 'done', components: LV.panel(), files: [{ name: 'screen.png', data: Buffer.from('P') }] });
   await b.send({ content: 'x'.repeat(3000) });
@@ -196,6 +278,27 @@ await t('Discord gateway + live: identify with DIRECT_MESSAGES only; the person\
   ws.onmessage({ data: JSON.stringify({ op: 1 }) }); ok(ws.sent.at(-1).op === 1, 'heartbeat');
   ws.onmessage({ data: JSON.stringify({ op: 7 }) }); ok(ws.closed === 4000, 'reconnect asked');
   b.close();
+  delete process.env.DISCORD_API_URL;
+});
+
+await t('Discord gateway: a connection that closes before READY fails listen() (a refused token says so, and is not tried again); Discord\'s error codes come with what to do', async () => {
+  process.env.DISCORD_API_URL = 'https://d.test/api';
+  class Refused extends FakeWS { send(x) { const m = JSON.parse(x); this.sent.push(m); if (m.op === 2) setTimeout(() => this.onclose?.({ code: 4004 }), 1); } }
+  const said = [];
+  const b = DC.bot({ token: 'bad', userId: '123456789012345678', fetchImpl: fakeRest([]), WebSocketImpl: Refused, log: (x) => said.push(x) });
+  let err = ''; try { await b.listen(() => {}); } catch (e) { err = e.message; }
+  ok(/4004/.test(err) && /DISCORD_BOT_TOKEN/.test(err), err);
+  await tick();
+  ok(said.some((x) => /4004/.test(x)) && Refused.last.sent.filter((m) => m.op === 2).length === 1, `said, and not tried again: ${said.join(' | ')}`);
+  // (a gateway that never says hello and drops the connection)
+  class Dead { constructor() { this.sent = []; setTimeout(() => this.onclose?.({ code: 1006 }), 5); } send() {} close() {} }
+  const b2 = DC.bot({ token: 'tok', userId: '123456789012345678', fetchImpl: fakeRest([]), WebSocketImpl: Dead });
+  let err2 = ''; try { await b2.listen(() => {}); } catch (e) { err2 = e.message; }
+  ok(/gateway につながりません（1006）/.test(err2), err2);
+  b.close(); b2.close();
+  const call = DC.rest({ token: 't', base: 'https://d.test/api', fetchImpl: async () => ({ ok: false, status: 403, text: async () => JSON.stringify({ message: 'Cannot send messages to this user', code: 50007 }) }) });
+  let e3 = null; try { await call('POST', '/channels/1/messages', {}); } catch (e) { e3 = e; }
+  ok(e3 && e3.code === 50007 && e3.status === 403 && /同じサーバー/.test(e3.message), e3?.message);
   delete process.env.DISCORD_API_URL;
 });
 

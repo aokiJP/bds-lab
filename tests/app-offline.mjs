@@ -437,9 +437,11 @@ await t('app hold + Discord: the screen and a controller of buttons in the perso
       emit('MESSAGE_CREATE', { author: { id: ME }, guild_id: '42', content: 'kill' });
       press('i1', 'lab:walk forward 1');
     }
-    if (r.url === '/webhooks/app1/tok-i1/messages/@original') press('i2', 'lab:#cmd');
-    if (r.url === '/interactions/i2/tok-i2/callback') press('i3', 'lab-form:cmd', 5, { components: [{ components: [{ custom_id: 'cmds', value: 'look right 400\nslot 3\nchat hello\nsteps <<\nwait 10\nshot live-dc\nEOF\nstep push /etc/passwd /sdcard/x' }] }] });
-    if (r.url === '/webhooks/app1/tok-i3/messages/@original') emit('MESSAGE_CREATE', { author: { id: ME }, content: 'mine 2\nstop' });
+    if (r.url === '/webhooks/app1/tok-i1/messages/@original') press('i2', 'lab:play:#page:menu');
+    if (r.url === '/interactions/i2/tok-i2/callback') press('i2b', 'lab:menu:#cmd');
+    if (r.url === '/interactions/i2b/tok-i2b/callback') press('i3', 'lab-form:cmd:menu', 5, { components: [{ components: [{ custom_id: 'cmds', value: 'look right 400\nslot 3\nchat hello\nsteps <<\nwait 10\nshot live-dc\nEOF\nstep push /etc/passwd /sdcard/x' }] }] });
+    if (r.url === '/webhooks/app1/tok-i3/messages/@original') press('i4', 'lab:tools:clip 3');
+    if (r.url === '/webhooks/app1/tok-i4/messages/@original') emit('MESSAGE_CREATE', { author: { id: ME }, content: 'Move forward\nwhere\nmine 2\nstop' });
   };
   const dcServer = http.createServer((req, res) => {
     const chunks = []; req.on('data', (d) => chunks.push(d));
@@ -448,7 +450,7 @@ await t('app hold + Discord: the screen and a controller of buttons in the perso
       if (req.headers.authorization !== 'Bot dc-token') return send(401, {});
       const url = req.url.replace(/^\/api/, ''), raw = Buffer.concat(chunks);
       let body = null, files = [];
-      if (/multipart/.test(req.headers['content-type'] ?? '')) { const fd = await new Response(raw, { headers: { 'content-type': req.headers['content-type'] } }).formData(); body = JSON.parse(fd.get('payload_json')); files = await Promise.all([...fd.entries()].filter(([k]) => k.startsWith('files')).map(async ([, f]) => ({ name: f.name, head: Buffer.from(await f.arrayBuffer()).subarray(1, 4).toString() }))); }
+      if (/multipart/.test(req.headers['content-type'] ?? '')) { const fd = await new Response(raw, { headers: { 'content-type': req.headers['content-type'] } }).formData(); body = JSON.parse(fd.get('payload_json')); files = await Promise.all([...fd.entries()].filter(([k]) => k.startsWith('files')).map(async ([, f]) => ({ name: f.name, type: f.type, head: Buffer.from(await f.arrayBuffer()).subarray(1, 4).toString(), mp4: Buffer.from(await f.arrayBuffer()).subarray(4, 8).toString() === 'ftyp' }))); }
       else if (raw.length) body = JSON.parse(raw);
       const r = { method: req.method, url, body, files, n: dc.rest.filter((x) => x.url === url).length + 1 };
       dc.rest.push(r);
@@ -497,17 +499,24 @@ await t('app hold + Discord: the screen and a controller of buttons in the perso
   // the first DM: the screen and the controller
   ok(/端末を待っています/.test(posts[0]?.body?.content) && posts[0].body.components.length === 5 && posts[0].files[0]?.name === 'screen.png' && posts[0].files[0].head === 'PNG', JSON.stringify(posts[0]));
   // a press: answered at once (deferred), then its message changed with the screen after the walk
-  eq(cbs.map((r) => [r.url, r.body.type]), [['/interactions/i1/tok-i1/callback', 6], ['/interactions/i2/tok-i2/callback', 9], ['/interactions/i3/tok-i3/callback', 6]]);
+  eq(cbs.map((r) => [r.url, r.body.type]), [['/interactions/i1/tok-i1/callback', 6], ['/interactions/i2/tok-i2/callback', 7], ['/interactions/i2b/tok-i2b/callback', 9], ['/interactions/i3/tok-i3/callback', 6], ['/interactions/i4/tok-i4/callback', 6]]);
+  // another page at once (no device step), the form opened from it answered with that page's buttons
+  ok(cbs[1].body.data.components[0].components[0].custom_id.startsWith('lab:menu:') && cbs[2].body.data.custom_id === 'lab-form:cmd:menu', JSON.stringify(cbs[1].body).slice(0, 200));
   ok(/forward へ 1 秒歩きました/.test(edits[0]?.body?.content) && edits[0].url === '/webhooks/app1/tok-i1/messages/@original' && edits[0].files[0]?.head === 'PNG' && edits[0].body.components.length === 5, JSON.stringify(edits[0]));
   ok(/視点を right へ（400 ミリ秒/.test(edits[1]?.body?.content) && /スロット 3/.test(edits[1]?.body?.content), edits[1]?.body?.content);
   // app.txt's steps on the device as it is: one line, several (steps <<: the picture it took is the answer's), never push
   ok(/✔ 1 chat hello/.test(edits[1]?.body?.content) && /✔ 2 shot live-dc/.test(edits[1]?.body?.content) && /push は live では使えません/.test(edits[1]?.body?.content), edits[1]?.body?.content);
+  ok(edits[1].body.components[0].components[0].custom_id.startsWith('lab:menu:'), 'answered on the page it came from');
+  // a clip: the video as a file beside the screen
+  ok(/3 秒の動画 0\.0 MB/.test(edits[2]?.body?.content) && edits[2].files.some((f) => f.name === 'clip.mp4' && f.type === 'video/mp4' && f.mp4) && edits[2].files.some((f) => f.name === 'screen.png'), JSON.stringify(edits[2]?.files) + edits[2]?.body?.content);
   // a typed message: a new message with the answer; stop greys the buttons; the last word says it ended
   const last = posts.at(-2), bye = posts.at(-1);
   ok(/壊す（RT 2 秒）/.test(last?.body?.content) && /終わります/.test(last?.body?.content) && last.body.components.every((r) => r.components.every((b) => b.disabled)), JSON.stringify(last?.body));
+  // (a phone's capital: Move → move; where with no server of the lab up: said why, the rest goes on)
+  ok(/forward へ歩き続けます/.test(last?.body?.content) && /> where/.test(last?.body?.content) && /サーバーが答えません|BDS/.test(last?.body?.content), last?.body?.content);
   ok(/終わりました/.test(bye?.body?.content) && !bye.body.components, bye?.body?.content);
   const st2 = JSON.parse(fs.readFileSync(state, 'utf8'));
-  eq((st2.padWords ?? []).filter((w) => /=/.test(w)), ['LY=-100 wait1000 LY=0', 'RX=100 wait400 RX=0', 'RT=100 wait2000 RT=0'], 'the sticks and the trigger through the controller');
+  eq((st2.padWords ?? []).filter((w) => /=/.test(w)), ['LY=-100 wait1000 LY=0', 'RX=100 wait400 RX=0', 'LX=0 LY=-100', 'RT=100 wait2000 RT=0'], 'the sticks and the trigger through the controller');
   ok((st2.calls ?? []).includes('shell input keyevent 10') && (st2.calls ?? []).includes('shell input text hello') && !(st2.calls ?? []).some((x) => /force-stop|passwd/.test(x)), 'slot 3 by its key, the chat typed; the stranger\'s and the server\'s kill not run: ' + (st2.calls ?? []).slice(-15).join(' | '));
   ok(!JSON.stringify(dc.rest).includes('dc-token') && !gh.comments.some((x) => x.body.includes('dc-token')), 'the bot\'s token said nowhere');
 }));
