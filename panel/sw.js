@@ -7,12 +7,16 @@
 // the new shell and drops the old). Without a version the files are asked of the network first, so nothing can go stale.
 //   - at install: the shell is fetched afresh (index.html, panel.css, panel.js, the manifest and icon, config.json and every
 //     module panel.js imports, found by reading the imports) and kept in this version's cache, all or nothing
-//   - the page itself (a navigation) and config.json: the network first, the kept copy when it does not answer
+//   - the page itself (a navigation to the folder's head or its index.html) and config.json: the network first, the kept copy
+//     when it does not answer; the page is kept as index.html, and only when the answer is html
+//   - any other file opened in a tab (README.md, an icon, a module, another page): the network's answer, never kept — it must not
+//     take the page's place; offline it is its own kept copy when there is one, else the browser's own offline page
 //   - the rest of the panel's own files: the kept copy first, the network when it is not there (and kept then)
 //   - api.github.com and every other origin: not touched at all (the page's CSP lets it talk to GitHub alone, and a token
 //     never passes through here)
 //   - a notification tapped: the panel's address in its data (a string, or { url }) is opened, or brought to the front
-// route() is the whole decision of where a request goes, kept at the top level for tests/inbox-offline.mjs to read.
+// route() is the whole decision of where a request goes, isPage() of what the page is and target() of where a tapped notification
+// goes: kept at the top level for tests/inbox-offline.mjs to read.
 
 const SCOPE = new URL('./', globalThis.location.href).href;
 const VERSION = (() => { const v = new URL(globalThis.location.href).searchParams.get('v') ?? ''; return /^[A-Za-z0-9._-]{1,64}$/.test(v) ? v : ''; })();
@@ -26,7 +30,7 @@ const MAX_FILES = 300;
 
 /** where a request goes (pure): 'network-first' (the page and config.json), 'cache-first' (the panel's other files) or 'pass'
  *  (not ours to touch: GitHub's API, every other origin, this worker's own file). origin: this worker's; mode: the request's,
- *  when it is known — a navigation is the page, whatever its address */
+ *  when it is known — a navigation goes network first whatever its address (isPage tells whether it is the page) */
 function route(url, origin, mode = '') {
   let u;
   try { u = new URL(String(url), origin); } catch { return 'pass'; }
@@ -35,6 +39,16 @@ function route(url, origin, mode = '') {
   if (p.endsWith('/sw.js')) return 'pass';
   if (mode === 'navigate' || p.endsWith('/') || p.endsWith('.html') || p.endsWith('/config.json')) return 'network-first';
   return 'cache-first';
+}
+
+/** whether an address is the page itself (pure): the folder's head or its index.html, whatever the query or #tab. Every other
+ *  address — README.md, config.json, an icon, a module, another page, a folder inside — and the same path on another origin is a
+ *  file. url: absolute; scope: this worker's folder */
+function isPage(url, scope = SCOPE) {
+  let u;
+  try { u = new URL(String(url)); } catch { return false; }
+  const head = new URL(scope);
+  return u.origin === head.origin && (u.pathname === head.pathname || u.pathname === new URL('index.html', head).pathname);
 }
 
 /** the files a module names with import / export … from / import(), as addresses inside this folder (pure) */
@@ -47,19 +61,30 @@ function imports(text, base) {
 }
 
 /** the shell fetched afresh (past the browser's own cache) and written to this version's cache — nothing is written unless the
- *  files that make the page are all there; a module that is missing is no trouble (it is kept when it is first asked for) */
+ *  files that make the page are all there; a module that is missing is no trouble (it is kept when it is first asked for). Each
+ *  answer's body is read the moment it comes, a failure's too, and what is kept is an answer made of what was read: an answer
+ *  left unread holds its connection, and over HTTP/1.1 (a few connections to a host) the first answers would hold them all while
+ *  waiting for the rest — the rest never asked of the host, the install never ending */
 async function precache() {
   const got = new Map(), tried = new Set();
   let wave = SHELL.map((p) => new URL(p, SCOPE).href);
   while (wave.length && tried.size < MAX_FILES) {
     const now = [...new Set(wave)].filter((u) => !tried.has(u)).slice(0, MAX_FILES - tried.size);
     for (const u of now) tried.add(u);
-    const done = await Promise.all(now.map(async (u) => { try { const r = await fetch(u, { cache: 'reload' }); return r.ok ? [u, r] : null; } catch { return null; } }));
+    const done = await Promise.all(now.map(async (u) => {
+      try {
+        const r = await fetch(u, { cache: 'reload' }), body = await r.blob();
+        if (!r.ok) return null;
+        // (a module's imports are found in what was read, not in a clone of the answer)
+        const js = /\.m?js$/.test(new URL(u).pathname) ? await body.text() : '';
+        return [u, new Response(body, { status: r.status, statusText: r.statusText, headers: r.headers }), js];
+      } catch { return null; }
+    }));
     wave = [];
     for (const d of done) {
       if (!d) continue;
       got.set(d[0], d[1]);
-      if (/\.m?js$/.test(new URL(d[0]).pathname)) wave.push(...imports(await d[1].clone().text(), d[0]));
+      wave.push(...imports(d[2], d[0]));
     }
   }
   for (const p of MUST) if (!got.has(new URL(p, SCOPE).href)) throw new Error(`${p} が取れません`);
@@ -68,15 +93,20 @@ async function precache() {
 }
 const kept = async (key) => (await globalThis.caches.open(CACHE)).match(key);
 const keep = async (key, res) => { try { await (await globalThis.caches.open(CACHE)).put(key, res); } catch { /* storage full or refused */ } };
+// (an answer is html when its content-type says so, however that is written: "Text/HTML ; charset=utf-8")
+const isHtml = (res) => /^\s*text\/html\s*(?:;|$)/i.test(res.headers.get('content-type') ?? '');
 
-/** the network first; when it does not answer (or the server is failing) the kept copy. A page is kept as index.html whatever
- *  its address — the address may carry a one-time code (GitHub's way back with the App), which is never kept. A file is asked
- *  of the server again, not of the browser's own ten-minute cache (a page cannot be: a navigation takes no options) */
+/** the network first; when it does not answer (or the server is failing) the kept copy. The page — a navigation to the folder's
+ *  head or its index.html — is kept as index.html whatever its address (the address may carry a one-time code, GitHub's way back
+ *  with the App, which is never kept), and only when the answer is html. Any other file opened in a tab is the network's answer,
+ *  never written — not as the page, not at its own address — so a README.md or an icon cannot take the page's place; offline it
+ *  is its own kept copy when there is one. A file the page asks for is kept at its own address, and is asked of the server
+ *  again, not of the browser's own ten-minute cache (a navigation takes no options, so a page cannot be) */
 async function networkFirst(event) {
-  const req = event.request, key = req.mode === 'navigate' ? INDEX : req;
+  const req = event.request, tab = req.mode === 'navigate', page = tab && isPage(req.url), key = page ? INDEX : req;
   try {
-    const res = await fetch(req, req.mode !== 'navigate' && req.cache === 'default' ? { cache: 'no-cache' } : undefined);
-    if (res.ok && res.type === 'basic') event.waitUntil(keep(key, res.clone()));
+    const res = await fetch(req, !tab && req.cache === 'default' ? { cache: 'no-cache' } : undefined);
+    if (res.ok && res.type === 'basic' && (page ? isHtml(res) : !tab)) event.waitUntil(keep(key, res.clone()));
     else if (res.status >= 500) { const hit = await kept(key); if (hit) return hit; }
     return res;
   } catch (e) {

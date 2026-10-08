@@ -82,7 +82,8 @@ const newest = (a, b) => Date.parse(b.at) - Date.parse(a.at);
  *  `max` kept) → how many were new; list(): newest first; unread(): how many are not read; markRead(id | 'all') → how many
  *  changed; clear() → how many were removed; last(): the snapshot the look before kept (null: none), remember(snapshot) keeps one;
  *  onChange(fn) → a way to stop being told (told after add, markRead and clear changed something, by any store over this
- *  storage and key) */
+ *  storage and key). The key is one per account and per lab (the page's: bdslab.panel.inbox.<login>.<lab>) — nobody is shown
+ *  another person's news */
 export function store(storage, key, { max = INBOX_MAX } = {}) {
   const SNAP = `${key}.snapshot`, subs = listeners(storage, key);
   const read = () => { try { const j = JSON.parse(storage.getItem(key) ?? 'null'); return Array.isArray(j?.items) ? j.items.map((x) => keep(x, 0)).filter(Boolean) : []; } catch { return []; } };

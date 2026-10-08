@@ -3,8 +3,10 @@
 // version) and the list that keeps it (200 at most, each once, read or not, in a storage that may refuse); a .env text read
 // into secrets (quotes, comments, several lines, what is refused — and no value ever in a message); the service worker's file
 // run in node:vm against a fake cache, network and windows (where each request goes, the shell kept at install all or
-// nothing, the network first for the page and config.json, the kept copy first for the rest, GitHub and every other origin
-// never touched, a tapped notification opening the panel); and the three screens on a small fake DOM.
+// nothing — and whole from a host that answers 3 at a time, as over HTTP/1.1 —, the network first for the page and
+// config.json — the page kept only when it is html, and never taken the place of by a README.md or an icon opened in a tab —,
+// the kept copy first for the rest, GitHub and every other origin never touched, a tapped notification opening the panel); and
+// the three screens on a small fake DOM.
 // node tests/inbox-offline.mjs
 import fs from 'node:fs';
 import path from 'node:path';
@@ -287,16 +289,35 @@ await t('parseEnv: no value ever in an error or a warning — not of a refused l
 // ---- the service worker, run in node:vm against a fake cache, network and windows ----
 const SW_SRC = fs.readFileSync(path.join(TOP, 'panel', 'sw.js'), 'utf8');
 const B = 'https://o.github.io/bds-lab/', ORIGIN = 'https://o.github.io';
+// (what a static host says of a file by its name; an address ending in / is that folder's index.html)
+const TYPES = { html: 'text/html; charset=utf-8', css: 'text/css; charset=utf-8', js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', json: 'application/json; charset=utf-8', svg: 'image/svg+xml', md: 'text/markdown; charset=utf-8', webmanifest: 'application/manifest+json' };
+const typeOf = (u) => { const p = new URL(u).pathname; return TYPES[/\.([a-z]+)$/.exec(p)?.[1]] ?? (p.endsWith('/') ? TYPES.html : 'application/octet-stream'); };
 /** panel/sw.js loaded as a browser loads it (a classic script in a worker's global scope) over a fake CacheStorage, network and
- *  window list. site: address → body | { body, status }; kept: caches there already (name → { address: body }) */
-function loadSw({ href = `${B}sw.js?v=v1`, site = {}, kept = {}, windows = [] } = {}) {
+ *  window list. site: address → body | { body, status, type } (type: its content-type — the host's, by the file's name, when it is
+ *  not given; null: none at all); kept: caches there already (name → { address: body }); conns: how many requests the host
+ *  answers at once, as over HTTP/1.1 — an answer holds its connection until its body is read to the end or dropped, and a request
+ *  past that waits for one to be freed (0: no limit) */
+function loadSw({ href = `${B}sw.js?v=v1`, site = {}, kept = {}, windows = [], conns = 0 } = {}) {
   const listeners = {}, log = { fetched: [], skipped: 0, claimed: 0, opened: [] }, net = { offline: false };
+  // (the host's connections: how many answers hold one, the requests waiting for one, how many ever waited, what was answered)
+  const line = { busy: 0, waiting: [], waited: 0, answered: [] };
+  const take = () => { if (line.busy < conns) { line.busy++; return undefined; } line.waited++; return new Promise((go) => line.waiting.push(go)); };
+  // (a freed connection goes straight to the next request waiting: it is never counted free in between)
+  const give = () => { const next = line.waiting.shift(); if (next) next(); else line.busy--; };
+  /** a body that frees its connection when it is read to the end or dropped — and is not read before somebody asks (highWaterMark 0) */
+  const held = (bytes) => {
+    let on = true;
+    const free = () => { if (on) { on = false; give(); } };
+    return new ReadableStream({ pull(c) { if (bytes.length) c.enqueue(bytes); c.close(); free(); }, cancel: free }, { highWaterMark: 0 });
+  };
   const store = new Map(Object.entries(kept).map(([n, files]) => [n, new Map(Object.entries(files).map(([u, body]) => [u, { body, status: 200 }]))]));
   const urlOf = (r) => (typeof r === 'string' ? r : r.url);
   const cacheOf = (name) => {
     if (!store.has(name)) store.set(name, new Map());
     const m = store.get(name);
-    return { put: async (r, res) => { m.set(urlOf(r), { body: await res.text(), status: res.status }); }, match: async (r) => { const e = m.get(urlOf(r)); return e ? new Response(e.body, { status: e.status }) : undefined; } };
+    // (a kept copy keeps its content-type, as the real cache does: the page given back from it must still be a page)
+    return { put: async (r, res) => { m.set(urlOf(r), { body: await res.text(), status: res.status, type: res.headers.get('content-type') }); },
+      match: async (r) => { const e = m.get(urlOf(r)); return e ? new Response(e.body, { status: e.status, headers: e.type ? { 'content-type': e.type } : undefined }) : undefined; } };
   };
   const sandbox = {
     URL, Response, console, location: { href, origin: new URL(href).origin },
@@ -304,7 +325,10 @@ function loadSw({ href = `${B}sw.js?v=v1`, site = {}, kept = {}, windows = [] } 
     fetch: async (req, init) => {
       const u = urlOf(req); log.fetched.push({ url: u, cache: init?.cache });
       if (net.offline) throw new TypeError('Failed to fetch');
-      const e = site[u], r = new Response(e === undefined ? 'not found' : typeof e === 'string' ? e : e.body, { status: e === undefined ? 404 : e.status ?? 200 });
+      const e = site[u], type = e?.type === undefined ? typeOf(u) : e.type;
+      const head = { status: e === undefined ? 404 : e.status ?? 200, headers: type === null ? {} : { 'content-type': type } };
+      let r = new Response(e === undefined ? 'not found' : typeof e === 'string' ? e : e.body, head);
+      if (conns) { const bytes = new Uint8Array(await r.arrayBuffer()); await take(); line.answered.push(u); r = new Response(held(bytes), head); }
       Object.defineProperty(r, 'type', { value: 'basic' });
       return r;
     },
@@ -329,7 +353,7 @@ function loadSw({ href = `${B}sw.js?v=v1`, site = {}, kept = {}, windows = [] } 
     return res;
   };
   const kept2 = (name) => { const m = store.get(name); return m ? Object.fromEntries([...m].map(([u, x]) => [u, x.body])) : null; };
-  return { sandbox, route: sandbox.route, target: sandbox.target, listeners, log, net, store, fire, request, kept: kept2, site };
+  return { sandbox, route: sandbox.route, target: sandbox.target, isPage: sandbox.isPage, listeners, log, net, line, store, fire, request, kept: kept2, site };
 }
 const SITE = () => ({
   [`${B}index.html`]: '<!doctype html>INDEX', [`${B}panel.css`]: 'css', [`${B}manifest.webmanifest`]: '{}', [`${B}icon.svg`]: '<svg/>', [`${B}config.json`]: '{"version":"v1"}',
@@ -338,6 +362,13 @@ const SITE = () => ({
   [`${B}lib/re.mjs`]: "import '../ui/dom.mjs';", [`${B}lib/lazy.mjs`]: 'export default 1;', [`${B}lib/q.mjs`]: 'export default 2;', [`${B}lib/new.mjs`]: 'export const fresh = 1;',
 });
 const CACHE_V1 = 'bdslab-panel:/bds-lab/:v1';
+/** a tab of w opened at `u`, the host answering `answer` (site's form) for that one request → [status, text]; the site as it was after */
+const opened = async (w, u, answer = w.site[u]) => {
+  const had = w.site[u]; w.site[u] = answer;
+  try { const r = await w.request(u, { mode: 'navigate' }); return [r.status, await r.text()]; } finally { if (had === undefined) delete w.site[u]; else w.site[u] = had; }
+};
+/** p's value, or 'stuck' when it has not come in ms (the timer does not keep node waiting once p has come) */
+const within = (ms, p) => { let timer; return Promise.race([p, new Promise((go) => { timer = setTimeout(() => go('stuck'), ms); })]).finally(() => clearTimeout(timer)); };
 
 await t('sw.js route(url, origin): the page and config.json network first, the panel\'s other files cache first, GitHub\'s API, every other origin and the worker itself not touched (node:vm)', () => {
   const { route } = loadSw();
@@ -375,6 +406,32 @@ await t('sw.js install: the shell fetched afresh — every module found by readi
   eq([...bare.store.keys()], ['bdslab-panel:/bds-lab/:unversioned']);
   // a version that is not a plain token is no version
   eq([...(await (async () => { const x = loadSw({ href: `${B}sw.js?v=a%20b/..`, site: SITE() }); await x.fire('install'); return x.store.keys(); })())], ['bdslab-panel:/bds-lab/:unversioned']);
+});
+
+await t('sw.js install: each answer\'s body is read as soon as it comes — a host over HTTP/1.1 (3 answers at a time, each holding its connection until its body is read) still gives the whole shell, the install ends, and offline the page opens (node:vm)', async () => {
+  // the host is that strict: a fourth request waits while three answers lie unread, and is answered when one of them is read
+  const h = loadSw({ site: SITE(), conns: 3 }), asked = ['index.html', 'panel.css', 'panel.js', 'icon.svg'].map((p) => h.sandbox.fetch(B + p));
+  const three = await Promise.all(asked.slice(0, 3));
+  eq(await within(50, asked[3]), 'stuck', 'a fourth request waits while three answers lie unread');
+  await three[1].text();
+  const fourth = await within(50, asked[3]);
+  ok(fourth !== 'stuck', 'one read: the fourth is answered');
+  eq(await fourth.text(), '<svg/>');
+  // the install: an answer kept unread until all the others have come holds its connection, the rest never reach the host, and
+  // the install never ends (the worker stays installing, nothing is kept, the panel does not open offline)
+  const w = loadSw({ site: SITE(), conns: 3 });
+  eq(await within(2000, w.fire('install').then(() => 'installed')), 'installed', `the install ends — answered: ${w.line.answered.map((u) => u.slice(B.length)).join(' ')}; still waiting: ${w.line.waiting.length}`);
+  const site = SITE(), kept = w.store.get(CACHE_V1);
+  eq([...kept.keys()].sort(), [`${B}config.json`, `${B}icon.svg`, `${B}index.html`, `${B}lib/lazy.mjs`, `${B}lib/model.mjs`, `${B}lib/q.mjs`, `${B}lib/re.mjs`, `${B}lib/seal.mjs`, `${B}lib/side.mjs`, `${B}manifest.webmanifest`, `${B}panel.css`, `${B}panel.js`, `${B}ui/dom.mjs`].sort(), 'the shell and every module it imports');
+  for (const [u, x] of kept) eq([x.body, x.status, x.type], [site[u], 200, typeOf(u)], `${u}: kept as it came, its content-type with it`);
+  ok(w.line.waited > 0, 'the host did make requests wait');
+  eq([w.line.busy, w.line.waiting.length], [0, 0], 'every answer read, a 404 too: no connection is left held (three 404s left unread would hold the host as well)');
+  eq(w.log.skipped, 1);
+  await w.fire('activate');
+  w.net.offline = true;
+  eq(await opened(w, B), [200, '<!doctype html>INDEX'], 'offline: the page opens from what was kept');
+  eq((await w.request(B, { mode: 'navigate' })).headers.get('content-type'), 'text/html; charset=utf-8', 'as a page');
+  eq(await (await w.request(`${B}lib/seal.mjs`)).text(), 'export const y = 2;', 'and a module found by reading the imports');
 });
 
 await t('sw.js install: all or nothing — a file the page cannot do without missing, and nothing is written (the old worker stays); a module or config.json missing is no trouble', async () => {
@@ -442,6 +499,75 @@ await t('sw.js fetch: the page and config.json network first (the kept copy when
   // a server failing with nothing kept: its answer
   const bad = loadSw({ site: { [B]: { body: 'down', status: 503 } } });
   eq(await text(bad.request(B, { mode: 'navigate' })), [503, 'down']);
+});
+
+await t('sw.js isPage(url): the folder\'s head and index.html — whatever the query or #tab — are the page; every other address, and the same path on another origin, is a file (pure, node:vm)', () => {
+  const { isPage } = loadSw();
+  for (const u of [B, `${B}?code=abc123`, `${B}#runs?repo=o%2Flab`, `${B}index.html`, `${B}index.html?x=1`, `${B}index.html#overview`, `${B}./`, `${B}lib/../`, 'https://o.github.io:443/bds-lab/']) ok(isPage(u), u);
+  for (const u of [`${B}README.md`, `${B}config.json`, `${B}icon.svg`, `${B}manifest.webmanifest`, `${B}panel.js`, `${B}lib/model.mjs`, `${B}other.html`, `${B}lib/`, `${B}lib/index.html`, `${B}index.htm`, `${B}Index.html`, `${B}index.html/`, `${B}index.html.md`,
+    ORIGIN + '/', ORIGIN + '/index.html', `${ORIGIN}/other-lab/`, 'https://evil.example/bds-lab/', 'https://evil.example/bds-lab/index.html', 'http://o.github.io/bds-lab/', 'https://api.github.com/bds-lab/', 'data:text/html,hi', 'http://[bad', null, undefined]) ok(!isPage(u), String(u));
+  // the folder's own name is what makes a head: a panel at the origin's root has its own
+  const root = loadSw({ href: `${ORIGIN}/sw.js` });
+  ok(root.isPage(ORIGIN + '/') && root.isPage(ORIGIN + '/index.html?x=1') && !root.isPage(B) && !root.isPage(`${ORIGIN}/README.md`), 'a panel at the root of its origin');
+});
+
+await t('sw.js fetch: a file opened in a tab (README.md, config.json, icon.svg, a module, another page, a folder inside) is that file — the network\'s, never written: not as the page, not at its own address; offline the page is still the page (node:vm)', async () => {
+  const site = SITE(); site[B] = '<!doctype html>PAGE';
+  Object.assign(site, { [`${B}README.md`]: '# the panel\'s README', [`${B}other.html`]: '<!doctype html>OTHER', [`${B}lib/`]: '<!doctype html>LISTING', [`${B}lib/index.html`]: '<!doctype html>SUB' });
+  const w = loadSw({ site });
+  await w.fire('install'); await w.fire('activate');
+  const nav = (u, answer) => opened(w, u, answer);
+  // the head, opened first, is the page: kept as index.html
+  eq(await nav(B), [200, '<!doctype html>PAGE']);
+  eq(w.kept(CACHE_V1)[`${B}index.html`], '<!doctype html>PAGE', 'the head: kept as the page');
+  const before = w.kept(CACHE_V1);
+  const files = { [`${B}README.md`]: '# the panel\'s README', [`${B}config.json`]: '{"version":"v1"}', [`${B}icon.svg`]: '<svg/>', [`${B}panel.css`]: 'css', [`${B}manifest.webmanifest`]: '{}', [`${B}lib/model.mjs`]: "import { y } from './seal.mjs';\nexport const M = 1;",
+    [`${B}other.html`]: '<!doctype html>OTHER', [`${B}lib/`]: '<!doctype html>LISTING', [`${B}lib/index.html`]: '<!doctype html>SUB', [`${B}lib/never.mjs`]: 'not found' };
+  for (const [u, body] of Object.entries(files)) {
+    eq(await nav(u), [u.endsWith('never.mjs') ? 404 : 200, body], `${u} opened in a tab: the file itself`);
+    eq(w.kept(CACHE_V1), before, `${u}: nothing is written — not as index.html, not at its own address`);
+  }
+  // a file that has changed is shown as it is now in the tab, and what the page keeps of it is not touched
+  eq(await nav(`${B}config.json`, '{"version":"v2"}'), [200, '{"version":"v2"}']);
+  eq(await nav(`${B}icon.svg`, '<svg id="new"/>'), [200, '<svg id="new"/>']);
+  eq(w.kept(CACHE_V1), before, 'a tab does not change what is kept');
+  // a failing server: the file's own kept copy when there is one (config.json, kept at install), else its answer — never the page
+  eq(await nav(`${B}config.json`, { body: 'bad gateway', status: 502 }), [200, '{"version":"v1"}'], 'a failing server: the file\'s own kept copy');
+  eq(await nav(`${B}README.md`, { body: 'down', status: 503 }), [503, 'down'], 'and with none, its answer — not the page');
+  eq(w.kept(CACHE_V1), before, 'and nothing is written');
+  // offline: the page is the page whatever was opened in between
+  w.net.offline = true;
+  eq(await nav(B), [200, '<!doctype html>PAGE'], 'offline: the head is the panel, not the README');
+  eq(await nav(`${B}index.html?x=1`), [200, '<!doctype html>PAGE'], 'offline: index.html');
+  eq((await w.request(B, { mode: 'navigate' })).headers.get('content-type'), 'text/html; charset=utf-8', 'and it is still given as a page');
+  // offline, a file is its own kept copy when there is one — never the page — and the browser's own offline page when there is not
+  for (const u of [`${B}README.md`, `${B}other.html`, `${B}lib/`, `${B}lib/index.html`, `${B}lib/never.mjs`]) await throws(() => w.request(u, { mode: 'navigate' }), /Failed to fetch/, `${u}: never kept, and never the page in its place`);
+  eq(await nav(`${B}lib/model.mjs`), [200, files[`${B}lib/model.mjs`]], 'offline: a module kept at install is itself');
+  eq(await nav(`${B}icon.svg`), [200, '<svg/>'], 'offline: icon.svg as kept at install');
+  // the first thing opened is a file, not the head: the page kept at install is still the page, offline
+  const first = loadSw({ site });
+  await first.fire('install'); await first.fire('activate');
+  for (const u of Object.keys(files)) await opened(first, u);
+  first.net.offline = true;
+  eq(await opened(first, B), [200, '<!doctype html>INDEX'], 'files first: the page kept at install is the page offline');
+});
+
+await t('sw.js fetch: only an html answer for the folder\'s head or index.html is kept as the page — another content-type, or none, is given as it came and never kept; how the type is written does not matter (node:vm)', async () => {
+  const w = loadSw({ site: SITE() });
+  await w.fire('install'); await w.fire('activate');
+  const page = () => w.kept(CACHE_V1)[`${B}index.html`], bytes = (s) => new TextEncoder().encode(s); // (bytes carry no content-type of their own)
+  eq(page(), '<!doctype html>INDEX', 'kept at install');
+  for (const type of ['text/plain', 'text/plain; charset=utf-8', 'application/json', 'text/css', 'text/htmlx', 'text/html-fragment', 'application/octet-stream', 'image/svg+xml', '', null]) {
+    for (const u of [B, `${B}index.html`, `${B}?code=1`]) {
+      eq(await opened(w, u, { body: bytes(`AS ${type}`), type }), [200, `AS ${type}`], `${u} as ${JSON.stringify(type)}: given as it came`);
+      eq(page(), '<!doctype html>INDEX', `${u} as ${JSON.stringify(type)}: not kept as the page`);
+    }
+  }
+  for (const type of ['text/html', 'text/html; charset=utf-8', 'TEXT/HTML;charset=UTF-8', 'Text/Html ;charset=utf-8']) {
+    const body = `<!doctype html>AS ${type}`;
+    eq(await opened(w, B, { body, type }), [200, body], type);
+    eq(page(), body, `${type}: kept as the page`);
+  }
 });
 
 await t('sw.js fetch: the panel\'s other files cache first (kept at install, kept when first asked for, a failure never kept); without a version in the worker\'s address the network first (node:vm)', async () => {
