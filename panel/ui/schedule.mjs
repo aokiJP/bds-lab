@@ -4,7 +4,7 @@
 // computer, no one's token. Saving them starts workflows ahead of time, so it is the policy's 「ワークフローを始める」
 // (dispatch), kept in the audit log; a schedule of hostrun.yml needs the policy's hostrun too, and one of ai-make (the AI's
 // API, each time it starts) is asked first.
-import { h, toast, act, link } from './dom.mjs';
+import { h, toast, link } from './dom.mjs';
 import * as S from '../lib/schedule.mjs';
 import * as M from '../lib/model.mjs';
 
@@ -18,12 +18,18 @@ const when = (job, now) => S.nextRuns(job, now, 3).map((d) => S.fmtWhen(d, job.t
 /** an element's children replaced, as h takes them (nested lists flattened, null and false left out — the DOM itself would
  *  show them as text) */
 const fill = (el, ...kids) => el.replaceChildren(...kids.flat(Infinity).filter((k) => k !== null && k !== undefined && k !== false));
+/** GitHub's refusal of the file's write (as api throws it: { status, message }) → is it that the sha read is no longer the
+ *  file's (pure): changed elsewhere since it was read (409 「… does not match <sha>」), the branch moved under the write (409
+ *  「is at … but expected …」), made elsewhere while it was read as none (422 「"sha" wasn't supplied」). Any other 409 / 422 is
+ *  not — a protected default branch, a ruleset: read again, it would be refused the same */
+const staleSha = (e) => (e?.status === 409 || e?.status === 422) && /does not match|\bis at \S+ but expected\b|"?sha"? wasn.t supplied/i.test(String(e?.message ?? ''));
+const PROTECTED = '既定の枝が守られているかもしれません（PR が要ります）';
 
 /** the 「予約」 tab. ctx: { api, lab: { slug, repo }, workflows (the lab's workflows as GitHub lists them — { name, path, state }
  *  — or their file names: the active ones but schedule.yml are offered; schedule.yml's own state is shown when it is among
  *  them), dispatchInputs(file) (a workflow's inputs: what M.dispatchInputs gives for its YAML, or a promise of it; none: read
  *  here through api), may(action), gate(action), guarded(action, detail, fn, done), now() (→ ms; tests) } → a promise of the
- *  schedule read */
+ *  schedule read (undefined: not read — why is shown where the list goes) */
 export function scheduleTab(body, ctx) {
   const { api, lab } = ctx, now = () => ctx.now?.() ?? Date.now();
   const may = (a) => Boolean(ctx.may?.(a)), gate = (a) => ctx.gate?.(a) ?? (may(a) ? {} : { disabled: true });
@@ -33,23 +39,37 @@ export function scheduleTab(body, ctx) {
   const st = { sha: null, raw: [], errors: [], broken: false };
   const list = h('div', {}, h('p', { class: 'muted' }, '読んでいます…')), editor = h('div', { id: 'scheduleedit' });
 
-  const load = () => act(async () => {
-    const f = await api.file(lab.slug, S.SCHEDULE_FILE);
+  const load = async () => {
+    let f;
+    // (not read — the network, GitHub down or busy, no right to see it: why, where the list goes, and a way to read again; not
+    // only a passing toast — the list would stay 「読んでいます…」, or show the jobs read before as if they were the file's)
+    try { f = await api.file(lab.slug, S.SCHEDULE_FILE); } catch (e) {
+      fill(list, h('p', { class: 'bad' }, `${S.SCHEDULE_FILE} を読めません: ${e?.message ?? e}`, ' ', h('button', { onclick: reload }, '読み直す')));
+      return undefined;
+    }
     let j = null, broken = false;
     if (f) { try { j = JSON.parse(f.text); } catch { broken = true; } }
     Object.assign(st, { sha: f?.sha ?? null, raw: Array.isArray(j?.jobs) ? j.jobs : [], errors: broken ? [`${S.SCHEDULE_FILE} が JSON ではありません`] : S.checkSchedule(j).errors, broken });
     draw();
     return st;
-  });
+  };
+  // (the form closed first: its place in the list may move)
+  const reload = () => { editor.replaceChildren(); return load(); };
   /** the jobs written to the default branch with the sha read → GitHub's answer, undefined when not done */
   const save = async (jobs, { workflow, done, message }) => {
     const out = S.scheduleText(jobs);
     if (st.broken && !confirm(`いまの ${S.SCHEDULE_FILE} は JSON として読めません。保存すると、その中身は消えて、ここに出ている予約だけになります。よろしいですか`)) return undefined;
     let stale = false;
+    // (any other 409 / 422 — a protected default branch, a ruleset — is GitHub's own words with what it may be: the form kept
+    // as typed, nothing read again)
     const r = await ctx.guarded('dispatch', { file: S.SCHEDULE_FILE, ...(workflow ? { workflow } : {}) },
-      () => api.putFile(lab.slug, S.SCHEDULE_FILE, out.text, st.sha ?? undefined, `panel: 予約 — ${message}`).catch((e) => { stale = e.status === 409 || e.status === 422; throw e; }), done);
+      () => api.putFile(lab.slug, S.SCHEDULE_FILE, out.text, st.sha ?? undefined, `panel: 予約 — ${message}`).catch((e) => {
+        if (staleSha(e)) stale = true;
+        else if (e?.status === 409 || e?.status === 422) throw Object.assign(new Error(`${e.message} — ${PROTECTED}`), { status: e.status });
+        throw e;
+      }), done);
     // (changed elsewhere since it was read: read again, nothing written over; the form closed — its place in the list may have moved)
-    if (r === undefined) { if (stale) { editor.replaceChildren(); await load(); } return undefined; }
+    if (r === undefined) { if (stale) await reload(); return undefined; }
     Object.assign(st, { sha: r?.content?.sha ?? null, raw: JSON.parse(out.text).jobs, errors: out.errors, broken: false });
     if (!st.sha) await load(); else draw();
     return r;
@@ -196,7 +216,7 @@ export function scheduleTab(body, ctx) {
       link(`https://github.com/${lab.slug}/actions/workflows/${S.SCHEDULER}`, 'GitHub で有効にする')) : null,
     may('dispatch') ? null : h('p', { class: 'muted' }, '見るだけです: 予約を変えるには、役割に「ワークフローを始める」が要ります。'),
     list,
-    h('div', { class: 'row' }, h('button', { class: 'primary', ...gate('dispatch'), onclick: () => open(null) }, '＋ 予約を足す'), h('button', { onclick: () => { editor.replaceChildren(); return load(); } }, '読み直す'),
+    h('div', { class: 'row' }, h('button', { class: 'primary', ...gate('dispatch'), onclick: () => open(null) }, '＋ 予約を足す'), h('button', { onclick: reload }, '読み直す'),
       link(`https://github.com/${lab.slug}/blob/${lab.repo?.default_branch ?? 'main'}/${S.SCHEDULE_FILE}`, 'GitHub でファイルを見る'))), editor);
   return load();
 }
