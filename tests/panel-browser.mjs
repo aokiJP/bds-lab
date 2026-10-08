@@ -29,14 +29,24 @@ const SK = crypto.randomBytes(32), PK = SEAL.x25519Public(SK);
 const wf = (f) => fs.readFileSync(path.join(TOP, '.github', 'workflows', f), 'utf8');
 const LAB = 'author1/bds-lab', HOST = 'lender1/bds-lab-host', VKEY = 'panel-browser-key', VENV = { APP_REPO_VISIBILITY: 'public', APP_CACHE_KEY: VKEY };
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+// (and an organization's private lab with a policy: its admin signs in with GitHub — the sign-in service's tokens ghu_* —
+// and a writer comes with a token)
+const CORP = 'acme/corp-lab', ADMIN = { admin: true, push: true, pull: true };
 const people = {
   'tok-author': { login: 'author1', repos: { [LAB]: { admin: true, push: true, pull: true }, [HOST]: { push: true, pull: true } } },
   'tok-stranger': { login: 'stranger', repos: { [LAB]: { pull: true } } },
   'tok-lender': { login: 'lender1', repos: { [HOST]: { admin: true, push: true, pull: true } } },
+  ghu_ceo1: { login: 'ceo1', repos: { [CORP]: ADMIN } }, ghu_ceo2: { login: 'ceo1', repos: { [CORP]: ADMIN } },
+  'tok-writer': { login: 'writer1', repos: { [CORP]: { push: true, pull: true } } },
 };
+const POLICY = { roles: { admin: ['*'], write: ['dispatch', 'run.cancel'], auditor: ['audit.read'] }, teams: { auditors: 'auditor' }, confirm: ['dispatch', 'secrets.delete'], idleMinutes: 30, audit: 'issue' };
 const G = {
   files: { [`${LAB}:.github/workflows/app.yml`]: wf('app.yml'), [`${LAB}:.github/workflows/notify.yml`]: wf('notify.yml'), [`${LAB}:.github/workflows/secrets.yml`]: wf('secrets.yml'), [`${LAB}:.github/workflows/hostrun.yml`]: wf('hostrun.yml'),
-    [`${HOST}:.lab-host.json`]: JSON.stringify({ lab: 1, minutesPerMonth: 600, jobs: ['gate', 'test'], hours: '00:00-24:00', timezone: 'UTC', until: '2099-12-31', contact: 'lender1' }, null, 2) },
+    [`${HOST}:.lab-host.json`]: JSON.stringify({ lab: 1, minutesPerMonth: 600, jobs: ['gate', 'test'], hours: '00:00-24:00', timezone: 'UTC', until: '2099-12-31', contact: 'lender1' }, null, 2),
+    [`${CORP}:.github/workflows/verify.yml`]: wf('verify.yml'), [`${CORP}:.github/workflows/notify.yml`]: wf('notify.yml'), [`${CORP}:.github/workflows/pages.yml`]: wf('pages.yml'), [`${CORP}:.github/workflows/auth-deploy.yml`]: wf('auth-deploy.yml'),
+    [`${CORP}:.github/bds-lab-panel.json`]: JSON.stringify(POLICY) },
+  // (the organization's lab: its own secrets, variables, Pages, issues; the App made from its manifest)
+  corp: { secrets: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID']), vars: {}, pages: null, pagesPut: [], issues: [], comments: {}, labels: [], locks: [], manifests: [], conversions: [] },
   dispatched: [], secretsPut: [], filesPut: [], posted: [], secretNames: new Set(['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID', 'GOOGLE_EMAIL']), vars: { LAB_NOTIFY: 'failures' }, varsPut: [],
   artifacts: [{ id: 31, name: 'bds-addons', size_in_bytes: 1_234_567, expired: false, created_at: iso(now - 3_000_000), workflow_run: { id: 100, head_branch: 'main' } },
     { id: 30, name: 'old-addons', size_in_bytes: 99, expired: true, created_at: iso(now - 90 * 86_400_000), workflow_run: { id: 90, head_branch: 'main' } }],
@@ -52,13 +62,21 @@ const runs = {
 };
 const jobs = { 100: [{ name: 'offline', status: 'completed', conclusion: 'failure', check_run_url: 'https://api.github.com/repos/author1/bds-lab/check-runs/55', html_url: 'https://github.com/x', steps: [{ name: 'checkout', status: 'completed', conclusion: 'success' }, { name: 'every offline test', status: 'completed', conclusion: 'failure' }] }],
   101: [{ name: 'device (1)', status: 'in_progress', steps: [{ name: 'checkout', status: 'completed' }, { name: '端末をそのまま調べる（hold）', status: 'in_progress' }] }] };
-const repoJson = (slug, perm) => ({ full_name: slug, permissions: perm, visibility: slug === LAB ? 'public' : 'private', default_branch: 'main', html_url: `https://github.com/${slug}`, fork: false, archived: false });
+const repoJson = (slug, perm) => ({ full_name: slug, permissions: perm, visibility: slug === LAB ? 'public' : 'private', default_branch: 'main', html_url: `https://github.com/${slug}`, fork: false, archived: false, owner: { login: slug.split('/')[0], type: slug === CORP ? 'Organization' : 'User' } });
+// (a key's shape made at run time: the lab's own secret scan — share, host's pre-push — reads this file as it is)
+const PEM = `-----BEGIN RSA ${'PRIVATE'} KEY-----\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n-----END RSA ${'PRIVATE'} KEY-----\n`;
 
 async function api(route) {
   const req = route.request(), u = new URL(req.url()), p = u.pathname, who = people[String(req.headers().authorization ?? '').replace(/^Bearer /, '')];
   const send = (status, j) => route.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*', 'x-ratelimit-remaining': '4900', 'x-ratelimit-reset': '1' }, body: j === null ? '' : JSON.stringify(j) });
   if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST,PUT,DELETE,PATCH' } });
+  // (the App made from its manifest: the code alone is the proof — asked without a token)
+  const mc = /^\/app-manifests\/([^/]+)\/conversions$/.exec(p);
+  if (mc && req.method() === 'POST') { G.corp.conversions.push({ code: mc[1], auth: req.headers().authorization ?? null }); return mc[1] === 'mcode' ? send(201, { id: 4242, slug: 'acme-bds-lab', client_id: 'Iv1.madeapp', client_secret: 'made-client-secret', pem: PEM, html_url: 'https://github.com/apps/acme-bds-lab', owner: { login: 'acme' } }) : send(404, { message: 'Not Found' }); }
   if (!who) return send(401, { message: 'Bad credentials' });
+  if (p === '/user/installations') return send(200, { installations: who.login === 'ceo1' ? [{ id: 9, app_slug: 'acme-bds-lab', account: { login: 'acme' } }] : [] });
+  if (p === '/user/installations/9/repositories') return send(200, { repositories: [repoJson(CORP, ADMIN)] });
+  if (/^\/orgs\/acme\/teams\/[^/]+\/memberships\//.test(p)) return send(404, { message: 'Not Found' });
   if (p === '/user') return send(200, { login: who.login, avatar_url: 'https://avatars.githubusercontent.com/u/1' });
   if (p === '/user/repos') return send(200, Object.entries(who.repos).map(([s, perm]) => repoJson(s, perm)));
   const m = /^\/repos\/([^/]+\/[^/]+)(\/.*)?$/.exec(p);
@@ -67,6 +85,8 @@ async function api(route) {
   if (!perm) return send(404, { message: 'Not Found' });
   const body = req.postData() ? JSON.parse(req.postData()) : null;
   if (rest === '') return send(200, repoJson(slug, perm));
+  // (corpApi answers true once it has answered: route.fulfill itself resolves to nothing)
+  if (slug === CORP && await corpApi(req, u, rest, body, who, perm, (...x) => send(...x).then(() => true))) return;
   if (rest.startsWith('/contents/')) {
     const f = decodeURIComponent(rest.slice('/contents/'.length)), key = `${slug}:${f}`;
     if (req.method() === 'PUT') { if (!perm.push) return send(403, { message: 'no' }); G.filesPut.push({ slug, f, body }); G.files[key] = Buffer.from(body.content, 'base64').toString('utf8'); return send(200, {}); }
@@ -85,7 +105,7 @@ async function api(route) {
     if (req.method() === 'PATCH') { if (G.vars[vm[1]] === undefined) return send(404, { message: 'Not Found' }); G.vars[vm[1]] = body.value; G.varsPut.push(`PATCH ${vm[1]}=${body.value}`); return send(204, null); }
     if (req.method() === 'POST' && !vm[1]) { G.vars[body.name] = body.value; G.varsPut.push(`POST ${body.name}=${body.value}`); return send(201, null); }
   }
-  if (/^\/actions\/workflows\/[^/]+\/dispatches$/.test(rest)) { G.dispatched.push({ workflow: decodeURIComponent(rest.split('/')[3]), body }); return send(204, null); }
+  if (/^\/actions\/workflows\/[^/]+\/dispatches$/.test(rest)) { G.dispatched.push({ slug, workflow: decodeURIComponent(rest.split('/')[3]), body, by: who.login }); return send(204, null); }
   if (/^\/actions\/workflows\/[^/]+\/runs/.test(rest)) { const w = decodeURIComponent(rest.split('/')[3]); return send(200, { workflow_runs: (runs[slug] ?? []).filter((r) => slug === HOST || r.path?.endsWith(`/${w}`)).filter((r) => !u.searchParams.get('status') || r.status === u.searchParams.get('status')) }); }
   if (rest === '/actions/runs') return send(200, { workflow_runs: runs[slug] ?? [] });
   const jm = /^\/actions\/runs\/(\d+)\/jobs/.exec(rest); if (jm) return send(200, { jobs: jobs[jm[1]] ?? [] });
@@ -96,17 +116,91 @@ async function api(route) {
   return send(404, { message: `Not Found ${rest}` });
 }
 
+/** the organization's lab: its secrets, variables, Pages and audit issue (the rest as any lab) → undefined when not one of these */
+async function corpApi(req, u, rest, body, who, perm, send) {
+  const C = G.corp, m = req.method();
+  if (rest === '/actions/secrets') return perm.admin ? send(200, { secrets: [...C.secrets].map((name) => ({ name, updated_at: iso(now) })) }) : send(403, { message: 'Resource not accessible' });
+  if (rest.startsWith('/actions/secrets/') && rest !== '/actions/secrets/public-key' && m === 'PUT') { if (!perm.admin) return send(403, { message: 'no' }); const name = decodeURIComponent(rest.split('/').pop()); G.secretsPut.push({ slug: CORP, name, body, by: who.login }); C.secrets.add(name); return send(201, null); }
+  const vm = /^\/actions\/variables(?:\/([A-Z_]+))?$/.exec(rest);
+  if (vm) {
+    if (!perm.admin) return send(403, { message: 'Resource not accessible' });
+    if (m === 'GET' && !vm[1]) return send(200, { variables: Object.entries(C.vars).map(([name, value]) => ({ name, value })) });
+    if (m === 'GET') return C.vars[vm[1]] !== undefined ? send(200, { name: vm[1], value: C.vars[vm[1]] }) : send(404, { message: 'Not Found' });
+    if (m === 'PATCH') { if (C.vars[vm[1]] === undefined) return send(404, { message: 'Not Found' }); C.vars[vm[1]] = body.value; return send(204, null); }
+    if (m === 'POST' && !vm[1]) { C.vars[body.name] = body.value; return send(201, null); }
+  }
+  if (rest === '/pages') {
+    if (m === 'GET') return C.pages ? send(200, C.pages) : send(404, { message: 'Not Found' });
+    if (!perm.admin) return send(403, { message: 'no' });
+    C.pagesPut.push(`${m} ${body?.build_type}`); C.pages = { build_type: body?.build_type ?? 'workflow', html_url: 'https://acme.github.io/corp-lab/' }; return send(m === 'POST' ? 201 : 204, m === 'POST' ? C.pages : null);
+  }
+  if (rest === '/labels' && m === 'POST') { C.labels.push(body.name); return send(201, { name: body.name }); }
+  if (rest === '/issues' && m === 'POST') { const n = 50 + C.issues.length; C.issues.push({ number: n, title: body.title, state: 'open', labels: (body.labels ?? []).map((name) => ({ name })) }); C.comments[n] = []; return send(201, { number: n }); }
+  if (rest === '/issues' && m === 'GET') { const l = u.searchParams.get('labels'); return send(200, C.issues.filter((x) => !l || x.labels.some((y) => y.name === l))); }
+  const lk = /^\/issues\/(\d+)\/lock$/.exec(rest); if (lk && m === 'PUT') { C.locks.push(Number(lk[1])); return send(204, null); }
+  const cm = /^\/issues\/(\d+)\/comments/.exec(rest);
+  if (cm && C.comments[cm[1]]) {
+    if (m === 'POST') { const c = { id: 7000 + C.comments[cm[1]].length, body: body.body, user: { login: who.login }, created_at: iso(Date.now()), updated_at: iso(Date.now()), html_url: `https://github.com/${CORP}/issues/${cm[1]}#c` }; C.comments[cm[1]].push(c); return send(201, c); }
+    return send(200, C.comments[cm[1]]);
+  }
+  return undefined;
+}
+
 // ---- the page, served as GitHub Pages serves panel/: its files, with the page's own policy as a header too ----
-const ROOT = path.join(TOP, 'panel'), CSP = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8'))[1];
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
-const srv = http.createServer((req, res) => {
-  const rel = decodeURIComponent(new URL(req.url, 'http://x').pathname).replace(/\/$/, '/index.html'), f = path.resolve(ROOT, `.${rel}`);
-  if (!f.startsWith(ROOT + path.sep) || !fs.existsSync(f) || !fs.statSync(f).isFile()) { res.writeHead(404); return res.end(); }
-  res.writeHead(200, { 'content-type': TYPES[path.extname(f)] ?? 'application/octet-stream', 'content-security-policy': CSP, 'cache-control': 'no-store' });
-  fs.createReadStream(f).pipe(res);
-}).listen(0, '127.0.0.1');
-await new Promise((r) => srv.once('listening', r));
-const URL0 = `http://127.0.0.1:${srv.address().port}/`;
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json' };
+/** a folder served as Pages serves it, its page's own CSP sent as a header too → { srv, url } */
+async function serve(root) {
+  const csp = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[1];
+  const srv = http.createServer((req, res) => {
+    const rel = decodeURIComponent(new URL(req.url, 'http://x').pathname).replace(/\/$/, '/index.html'), f = path.resolve(root, `.${rel}`);
+    if (!f.startsWith(root + path.sep) || !fs.existsSync(f) || !fs.statSync(f).isFile()) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { 'content-type': TYPES[path.extname(f)] ?? 'application/octet-stream', 'content-security-policy': csp, 'cache-control': 'no-store' });
+    fs.createReadStream(f).pipe(res);
+  }).listen(0, '127.0.0.1');
+  await new Promise((r) => srv.once('listening', r));
+  return { srv, url: `http://127.0.0.1:${srv.address().port}/` };
+}
+const { srv, url: URL0 } = await serve(path.join(TOP, 'panel'));
+// (the same panel as pages.yml builds it with a sign-in service: config.json, the service let into its CSP)
+const AUTH = 'https://auth.bdslab.test', BUILT = fs.mkdtempSync(path.join(os.tmpdir(), 'bds-lab-panel-built-'));
+(await imp('common/panel-config.mjs')).buildPages(BUILT, { LAB_AUTH_URL: AUTH, APP_CLIENT_ID: 'Iv1.labapp' });
+const { srv: srv2, url: URL2 } = await serve(BUILT);
+// (the real sign-in service, auth/handler.mjs, answering at AUTH — GitHub's side of it a fake: the code and the refresh
+// token exchanged, a token revoked)
+const OA = { authorize: [], exchanges: [], revoked: [] }, CID = 'Iv1.labapp', CSECRET = 'app-client-secret-xyz';
+const ghWeb = async (url, init = {}) => {
+  const u = new URL(url), json = (status, j) => new Response(j === null ? null : JSON.stringify(j), { status, headers: { 'content-type': 'application/json' } });
+  if (u.pathname === '/login/oauth/access_token') {
+    const b = Object.fromEntries(new URLSearchParams(String(init.body)));
+    OA.exchanges.push(b);
+    if (b.client_id !== CID || b.client_secret !== CSECRET) return json(200, { error: 'incorrect_client_credentials' });
+    if (b.grant_type === 'refresh_token') return b.refresh_token === 'ghr_1' ? json(200, { access_token: 'ghu_ceo2', expires_in: 28800, refresh_token: 'ghr_2', refresh_token_expires_in: 15897600, token_type: 'bearer' }) : json(200, { error: 'bad_refresh_token' });
+    // (the first token runs out within the panel's 5 minutes: it is renewed at once)
+    return b.code === 'good-code' && b.code_verifier ? json(200, { access_token: 'ghu_ceo1', expires_in: 60, refresh_token: 'ghr_1', refresh_token_expires_in: 15897600, token_type: 'bearer' }) : json(200, { error: 'bad_verification_code' });
+  }
+  if (u.pathname === `/applications/${CID}/token` && init.method === 'DELETE') { OA.revoked.push({ auth: init.headers.authorization, body: JSON.parse(init.body) }); return new Response(null, { status: 204 }); }
+  return json(404, {});
+};
+const authApp = (await imp('auth/handler.mjs')).handler({ GITHUB_CLIENT_ID: CID, GITHUB_CLIENT_SECRET: CSECRET, PANEL_ORIGINS: URL2, STATE_SECRET: 'state-secret-for-the-browser-test-0123456789' }, { fetchImpl: ghWeb });
+async function authRoute(route) {
+  const req = route.request(), hs = Object.fromEntries(Object.entries(await req.allHeaders()).filter(([k]) => !/^(host|content-length|connection|:)/.test(k)));
+  const r = await authApp(new Request(req.url(), { method: req.method(), headers: hs, body: ['GET', 'HEAD'].includes(req.method()) ? undefined : req.postDataBuffer() }));
+  const out = {}; r.headers.forEach((v, k) => { if (k !== 'set-cookie') out[k] = v; });
+  const cookies = r.headers.getSetCookie?.() ?? [];
+  if (cookies.length) out['set-cookie'] = cookies.join('\n');
+  // (Playwright does not route a redirect's next request: a hop to GitHub goes as a page that moves on, routed again)
+  const to = out.location ?? '';
+  if (r.status === 302 && to.startsWith('https://github.com/')) { delete out.location; return route.fulfill({ status: 200, headers: { ...out, 'content-type': 'text/html' }, body: hop(to) }); }
+  await route.fulfill({ status: r.status, headers: out, body: Buffer.from(await r.arrayBuffer()) });
+}
+const hop = (to) => `<!doctype html><meta http-equiv="refresh" content="0;url=${to.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}">`;
+// (github.com: its OAuth page says yes at once; the App's manifest form taken and a page shown, as GitHub would)
+async function githubRoute(route) {
+  const req = route.request(), u = new URL(req.url());
+  if (u.pathname === '/login/oauth/authorize') { OA.authorize.push(Object.fromEntries(u.searchParams)); return route.fulfill({ status: 200, contentType: 'text/html', body: hop(`${AUTH}/callback?code=good-code&state=${encodeURIComponent(u.searchParams.get('state'))}`) }); }
+  if (/\/settings\/apps\/new$/.test(u.pathname) && req.method() === 'POST') { G.corp.manifests.push({ path: u.pathname, state: u.searchParams.get('state'), manifest: JSON.parse(new URLSearchParams(req.postData()).get('manifest')) }); return route.fulfill({ status: 200, contentType: 'text/html', body: '<p>GitHub: Create GitHub App for acme</p>' }); }
+  return route.fulfill({ status: 404, body: 'not here' });
+}
 const { pw } = loadPlaywright(path.join(os.tmpdir(), 'bds-lab-panel-browser'), { log: console.log });
 const exe = process.env.LAB_BROWSER || process.env.APP_BROWSER || (fs.existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined);
 let browser;
@@ -131,7 +225,7 @@ try {
   check(await waitText(/使えません/) && /書き込める人/.test(await text()) && !/進み具合/.test(await page.locator('body').innerText()), 'a token with no write and no host: locked out, no tabs', await text());
 
   // the author
-  await page.click('text=別のトークンで入る');
+  await page.click('text=別のアカウントで入る');
   await signIn('tok-author');
   check(await waitText(/管理者/) && await waitText(/✅ Discord の DM で端末を操作/) && /⚠️ 本物のアプリで確かめる/.test(await text()) && /GOOGLE_EMAIL・GOOGLE_AAS_TOKEN が要ります/.test(await text()), 'the author: admin; what their own secrets allow (Discord yes, the app lab not yet: what is missing said)', await text());
   check(await waitText(/動いている 1・失敗 1/), 'the overview counts the runs', await text());
@@ -265,7 +359,7 @@ try {
   // back to the author with a tap: their own settings (the host they borrow, the vault key) as they left them
   await page.selectOption('#acct', 'author1');
   await waitText(/管理者/);
-  check(JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()) === JSON.stringify(['概要', '進み具合', '実行', '成果物', 'Discord', '秘密', '端末', '貸し借り', '設定']), 'switched: the author\'s tabs', JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()));
+  check(JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()) === JSON.stringify(['概要', '進み具合', '実行', '成果物', 'Discord', '秘密', '端末', '貸し借り', '準備', '監査', '設定']), 'switched: the author\'s tabs', JSON.stringify(await page.locator('nav.tabs button').allInnerTexts()));
   check(await waitText(/期限（\d{4}-\d\d-\d\d）を過ぎました/) && /借り手/.test(await text()), 'the host the author borrows (their own list), now stopped by its lender', await text());
   await tab('設定');
   check((await page.locator('#tabbody input[type=password]').inputValue()) === VKEY && /lender1/.test(await text()) && /author1\/bds-lab・ホスト 1/.test(await text()), 'the author\'s vault key kept for the author; both accounts listed with their own settings', await text());
@@ -277,12 +371,94 @@ try {
   await waitText(/貸し借り/);
   const left = await page.evaluate(() => JSON.stringify({ ...localStorage }));
   check(!left.includes('tok-author') && !left.includes('panel-browser-key') && left.includes('tok-lender') && (await page.locator('#who').innerText()).includes('lender1') && (await page.locator('#acct').count()) === 0, 'leaving forgets that account only (its token and key)', left);
+
+  // ======== an organization's lab, the company way: 「GitHub でサインイン」 through the real sign-in service, the lab's
+  // policy and audit log, the App made in one click from 「準備」, the token revoked on leaving ========
+  const ctx2 = await browser.newContext({ viewport: { width: 420, height: 900 }, acceptDownloads: true });
+  await ctx2.route('https://api.github.com/**', api);
+  await ctx2.route('https://avatars.githubusercontent.com/**', (r) => r.fulfill({ status: 200, contentType: 'image/png', body: PNG }));
+  await ctx2.route(`${AUTH}/**`, authRoute);
+  await ctx2.route('https://github.com/**', githubRoute);
+  const p2 = await ctx2.newPage(), asked = [];
+  p2.on('pageerror', (e) => errors.push(`pageerror (2): ${e.message}`));
+  p2.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(`console (2): ${m.text()}`); });
+  p2.on('dialog', (d) => { asked.push(d.message()); d.accept(); });
+  const text2 = () => p2.locator('main').innerText();
+  const wait2 = async (re, ms = 10_000) => { const end = Date.now() + ms; while (Date.now() < end) { if (re.test(await text2())) return true; await p2.waitForTimeout(150); } return false; };
+  const tab2 = (name) => p2.locator('nav.tabs button', { hasText: name }).click();
+  const kept2 = () => p2.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }));
+  await p2.goto(URL2);
+  await p2.waitForSelector('#oauth');
+  check(await p2.locator('details').evaluate((d) => !d.open) && await p2.locator('#tok').isHidden(), 'with a sign-in service: 「GitHub でサインイン」 first, typing a token folded away', await text2());
+  await p2.fill('#oauth-lab', CORP);
+  await p2.click('#oauth');
+  check(await wait2(/ceo1 さん/, 15_000) && /GitHub でサインイン（ラボの App）/.test(await text2()) && /役割 admin/.test(await text2()), 'signed in with GitHub (no token made by hand): the organization\'s admin, by the lab\'s policy', await text2());
+  const a0 = OA.authorize[0] ?? {}, x0 = OA.exchanges[0] ?? {};
+  check(a0.client_id === CID && a0.code_challenge && a0.code_challenge_method === 'S256' && a0.redirect_uri === `${AUTH}/callback` && x0.code_verifier && x0.client_secret === CSECRET, 'the service: PKCE, its own callback, the App\'s secret on its side only', JSON.stringify({ a0, x0: { ...x0, client_secret: x0.client_secret ? '…' : null } }));
+  const k1 = await kept2();
+  check(!p2.url().includes('bdslab-auth') && !k1.includes('ghu_ceo1') && k1.includes('ghu_ceo2') && !k1.includes(CSECRET) && OA.exchanges[1]?.grant_type === 'refresh_token', 'the handoff out of the address at once; the short-lived token renewed through the service and kept; the App\'s secret never in the browser', p2.url());
+
+  // a run started: the policy asks first, the audit log keeps it as this person's own comment
+  await tab2('実行');
+  await p2.locator('li', { hasText: 'ラボの試験を全部' }).locator('button', { hasText: '開く' }).click();
+  await p2.waitForSelector('#dform button');
+  await p2.locator('#dform button', { hasText: '始める' }).click();
+  await p2.waitForTimeout(1200);
+  const d2 = G.dispatched.find((x) => x.slug === CORP);
+  check(d2 && d2.workflow === 'verify.yml' && d2.by === 'ceo1' && asked.some((q) => /ワークフローを始める（verify\.yml）: よろしいですか/.test(q)), 'started with the person\'s own sign-in, after the question the policy asks', JSON.stringify({ d2, asked }));
+  const issue = G.corp.issues[0], c0 = issue ? G.corp.comments[issue.number][0] : null;
+  check(issue && issue.title === 'bds-lab 監査ログ' && G.corp.labels.includes('bds-lab-audit') && G.corp.locks.includes(issue.number) && c0 && c0.user.login === 'ceo1' && /<!-- bdslab-audit \{.*"actor":"ceo1".*"action":"dispatch"/.test(c0.body) && !/ghu_|ghr_/.test(c0.body), 'kept in the audit log: an issue with its label, locked (collaborators only), the person\'s own comment, no token in it', JSON.stringify({ issue, c0 }));
+  await tab2('監査');
+  check(await wait2(/ceo1/) && /ワークフローを始めた/.test(await text2()) && /verify\.yml/.test(await text2()), 'the audit tab reads it back', await text2());
+  const [dl] = await Promise.all([p2.waitForEvent('download'), p2.locator('button', { hasText: 'CSV で取り出す' }).click()]);
+  const csv = fs.readFileSync(await dl.path(), 'utf8');
+  check(/^﻿?at,actor,action,target,detail,edited,url/.test(csv) && /,ceo1,dispatch,acme\/corp-lab,/.test(csv), 'and gives it as CSV for a spreadsheet', csv.slice(0, 400));
+
+  // 「準備」: Pages turned on, the App made from its manifest in one click — its keys sealed into the lab's secrets, nothing kept
+  await tab2('準備');
+  check(await wait2(/GitHub Pages/) && await wait2(/App を作る/), 'the checks: what is missing, with a way to fix each', await text2());
+  const pagesFix = p2.locator('[data-check="pages"] a, [data-check="pages"] button').first();
+  check(await pagesFix.count() === 1, 'Pages: a way to turn it on (a link to the settings when signed in with the App)', await p2.locator('[data-check="pages"]').innerText());
+  await p2.locator('[data-check="app"] button[type=submit]').click();
+  await p2.waitForURL(/github\.com/);
+  const mf = G.corp.manifests[0];
+  check(mf && mf.path === '/organizations/acme/settings/apps/new' && mf.manifest.callback_urls?.[0] === `${AUTH}/callback` && mf.manifest.public === true && mf.manifest.hook_attributes?.active === false && mf.manifest.default_permissions?.secrets === 'write' && mf.state, 'the App\'s form posted to GitHub with its manifest (the organization\'s, its callback the service, no webhook)', JSON.stringify(mf));
+  // (as GitHub sends the person back after they press its button)
+  await p2.goto(`${URL2}?code=mcode&state=${encodeURIComponent(mf.state)}`);
+  await p2.waitForTimeout(2500);
+  const put2 = Object.fromEntries(G.secretsPut.filter((x) => x.slug === CORP).map((x) => [x.name, x]));
+  // (sealed to the lab's key: GitHub's private key opens each to the App's own value — sealed again here, the same bytes)
+  const sealedIs = (x, plain) => { if (!x) return false; const sealed = SEAL.fromB64(x.body.encrypted_value), epk = sealed.subarray(0, 32); return Buffer.from(SEAL.box(new TextEncoder().encode(plain), SEAL.blake2b(Buffer.concat([epk, PK]), 24), epk, SK)).equals(Buffer.from(sealed.subarray(32))); };
+  check(sealedIs(put2.APP_PRIVATE_KEY, PEM) && sealedIs(put2.APP_CLIENT_SECRET, 'made-client-secret') && put2.AUTH_STATE_SECRET && G.corp.vars.APP_ID === '4242' && G.corp.vars.APP_SLUG === 'acme-bds-lab' && G.corp.vars.APP_CLIENT_ID === 'Iv1.madeapp' && G.corp.conversions[0]?.auth === null, 'the App\'s keys sealed into the lab\'s secrets and its names into variables, the code turned in without the person\'s token', JSON.stringify({ secrets: Object.keys(put2), vars: G.corp.vars, conv: G.corp.conversions }));
+  const k2 = await kept2(), shown = await text2();
+  check(!p2.url().includes('code=') && !k2.includes('made-client-secret') && !k2.includes('BEGIN RSA') && !shown.includes('made-client-secret') && !shown.includes('BEGIN RSA'), 'the code out of the address; the App\'s secret and key neither kept nor shown', p2.url());
+
+  // leaving: the token revoked on GitHub through the service, nothing of the account left
+  await p2.locator('#who button', { hasText: '出る' }).click();
+  await p2.waitForSelector('#oauth');
+  const k3 = await kept2();
+  check(OA.revoked.length === 1 && OA.revoked[0].body.access_token === 'ghu_ceo2' && OA.revoked[0].auth === `Basic ${Buffer.from(`${CID}:${CSECRET}`).toString('base64')}` && !/ghu_|ghr_/.test(k3), 'leaving revokes the token on GitHub (through the service) and forgets it here', JSON.stringify(OA.revoked));
+
+  // a writer of the organization's lab (a token): what the policy gives the role (runs) and what it does not (secrets, the log)
+  await p2.locator('summary').click();
+  await p2.fill('#tok', 'tok-writer'); await p2.fill('#lab', CORP); await p2.click('#go');
+  await p2.waitForSelector('nav.tabs button');
+  const tabs2 = await p2.locator('nav.tabs button').allInnerTexts();
+  check(!tabs2.includes('監査') && tabs2.includes('実行'), 'a writer: no audit tab (the policy gives the role no audit.read)', JSON.stringify(tabs2));
+  await tab2('秘密');
+  await p2.locator('#tabbody input').nth(0).fill('MS_EMAIL'); await p2.locator('#tabbody input').nth(1).fill('w@example.com');
+  const before2 = G.secretsPut.length;
+  await p2.locator('#tabbody button', { hasText: '登録する' }).click();
+  await p2.waitForTimeout(500);
+  check(G.secretsPut.length === before2 && /秘密を登録するは、あなたの役割（write）には許されていません/.test(await p2.locator('#toast').innerText()), 'a writer may not set a secret: the policy says so before GitHub is asked', await p2.locator('#toast').innerText());
+  await ctx2.close();
+
   check(!errors.length, 'no page error, no CSP report', errors.join('\n'));
 } catch (e) {
   check(false, 'the run went through', e.stack);
 } finally {
   await browser.close();
-  srv.close();
+  srv.close(); srv2.close(); fs.rmSync(BUILT, { recursive: true, force: true });
 }
 console.log(bad ? `FAIL panel-browser (${bad})` : 'PASS panel-browser');
 process.exit(bad ? 1 : 0);

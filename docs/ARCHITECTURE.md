@@ -38,13 +38,13 @@ bds-lab は「頼まれたアドオンを、本物の BDS と本物のクライ�
 | 配る | `pack` `release` `share` `update` `deploy` | ユニットの配布物・ラボ本体のリリース（秘密の検査と単体での再試験つき）・上書き更新・自分の BDS へ |
 | 育つ | `skill learn` → `promote` → `verify`・`skill refine`・`skill bench` | 失敗の記録 → 候補 → 証拠つきの規則 → 実機で再確認。スキル本文は採点と振り分けで測り、悪くなれば戻す |
 | 自動 | `auto next` / `auto run` | 仕事を自分で選び、作り、確かめ、レビューを通ったものだけ取り込む（床：STOP・トークンの上限・触れないファイル） |
-| ブラウザ・スマホから | 管理パネル（`panel/`、GitHub Pages）→ ワークフロー | アカウントを切り替えて、自分の Actions か貸し手の Actions（hostrun.yml → `host ci`）で走らせ、進み具合・成果物・秘密・端末・貸す条件。終わった実行は notify が Discord に（成果物を添えて） |
+| ブラウザ・スマホから | 管理パネル（`panel/`、GitHub Pages）＋ サインインのサービス（`auth/`）→ ワークフロー | GitHub でサインイン（ラボの GitHub App）、役割（ポリシー）と監査ログ、「準備」で App・サービス・Pages を整える。アカウントを切り替えて、自分の Actions か貸し手の Actions（hostrun.yml → `host ci`）で走らせ、進み具合・成果物・秘密・端末・貸す条件。終わった実行は notify が Discord に（成果物を添えて） |
 
 ## モジュールの地図（common/）
 
 | 区分 | モジュール |
 |---|---|
-| 入口・環境 | `start.mjs`（初回の一括準備）・`status.mjs`（状況と次の 1 手・`clean`）・`ui.mjs`（ブラウザの操作画面）・`netenv.mjs`（プロキシと証明書）・`runtime.mjs`（ホストかコンテナか）・`secrets.mjs`（.env）・`auth.mjs`（各サービスへのログイン）・`notify.mjs`（スマホへの通知）・`watch.mjs`（保存のたびに結果） |
+| 入口・環境 | `start.mjs`（初回の一括準備）・`status.mjs`（状況と次の 1 手・`clean`）・`ui.mjs`（ブラウザの操作画面）・`netenv.mjs`（プロキシと証明書）・`runtime.mjs`（ホストかコンテナか）・`secrets.mjs`（.env）・`auth.mjs`（各サービスへのログイン）・`notify.mjs`（スマホへの通知）・`panel-config.mjs`（管理パネルを Pages に: サインインのサービスと App の設定・CSP）・`ghapp.mjs`（ワークフローの中で、ラボの GitHub App の 1 時間のトークン）・`watch.mjs`（保存のたびに結果） |
 | 作る・試す | `core.mjs`（共通エンジン）・`build.mjs`（esbuild と型検査）・`addon-lint.mjs`・`api-hints.mjs`・`dts.mjs`（型定義の索引）・`schema.mjs`（Mojang のスキーマ、バニラで較正）・`lint-tests.mjs`（tests.txt の静的検査）・`trial.mjs`（1 回の試走）・`helper.js`（テスト用にアドオンへ差し込む補助）・`extra.mjs`（doc・sample などの重い道具）・`pixel.mjs`（16×16 のテクスチャ）・`model.mjs`（モデルの描画と検査）・`jsonui.mjs`（JSON UI の検査）・`i18n.mjs`（翻訳の欠け）・`optimize.mjs`（配布物を小さく）・`c2s.mjs`（コマンド → Script API）・`bb.mjs`（BDS 本体の解析）・`refresh.mjs`・`kb-build.mjs`（ラボの知識を新しい Minecraft に合わせる） |
 | 本物のプレイヤー | `realplayer.cjs`（本物のクライアント）・`raknet.cjs`・`nethernet.cjs`（通信）・`verbs.cjs`・`verbs-more.cjs`・`verbs-gen.cjs`（約 12,000 の動作）・`goal.cjs`・`goal-exec.cjs`・`challenges.cjs`（目標の計画と実行、RTA）・`debugger.cjs`（スクリプトのデバッガ）・`lan.mjs`（ローカルワールド方式） |
 | サンドボックスと生きた世界 | `sim.mjs`（sandbox-be で tests.txt を 1 秒）・`ts.mjs`（TS REPL を外から動かす）・`scratch.mjs`（一から作る練習・食い違いの記録・両方で比べる probe） |

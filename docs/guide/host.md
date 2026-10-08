@@ -56,9 +56,11 @@ AI を使う仕事（make・harden）とアカウントの要る app ラボは�
   （上限の 80%）・いま使えるか（期限・時間帯・走っている仕事）・最近の結果。「実行」の一番上で **その人の Actions** を選ぶと、
   貸す条件が許す仕事（とユニット）を、ラボの `.github/workflows/hostrun.yml` → `node lab.mjs host ci` で走らせます: `host run` と
   同じ中身・同じ検査でホストに送り、待てば結果がその実行の結果・まとめ・注釈・成果物になり、notify が Discord に知らせます。
-  要るのはラボの秘密 `LAB_HOST_TOKEN`（ホストに push でき、ワークフローを始められるあなた自身のトークン: Classic なら `repo`・
-  `workflow`、Fine-grained ならホストの Contents・Actions・Workflows を Read and write）。ほかの人のアカウントにあるホストには
-  Fine-grained トークンが届かないので、Classic を使います。ランナーには台帳が無いので、分は GitHub の数で決まります。
+  ホストへは、**貸し手がラボの GitHub App をホストに入れていれば**（「準備」のリンク。Only select repositories でホストだけ）、App の
+  1 時間のトークン（そのホストだけ・contents・actions・workflows だけ: `common/ghapp.mjs`）で、誰の個人のトークンも要りません。
+  入っていなければ、ラボの秘密 `LAB_HOST_TOKEN`（ホストに push でき、ワークフローを始められるあなた自身のトークン: Classic なら
+  `repo`・`workflow`、Fine-grained ならホストの Contents・Actions・Workflows を Read and write。ほかの人のアカウントのホストには
+  Classic）。ランナーには台帳が無いので、分は GitHub の数で決まります。
   `host: auto` で始めるときは、変数 `LAB_HOSTS` のホストのうち残りの多いもの。
 - **貸し手**: 上のほかに、`.lab-host.json` をその場で変える（1 か月の分・許す仕事・時間帯・時間帯の地域・最後の日・連絡先。
   ラボと同じ検査を通ってから書く）。「今すぐ止める」は最後の日を昨日に、「再開する」は選んだ日に（新しい項目は増やさないので、

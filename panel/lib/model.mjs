@@ -31,6 +31,11 @@ export const KNOWN_SECRETS = {
   DISCORD_USER_ID: '自分の Discord のユーザー ID（数字）',
   LAB_SECRETS_TOKEN: '秘密を書けるトークン（secrets ワークフローが使う。Secrets: Read and write）',
   LAB_NOTIFY_WEBHOOK: 'Discord / Slack の Webhook URL か ntfy.sh（通知の別の行き先）',
+  APP_PRIVATE_KEY: 'ラボの GitHub App の鍵（「準備」が App を作るときに入れる。ワークフローが 1 時間のトークンを作る）',
+  APP_CLIENT_SECRET: 'ラボの GitHub App の client secret（サインインのサービスが使う。「準備」が入れる）',
+  AUTH_STATE_SECRET: 'サインインのサービスが受け渡しに署名する鍵（「準備」が作って入れる）',
+  CLOUDFLARE_API_TOKEN: 'サインインのサービスを Cloudflare Workers に置くトークン（auth-deploy）',
+  CLOUDFLARE_ACCOUNT_ID: 'その Cloudflare のアカウントの ID',
   LAB_HOST_TOKEN: '貸し手のホストに push でき、ワークフローを始められるあなたのトークン（「実行」でホストの Actions を使う: hostrun）',
   MS_EMAIL: '端末のゲームをサインインさせる Microsoft アカウント',
   MS_PASSWORD: 'そのパスワード（無ければ人の承認を 1 回）',
@@ -39,8 +44,10 @@ export const KNOWN_SECRETS = {
   APP_CACHE_KEY: 'キャッシュと公開リポジトリのライブを封じる鍵',
 };
 /** a repository's settings → what can be done there: [{ key, label, ok, need }] (need: what is missing, in words) */
-export function capabilities({ secrets, workflows = [], visibility = 'public', host = false }) {
+export function capabilities({ secrets, workflows = [], visibility = 'public', host = false, vars = null }) {
   const has = (n) => Array.isArray(secrets) && secrets.includes(n), wf = (f) => workflows.some((w) => String(w.path ?? w).endsWith(`/${f}`));
+  // (the lab's GitHub App: its id a variable, its key a secret — the workflows then take an hour's App token, no one's own)
+  const app = has('APP_PRIVATE_KEY') && Array.isArray(vars) && vars.includes('APP_ID');
   const known = Array.isArray(secrets);
   const c = (key, label, ok, need) => ({ key, label, ok: known ? Boolean(ok) : null, need: known ? (ok ? '' : need) : '秘密の名前を見られません（トークンに Secrets: Read が要ります）' });
   if (host) return [c('host', 'ラボの試験を走らせる（host.yml）', wf('host.yml'), 'host.yml がありません（node lab.mjs host template）')];
@@ -48,8 +55,8 @@ export function capabilities({ secrets, workflows = [], visibility = 'public', h
   return [
     c('discord', 'Discord の DM で端末を操作（mode hold）', discord && wf('app.yml'), [!has('DISCORD_BOT_TOKEN') && 'DISCORD_BOT_TOKEN', !has('DISCORD_USER_ID') && 'DISCORD_USER_ID', !wf('app.yml') && 'app.yml'].filter(Boolean).join('・') + ' が要ります'),
     c('notify', '進み具合を Discord に知らせる（notify）', (discord || has('LAB_NOTIFY_WEBHOOK')) && wf('notify.yml'), !wf('notify.yml') ? 'notify.yml がありません' : 'DISCORD_BOT_TOKEN + DISCORD_USER_ID か LAB_NOTIFY_WEBHOOK が要ります'),
-    c('secretsForm', '秘密を Discord のフォームで登録（secrets）', discord && has('LAB_SECRETS_TOKEN') && wf('secrets.yml'), [!discord && 'Discord の 2 つ', !has('LAB_SECRETS_TOKEN') && 'LAB_SECRETS_TOKEN', !wf('secrets.yml') && 'secrets.yml'].filter(Boolean).join('・') + ' が要ります（このパネルの「秘密」からなら、どれも要りません）'),
-    c('hostrun', '貸し手の Actions で走らせる（hostrun: パソコンなしで）', has('LAB_HOST_TOKEN') && wf('hostrun.yml'), [!has('LAB_HOST_TOKEN') && 'LAB_HOST_TOKEN', !wf('hostrun.yml') && 'hostrun.yml'].filter(Boolean).join('・') + ' が要ります'),
+    c('secretsForm', '秘密を Discord のフォームで登録（secrets）', discord && (app || has('LAB_SECRETS_TOKEN')) && wf('secrets.yml'), [!discord && 'Discord の 2 つ', !app && !has('LAB_SECRETS_TOKEN') && 'ラボの App（「準備」）か LAB_SECRETS_TOKEN', !wf('secrets.yml') && 'secrets.yml'].filter(Boolean).join('・') + ' が要ります（このパネルの「秘密」からなら、どれも要りません）'),
+    c('hostrun', '貸し手の Actions で走らせる（hostrun: パソコンなしで）', (app || has('LAB_HOST_TOKEN')) && wf('hostrun.yml'), [!app && !has('LAB_HOST_TOKEN') && 'ラボの App（「準備」: 貸し手がホストに入れる）か LAB_HOST_TOKEN', !wf('hostrun.yml') && 'hostrun.yml'].filter(Boolean).join('・') + ' が要ります'),
     c('app', '本物のアプリで確かめる（app）', has('GOOGLE_EMAIL') && has('GOOGLE_AAS_TOKEN') && wf('app.yml'), 'GOOGLE_EMAIL・GOOGLE_AAS_TOKEN が要ります（node lab.mjs app secrets）'),
     c('signin', 'ゲームを Microsoft でサインイン（フレンドのワールド）', has('MS_EMAIL'), 'MS_EMAIL（と MS_PASSWORD）が要ります'),
     c('vault', visibility === 'public' ? '公開リポジトリのライブを封じる・キャッシュ' : '端末のキャッシュ（暗号化）', has('APP_CACHE_KEY') || has('GOOGLE_AAS_TOKEN'), 'APP_CACHE_KEY か GOOGLE_AAS_TOKEN が要ります'),
@@ -182,7 +189,7 @@ export function hostRunInputs({ host, job, unit = '', wait = true, rules }) {
 export const bestHost = (list) => [...list].filter((x) => x.now?.ok).sort((a, b) => b.now.remaining - a.now.remaining || a.slug.localeCompare(b.slug))[0] ?? null;
 
 // ---- the address: #<tab>, or #runs?repo=<owner/repo>&run=<id> (Discord's 「管理パネル」 button opens that run) ----
-export const TAB_KEYS = ['overview', 'runs', 'start', 'files', 'discord', 'secrets', 'live', 'hosts', 'settings'];
+export const TAB_KEYS = ['overview', 'runs', 'start', 'files', 'discord', 'secrets', 'live', 'hosts', 'setup', 'audit', 'settings'];
 /** location.hash → { tab, repo, run } (pure; anything unknown → nulls) */
 export function parseHash(hash) {
   const [k, q = ''] = String(hash ?? '').replace(/^#/, '').split('?');

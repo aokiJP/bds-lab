@@ -1,0 +1,9 @@
+# auth/wrangler.toml: the sign-in service as a Cloudflare Worker (README.md). No setting is written here: GITHUB_CLIENT_ID
+# and PANEL_ORIGINS are vars, GITHUB_CLIENT_SECRET and STATE_SECRET secrets (wrangler secret put), all set by
+# .github/workflows/auth-deploy.yml from the repository's own variables and secrets — or by hand on Cloudflare.
+name = "bds-lab-auth"
+main = "worker.mjs"
+compatibility_date = "2025-06-01"
+workers_dev = true
+# (a deploy keeps the vars already set on Cloudflare instead of clearing them)
+keep_vars = true

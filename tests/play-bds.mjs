@@ -42,7 +42,9 @@ if (s0) {
   const r2 = spawnSync(process.execPath, [path.join(TOP, 'lab.mjs'), 'bds', 'run', '-a', 'jsonui_demo', '@A join', P.faceJs({ at }), 'wait 600', P.STATE_JS],
     { cwd: TOP, encoding: 'utf8', timeout: 600_000, env: { ...process.env, FORCE_COLOR: '0', LAB_NOTRACE: '1' } });
   const t2 = `${r2.stdout}${r2.stderr}`, st = t2.split('\n').map((l) => P.serverSaid([l], 'LAB_STATE')).filter((x) => x !== null).at(-1);
-  ok(st && near(st.yaw, P.yawTo(st, at), 3) && near(st.yaw, -90, 3) && Math.abs(st.pitch) <= 3 && P.compassOf(st.yaw) === '東', `lookat east: the server's yaw ${st?.yaw} = the lab's ${st ? P.yawTo(st, at) : '?'}`, t2);
+  // (from the eyes the server says it has — getHeadLocation — or a standing player's 1.62 above the feet)
+  const want = st ? P.lookAngles({ x: st.x, y: Number.isFinite(st.hy) ? st.hy : st.y + 1.62, z: st.z }, at) : null;
+  ok(st && near(st.yaw, want.yaw, 3) && near(st.pitch, want.pitch, 3) && near(st.yaw, -90, 3) && Math.abs(st.pitch) <= 5 && P.compassOf(st.yaw) === '東', `lookat east: the server's yaw ${st?.yaw} / pitch ${st?.pitch} = the lab's ${want ? `${want.yaw.toFixed(1)} / ${want.pitch.toFixed(1)}` : '?'}`, t2);
 }
 console.log(fails ? `FAIL play-bds (${fails})` : 'PASS play-bds');
 process.exit(fails ? 1 : 0);
