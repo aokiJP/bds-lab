@@ -1,6 +1,0 @@
-{
-  "version": 1,
-  "jobs": [
-    { "id": "trial-pages", "workflow": "pages.yml", "inputs": {}, "every": "hour", "hours": 1, "timezone": "UTC", "enabled": true, "note": "一時: 本物の GitHub で予約が始まるかを確かめる（確かめたら消す）" }
-  ]
-}
