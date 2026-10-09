@@ -1,0 +1,38 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Teleport Menu",
+    "description": "Compass teleport menu + !home",
+    "uuid": "6b1f7c2e-1d2a-4f3b-9c4d-0a1b2c3d4e5f",
+    "version": [1, 2, 1],
+    "min_engine_version": [1, 20, 0]
+  },
+  "modules": [
+    {
+      "type": "data",
+      "uuid": "7c2a8d3f-2e3b-4a4c-8d5e-1b2c3d4e5f60",
+      "version": [1, 2, 1]
+    },
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "8d3b9e4a-3f4c-4b5d-9e6f-2c3d4e5f6071",
+      "version": [1, 2, 1],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.11.0-beta"
+    },
+    {
+      "module_name": "@minecraft/server-ui",
+      "version": "2.3.0-beta"
+    },
+    {
+      "uuid": "9e4c0f5b-4a5d-4c6e-8f70-3d4e5f607182",
+      "version": [1, 0, 1]
+    }
+  ]
+}
