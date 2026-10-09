@@ -9,6 +9,10 @@ name: unit
 # files under incoming/ only) — never pasted into a shell line.
 run-name: "unit ${{ inputs.job }} ${{ inputs.unit }}"
 on:
+  # (一時: 本物の GitHub で確かめるため。この枝への push でワークフローを GitHub に登録する — 確かめたら外す)
+  push:
+    branches: ['claude/github-panel-discord-integration-z2ww96']
+    paths: ['.github/workflows/unit.yml']
   workflow_dispatch:
     inputs:
       job:
@@ -43,6 +47,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   run:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:

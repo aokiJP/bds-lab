@@ -5,6 +5,10 @@ name: schedule
 # turns itself off (no hourly run, no minute of Actions on a private lab); 「予約」 turns it on again when it saves a job that is
 # on. Started by hand it only says what is due now (--dry): the hour's own run starts them, once.
 on:
+  # (一時: 本物の GitHub で確かめるため。この枝への push で、予約を本当に始める・自分を止めるを試す — 確かめたら外す)
+  push:
+    branches: ['claude/github-panel-discord-integration-z2ww96']
+    paths: ['.github/workflows/schedule.yml', '.github/bds-lab-schedule.json']
   schedule:
     - cron: '7 * * * *'
   workflow_dispatch:
