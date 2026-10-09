@@ -1,0 +1,17 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Trial Ruby RP",
+    "description": "Trial Ruby",
+    "uuid": "3bc282ad-882e-4782-bdf2-e0d55d6e3600",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 26, 52]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "f96b0ee1-dc09-4ad7-90f9-30b01a2e2b8d",
+      "version": [1, 0, 0]
+    }
+  ]
+}
