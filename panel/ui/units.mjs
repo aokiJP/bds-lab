@@ -71,7 +71,7 @@ export function unitsTab(body, ctx) {
   const load = (fresh = false) => act(async () => {
     // (not readable: why, where the list would be — and as a toast)
     const [us, rs, refs] = await Promise.all([U.listUnits(ctx.api, slug, { fresh }).catch((e) => { list.replaceChildren(h('p', { class: 'bad' }, e.message)); throw e; }), R.listReleases(ctx.api, slug).catch(() => []),
-      ctx.api.call('GET', `/repos/${slug}/git/matching-refs/heads/lab-unit/`).catch(() => [])]);
+      ctx.api.call('GET', `/repos/${slug}/git/matching-refs/heads/lab-unit`).catch(() => [])]);
     units = us; latest = R.latestByUnit(rs, us);
     drawWaiting(refs);
     draw();
