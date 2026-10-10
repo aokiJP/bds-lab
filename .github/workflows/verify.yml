@@ -53,6 +53,7 @@ jobs:
       bdsparts: ${{ steps.plan.outputs.bdsparts }}
       addons: ${{ steps.plan.outputs.addons }}
       extra: ${{ steps.plan.outputs.extra }}
+      offmatrix: ${{ steps.plan.outputs.offmatrix }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -68,12 +69,15 @@ jobs:
     # Each recorded (--record: what it read, for the memory). ESLint, the GitHub flows and the real browser are units too.
     # macos-latest (full only) runs the lab itself natively on macOS (GitHub's macOS runners have no Docker: the container path
     # is the fake); its results are not kept (another machine)
+    # The plan's runners (offmatrix): Linux on one, or on two with a list each when the tests are long together (offlineSplit:
+    # by what each took last time); macOS (full only) the whole list
     needs: plan
     if: needs.plan.outputs.offline == 'true'
+    name: offline (${{ matrix.os }} ${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(needs.plan.outputs.extra == 'true' && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        include: ${{ fromJSON(needs.plan.outputs.offmatrix) }}
     runs-on: ${{ matrix.os }}
     # (the app lab's fake device alone is ~8 minutes on 4 cores; a private repository's runner has 2)
     timeout-minutes: 45
@@ -81,10 +85,10 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with: { node-version: 22 }
-      - if: needs.plan.outputs.tests != ''
+      - if: matrix.tests != ''
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with: { python-version: '3.12' }
-      - if: needs.plan.outputs.tests != ''
+      - if: matrix.tests != ''
         run: npm i -g esbuild@0.28 typescript@6.0.3
       # (the lab's starting point, .lab-base.json: the first `node lab.mjs` in a fresh checkout reads every file to make it — made
       # here, before anything is recorded, or the first unit would look as if it had read the whole lab)
@@ -92,21 +96,22 @@ jobs:
       # real bugs, not style: names that do not exist, values computed and never used, code that cannot run (tests/eslint.config.mjs)
       # — a unit of its own: it reads every script, so any script's change runs it again
       - name: ESLint
-        if: matrix.os == 'ubuntu-latest' && needs.plan.outputs.eslint == 'true'
+        if: matrix.os == 'ubuntu-latest' && matrix.shard == 1 && needs.plan.outputs.eslint == 'true'
         run: node common/deps.mjs run step:eslint --results "$RUNNER_TEMP/results/steps.jsonl" -- npx --yes eslint@9 -c tests/eslint.config.mjs .
       # the management panel (panel/) in a real headless Chrome, GitHub's API stood in for by routes: who is locked out, what each
       # person may do, a secret sealed in the page, the live device driven, a lender stopping. A minute and a half of its own:
       # started here, beside the offline tests below, and waited for after them (its own step says how it ended)
       - name: management panel (real browser), started beside the offline tests
-        if: matrix.os == 'ubuntu-latest' && needs.plan.outputs.browser == 'true'
+        if: matrix.os == 'ubuntu-latest' && matrix.shard == 1 && needs.plan.outputs.browser == 'true'
         run: (node common/deps.mjs run tests/panel-browser.mjs --results "$RUNNER_TEMP/results/steps.jsonl" -- node tests/panel-browser.mjs > "$RUNNER_TEMP/browser.log" 2>&1; echo $? > "$RUNNER_TEMP/browser.code") < /dev/null > /dev/null 2>&1 &
       # the gate the autopilot keeps an engine change by and `share` checks a release with (common/auto-guard.mjs), and the rest — the
       # three labs end to end, the real player's packets, NetherNet, the environment, the app lab, latest, maint, upkeep, login, lan:
       # the ones the plan names. A result line as each one ends (a run cancelled keeps what ended)
       - name: the offline tests the plan names
-        if: needs.plan.outputs.tests != ''
+        if: matrix.tests != ''
         env:
-          TESTS: ${{ needs.plan.outputs.tests }}
+          # (this runner's list; all of them: needs.plan.outputs.tests)
+          TESTS: ${{ matrix.tests }}
           # (the vendored nethernet-connect present: its test must run; absent: it says SKIP, and the warning below says why)
           LAB_REQUIRE_LAN: ${{ hashFiles('common/nethernet-connect/dist/src/index.js') != '' && '1' || '0' }}
           # 6 at a time on Linux's 4 cores: most of a test is waiting, and app-offline and offline.mjs now run as parts
@@ -115,20 +120,20 @@ jobs:
           if [ "$RUNNER_OS" = Linux ]; then node lab.mjs auto gate --tests "$TESTS" --record --results "$RUNNER_TEMP/results/offline.jsonl"
           else node lab.mjs auto gate --tests "$TESTS"; fi
       - name: GitHub flows (fake gh)
-        if: matrix.os == 'ubuntu-latest' && needs.plan.outputs.smoke == 'true'
+        if: matrix.os == 'ubuntu-latest' && matrix.shard == 1 && needs.plan.outputs.smoke == 'true'
         run: node common/deps.mjs run step:github-smoke --results "$RUNNER_TEMP/results/steps.jsonl" -- node bds/bench/github-smoke.mjs
       - name: management panel (real browser)
-        if: matrix.os == 'ubuntu-latest' && needs.plan.outputs.browser == 'true'
+        if: matrix.os == 'ubuntu-latest' && matrix.shard == 1 && needs.plan.outputs.browser == 'true'
         run: |
           while [ ! -f "$RUNNER_TEMP/browser.code" ]; do sleep 2; done
           cat "$RUNNER_TEMP/browser.log"; exit "$(cat "$RUNNER_TEMP/browser.code")"
-      - if: matrix.os == 'ubuntu-latest' && contains(needs.plan.outputs.tests, 'tests/lan-offline.mjs') && hashFiles('common/nethernet-connect/dist/src/index.js') == ''
+      - if: matrix.os == 'ubuntu-latest' && contains(matrix.tests, 'tests/lan-offline.mjs') && hashFiles('common/nethernet-connect/dist/src/index.js') == ''
         run: echo "::warning title=lan-offline not run::common/nethernet-connect/dist is not in this repository - vendor it from the nethernet-connect project (node scripts/vendor.mjs <this lab>), then lan and its test run here"
       # (what passed and what each read: the state job puts it in the memory; kept a day)
       - name: results for the memory
         if: always() && matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with: { name: verify-results-offline, path: '${{ runner.temp }}/results/', retention-days: 1, if-no-files-found: ignore }
+        with: { name: 'verify-results-offline-${{ matrix.shard }}', path: '${{ runner.temp }}/results/', retention-days: 1, if-no-files-found: ignore }
 
   bds:
     # the real server's parts the plan names, each on its own runner side by side: bench — the bench's selftest; scratch — the

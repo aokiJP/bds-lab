@@ -61,12 +61,15 @@ await t('the plan (pure): the real server waits unless allowed; full: everything
   const units = ['tests/a-offline.mjs', 'tests/b-offline.mjs', 'step:eslint', 'step:github-smoke', 'tests/panel-browser.mjs', 'bds:bench', 'bds:scratch', 'bds:dev', 'bds:play', 'bds:addon:coins', 'bds:addon:shop'];
   const none = V.planVerify({ units, state: null });
   eq([none.offline, none.tests, none.eslint, none.smoke, none.browser, none.bds, none.extra, none.waiting.size, none.skipped], [true, ['tests/a-offline.mjs', 'tests/b-offline.mjs'], true, true, true, false, false, 6, 0]);
-  eq(V.outputs(none), ['offline=true', 'tests=tests/a-offline.mjs tests/b-offline.mjs', 'eslint=true', 'smoke=true', 'browser=true', 'bds=false', 'bdsparts=["none"]', 'addons=', 'extra=false']);
+  eq(V.outputs(none), ['offline=true', 'tests=tests/a-offline.mjs tests/b-offline.mjs', 'eslint=true', 'smoke=true', 'browser=true', 'bds=false', 'bdsparts=["none"]', 'addons=', 'extra=false',
+    'offmatrix=[{"os":"ubuntu-latest","shard":1,"tests":"tests/a-offline.mjs tests/b-offline.mjs"}]']);
   const allowed = V.planVerify({ units, state: null, bdsAllowed: true });
   eq([allowed.bds, allowed.bdsParts, allowed.addons, allowed.waiting.size], [true, ['bench', 'scratch', 'dev', 'play', 'addons'], ['coins', 'shop'], 0]);
   ok(V.outputs(allowed).includes('bdsparts=["bench","scratch","dev","play","addons"]') && V.outputs(allowed).includes('addons=coins shop'), V.outputs(allowed).join(' '));
   const full = V.planVerify({ units, state: { v: 1, units: {} }, full: true });
   eq([full.extra, full.bds, full.run.size, full.waiting.size], [true, true, units.length, 0]);
+  eq(full.offMatrix.map((x) => [x.os, x.shard, x.tests]), [['ubuntu-latest', 1, 'tests/a-offline.mjs tests/b-offline.mjs'], ['macos-latest', 1, 'tests/a-offline.mjs tests/b-offline.mjs']], 'full: macOS with the whole list');
+  ok(V.outputs(V.planVerify({ units: ['step:eslint'], state: null })).includes('offmatrix=[{"os":"ubuntu-latest","shard":1,"tests":""}]'), 'no offline test: one runner for the steps, its list empty');
   // everything passed with the same reads; then one addon changed: its job alone, once the server may run
   const st = { v: 1, units: Object.fromEntries(units.map((u) => [u, entry({ f: 'v' }, { ms: 60000 })])) };
   const quiet = V.planVerify({ units, state: st, values: { f: 'v' }, env: ENV, now: NOW, bdsAllowed: true });
@@ -78,6 +81,23 @@ await t('the plan (pure): the real server waits unless allowed; full: everything
   eq([waits.bds, [...waits.waiting.keys()]], [false, ['bds:addon:shop']]);
   const text = V.summary(waits).join('\n');
   ok(/流す: なし/.test(text) && /流さない: 10 個/.test(text) && /1 個が待っている。流すには commit の題（1 行目）に \[bds\]/.test(text) && /bds:addon:shop: 変わった: f/.test(text), text);
+});
+
+await t('the offline job on one runner or two (pure): long together → two lists, the longest first to the one that ends first (a test in parts by its slowest part), runner 1 with the steps; short → one; the memory\'s times before TIME', () => {
+  const st = (ms) => ({ v: 1, units: Object.fromEntries(Object.entries(ms).map(([u, s]) => [u, { ms: s * 1000 }])) });
+  const tests = ['tests/app-offline.mjs', 'tests/env-offline.mjs', 'tests/rd-overlap-offline.mjs', 'tests/x-offline.mjs', 'tests/y-offline.mjs', 'tests/z-offline.mjs'];
+  const parts = { 'tests/app-offline.mjs': [{}, {}, {}, {}], 'tests/env-offline.mjs': [{}, {}] };
+  // app: 4 parts of 200 s (800 together), env: 2 of 150, rd 140, x 100, y 90, z 10 → 1440 s of tests: two runners
+  const two = V.offlineSplit(tests, st({ 'tests/app-offline.mjs': 200, 'tests/env-offline.mjs': 150, 'tests/rd-overlap-offline.mjs': 140, 'tests/x-offline.mjs': 100, 'tests/y-offline.mjs': 90, 'tests/z-offline.mjs': 10 }), { parts });
+  eq(two.length, 2, 'two runners');
+  eq(two.flat().sort(), [...tests].sort(), 'every test on exactly one');
+  ok(two.every((l) => l.every((t, i) => i === 0 || tests.indexOf(l[i - 1]) < tests.indexOf(t))), 'each list in the plan\'s order');
+  const appOn = two.findIndex((l) => l.includes('tests/app-offline.mjs'));
+  ok(!two[appOn].includes('tests/env-offline.mjs'), `the two longest apart: ${JSON.stringify(two)}`);
+  eq(V.offlineSplit(tests.slice(3), st({ 'tests/x-offline.mjs': 100, 'tests/y-offline.mjs': 90, 'tests/z-offline.mjs': 10 }), { parts }).length, 1, '200 s of tests: one runner');
+  eq(V.offlineSplit(['tests/unknown-offline.mjs'], null).length, 1, 'no memory, one test: TIME, else a minute');
+  eq(V.offlineSplit([], null), [[]], 'none: one empty list');
+  eq(V.offlineSplit(tests, null, { parts, n: 3 }).length, 3, 'n given: that many');
 });
 
 await t('what the run asks (pure): [bds] / [full ci] in the title only, by hand (full or not), nightly (stale), the default branch', () => {
@@ -242,7 +262,7 @@ await t('verify.yml runs what the plan names: every output handed on, each step 
   for (const p of V.BDS_PARTS) ok(y.includes(`matrix.part == '${p}'`) && y.includes(`run bds:${p} --results`), `the real server's part ${p}: run as bds:${p}`);
   for (const u of V.STEPS) ok(y.includes(`run ${u} --results`), `the step ${u} run as its unit`);
   ok(y.includes("--unit 'bds:addon:{}'") && y.includes('auto gate --tests') && y.includes('--record --results'), 'the addons and the offline tests recorded');
-  ok(y.includes('node common/verify-plan.mjs --merge --out') && y.includes('name: verify-state') && /name: verify-results-/.test(y), 'the state job saves the memory');
+  ok(y.includes('node common/verify-plan.mjs --merge --out') && y.includes('name: verify-state') && /name: '?verify-results-/.test(y), 'the state job saves the memory');
   ok(/schedule:\s*\n(?:\s*#.*\n)*\s*- cron:/.test(y) && /full:\s*\n\s*description:/.test(y), 'nightly, and full by hand');
   // (the first `node lab.mjs` of a checkout reads every file to make the lab's starting point: done before any unit is recorded)
   for (const [job, next, cmd] of [['offline', 'bds', 'node lab.mjs help > /dev/null'], ['bds', 'end', 'node ../lab.mjs help > /dev/null']]) {

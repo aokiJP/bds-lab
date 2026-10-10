@@ -13,7 +13,8 @@
 // repository's verify.yml: a pull request's run can change the workflow, so its artifacts are never read.
 //   node common/verify-plan.mjs        the plan: GITHUB_TOKEN (actions: read), GITHUB_REPOSITORY, GITHUB_API_URL,
 //                                      GITHUB_EVENT_NAME, GITHUB_EVENT_PATH, GITHUB_REF_NAME → offline, tests, eslint, smoke,
-//                                      browser, bds, bdsparts, addons, extra in $GITHUB_OUTPUT; why in $GITHUB_STEP_SUMMARY
+//                                      browser, bds, bdsparts, addons, extra, offmatrix (the offline job's runners, each with its
+//                                      list: offlineSplit) in $GITHUB_OUTPUT; why in $GITHUB_STEP_SUMMARY
 //   node common/verify-plan.mjs --merge --out <file>   the memory: the newest trusted state and this run's (GITHUB_RUN_ID)
 //                                      verify-results-* artifacts → the new state (nothing written when one cannot be read: the
 //                                      state before stays the newest)
@@ -23,6 +24,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { policy } from './auto-guard.mjs';
 import { STATE_VERSION, treeAt, valuesOf, envKey } from './verify-state.mjs';
+import { TIME, PARTS } from './run-tests.mjs';
 import { listEntries, readEntry } from '../sandbox-be/src/colony/zip.js';
 
 const TOP = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -79,6 +81,27 @@ export function select(state, units, values, { env = envKey(), now = Date.now(),
   return new Map(units.filter((u) => why.has(u)).map((u) => [u, why.get(u)]));
 }
 
+// The offline tests on one runner, or on two when together they are long: OFFLINE_SPLIT_S of their own seconds (what each took
+// last time, from the memory — a test in parts its slowest part's time each part —, else run-tests' TIME, else a minute) is about
+// 100 s on one runner's 6 at a time. Each runner gets its own list, the longest test first to the runner that would end first (its
+// time over 6 at a time, never under its slowest part); runner 1 also runs the steps (ESLint, GitHub flows, about 20 s after)
+export const OFFLINE_SPLIT_S = 600, OFFLINE_JOBS = 6, STEPS_S = 20;
+export function offlineSplit(tests, state, { time = TIME, parts = PARTS, n = null } = {}) {
+  const had = state?.units && typeof state.units === 'object' ? state.units : {};
+  const k = (t) => (parts?.[t]?.length > 1 ? parts[t].length : 1);
+  const secs = (t) => (Number.isFinite(had[t]?.ms) ? (had[t].ms / 1000) * k(t) : time[t] ?? 60);
+  const total = tests.reduce((a, t) => a + secs(t), 0), m = n ?? (total > OFFLINE_SPLIT_S ? 2 : 1);
+  const s = Array.from({ length: m }, (_, i) => ({ sum: 0, max: 0, first: i === 0 ? STEPS_S : 0, tests: new Set() }));
+  const est = (x) => Math.max(x.sum / OFFLINE_JOBS, x.max) + x.first;
+  for (const t of [...tests].sort((a, b) => secs(b) - secs(a) || (a < b ? -1 : 1))) {
+    const add = (x) => ({ ...x, sum: x.sum + secs(t), max: Math.max(x.max, secs(t) / k(t)) });
+    let best = 0;
+    for (let i = 1; i < m; i++) if (est(add(s[i])) < est(add(s[best]))) best = i;
+    s[best] = { ...add(s[best]), tests: s[best].tests.add(t) };
+  }
+  return s.map((x) => tests.filter((t) => x.tests.has(t)));
+}
+
 /** the plan (pure) → { offline, tests, eslint, smoke, browser, bds, bdsParts, addons, extra, run, waiting, skipped }:
  *  full — everything and the extra ones; no state — every unit allowed; the real server's units only when bdsAllowed (or full),
  *  the others wait (run and waiting: Map(unit → why)) */
@@ -91,7 +114,10 @@ export function planVerify({ units = [], state = null, values = {}, env = envKey
   const addons = [...run.keys()].filter((u) => u.startsWith('bds:addon:')).map((u) => u.slice('bds:addon:'.length));
   const bdsParts = [...BDS_PARTS.filter((p) => run.has(`bds:${p}`)), ...(addons.length ? ['addons'] : [])];
   const eslint = run.has('step:eslint'), smoke = run.has('step:github-smoke'), browser = run.has('tests/panel-browser.mjs');
-  return { offline: tests.length > 0 || eslint || smoke || browser, tests, eslint, smoke, browser, bds: bdsParts.length > 0, bdsParts, addons, extra: !!full, run, waiting, skipped: units.length - picked.size };
+  // the offline job's runners: Linux in one or two lists (offlineSplit), macOS (full only) the whole list on one
+  const offMatrix = offlineSplit(tests, state).map((list, i) => ({ os: 'ubuntu-latest', shard: i + 1, tests: list.join(' ') }));
+  if (full) offMatrix.push({ os: 'macos-latest', shard: 1, tests: tests.join(' ') });
+  return { offline: tests.length > 0 || eslint || smoke || browser, tests, eslint, smoke, browser, bds: bdsParts.length > 0, bdsParts, addons, extra: !!full, offMatrix, run, waiting, skipped: units.length - picked.size };
 }
 
 /** what the run asks for (pure): the event's name, its payload, the branch → { full, bds, staleDays }. [full ci] / [bds] count in
@@ -105,14 +131,16 @@ export function askedOf(name, ev = {}, ref = '') {
 
 /** the plan's outputs for $GITHUB_OUTPUT (pure; a matrix of nothing is an error even for a job that will not run) */
 export const outputs = (p) => [`offline=${p.offline}`, `tests=${p.tests.join(' ')}`, `eslint=${p.eslint}`, `smoke=${p.smoke}`, `browser=${p.browser}`, `bds=${p.bds}`,
-  `bdsparts=${JSON.stringify(p.bdsParts.length ? p.bdsParts : ['none'])}`, `addons=${p.addons.join(' ')}`, `extra=${p.extra}`];
+  `bdsparts=${JSON.stringify(p.bdsParts.length ? p.bdsParts : ['none'])}`, `addons=${p.addons.join(' ')}`, `extra=${p.extra}`,
+  `offmatrix=${JSON.stringify(p.offMatrix?.length ? p.offMatrix : [{ os: 'ubuntu-latest', shard: 1, tests: '' }])}`];
 
 /** the plan in words (pure): where its memory came from, what runs and why, how many do not, what waits for the real server */
 export function summary(p, from = null) {
   const L = [];
   L.push(`記録: ${from ? `実行 #${from.number ?? from.id}（${String(from.sha ?? '').slice(0, 7)}${from.branch ? `・${from.branch}` : ''}${from.at ? `・${String(from.at).slice(0, 16).replace('T', ' ')} UTC` : ''}）のもの` : 'なし（初めて・読めない）'}`);
   const what = [];
-  if (p.tests.length) what.push(`オフラインの試験 ${p.tests.length} 本`);
+  const linux = (p.offMatrix ?? []).filter((x) => x.os === 'ubuntu-latest' && x.tests);
+  if (p.tests.length) what.push(`オフラインの試験 ${p.tests.length} 本${linux.length > 1 ? `（${linux.length} 台に分けて: ${linux.map((x) => x.tests.split(' ').length).join(' 本・')} 本）` : ''}`);
   if (p.eslint) what.push('ESLint');
   if (p.smoke) what.push('GitHub の流れ');
   if (p.browser) what.push('本物のブラウザ');
