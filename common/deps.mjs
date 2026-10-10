@@ -4,10 +4,12 @@
 // A record that is not whole (a '!' line, or nothing recorded at all) is deps null: not known, the unit runs again next time.
 //   node common/deps.mjs run <unit> --results <file> [--cwd <dir>] -- <cmd...>
 //        the command with the recorder: its output as it is, its exit code; one result line appended
-//   node common/deps.mjs each --results <file> --jobs <n> --unit <unit, {} the name> --names "<a b c>" [--cwd <dir>] -- <cmd, {} the name...>
+//   node common/deps.mjs each --results <file> --jobs <n> --unit <unit, {} the name> --names "<a b c>" [--cwd <dir>] [--no-retry] -- <cmd, {} the name...>
 //        a unit per name, n at a time; each one's output held and printed whole when it ends (::group::<name> … ::endgroup::, a
 //        failure also ::error title=<unit>::<its last 30 lines>) and its result line appended right then (a run cancelled keeps
-//        what ended); after all of them, exit 1 if any failed
+//        what ended); after all of them, exit 1 if any failed. n > 1: one that failed beside others runs again alone once
+//        they are done (its line after the first: the later one counts) — passing alone is a pass with a ::warning (the others'
+//        load, a real server's ticks slowed past a test's time), failing alone the ::error; --no-retry: not again
 // A recorded path → a key: inside the repository its path; under the temp folder the longest tail of 2 parts or more that the
 // repository has (a copy of the lab run there is read as the lab: more keys than needed is fine; looked for and not there, a
 // tail whose folder the repository has); anything else is not the repository's. Kept: a file of HEAD's tree, a folder of it as
@@ -160,7 +162,7 @@ function runUnit(unit, cmd, { cwd, results, capture }) {
 }
 const usage = () => {
   console.error('使い方: node common/deps.mjs run <unit> --results <file> [--cwd <dir>] -- <cmd...>\n'
-    + '        node common/deps.mjs each --results <file> --jobs <n> --unit <unit、{} が名前> --names "<a b c>" [--cwd <dir>] -- <cmd、{} が名前...>');
+    + '        node common/deps.mjs each --results <file> --jobs <n> --unit <unit、{} が名前> --names "<a b c>" [--cwd <dir>] [--no-retry] -- <cmd、{} が名前...>');
   process.exit(2);
 };
 
@@ -183,20 +185,31 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   } else {
     const names = String(flag('--names') ?? '').split(/\s+/).filter(Boolean), type = flag('--unit'), jobs = Math.max(1, Number(flag('--jobs')) || 1);
     if (!type) usage();
-    const fill = (s, n) => String(s).split('{}').join(n), bad = [];
+    const retry = jobs > 1 && !opt.includes('--no-retry');
+    const fill = (s, n) => String(s).split('{}').join(n), bad = [], again = [];
+    // one unit, its output whole in a group; a failure annotated unless it is to run again alone
+    const one = async (n, label, annotate) => {
+      const unit = fill(type, n), r = await runUnit(unit, cmd.map((x) => fill(x, n)), { cwd, results, capture: true });
+      const body = r.text.replace(/\s+$/, ''), tail = body.split('\n').slice(-30).join('\n');
+      process.stdout.write(`::group::${label}\n${body ? body + '\n' : ''}${r.ok ? `✔ ${unit}（${secs(r.ms)}）` : `✘ ${unit}: 終了コード ${r.code}（${secs(r.ms)}）`}\n::endgroup::\n`
+        + (r.ok || !annotate ? '' : `::error title=${escProp(unit)}::${escData(tail || `終了コード ${r.code}`)}\n`));
+      return { unit, ok: r.ok };
+    };
     let i = 0;
     const worker = async () => {
       while (i < names.length) {
-        const n = names[i++], unit = fill(type, n);
-        const r = await runUnit(unit, cmd.map((x) => fill(x, n)), { cwd, results, capture: true });
-        const body = r.text.replace(/\s+$/, ''), tail = body.split('\n').slice(-30).join('\n');
-        process.stdout.write(`::group::${n}\n${body ? body + '\n' : ''}${r.ok ? `✔ ${unit}（${secs(r.ms)}）` : `✘ ${unit}: 終了コード ${r.code}（${secs(r.ms)}）`}\n::endgroup::\n`
-          + (r.ok ? '' : `::error title=${escProp(unit)}::${escData(tail || `終了コード ${r.code}`)}\n`));
-        if (!r.ok) bad.push(unit);
+        const n = names[i++], r = await one(n, n, !retry);
+        if (!r.ok) (retry ? again : bad).push(retry ? n : r.unit);
       }
     };
     await Promise.all(Array.from({ length: Math.min(jobs, names.length) }, worker));
-    console.log(bad.length ? `✘ ${names.length} 個のうち ${bad.length} 個が落ちた: ${bad.join(' ')}` : `✔ ${names.length} 個すべて通った`);
+    // (beside the others it failed: alone now, as it ran before units ran side by side — in the names' order)
+    for (const n of again.sort((a, b) => names.indexOf(a) - names.indexOf(b))) {
+      const r = await one(n, `${n}（1 つだけでもう一度）`, true);
+      if (!r.ok) bad.push(r.unit);
+      else process.stdout.write(`::warning title=${escProp(r.unit)}::${escData('ほかと並べて流すと落ち、1 つだけで流すと通った（同時に動くほかの単位の負荷で時間切れになった疑い）')}\n`);
+    }
+    console.log(bad.length ? `✘ ${names.length} 個のうち ${bad.length} 個が落ちた: ${bad.join(' ')}` : `✔ ${names.length} 個すべて通った${again.length ? `（${again.length} 個は 1 つだけでもう一度流して通った: ${again.join(' ')}）` : ''}`);
     process.exitCode = bad.length ? 1 : 0;
   }
 }

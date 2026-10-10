@@ -4,8 +4,8 @@
 // repository in the temp folder read as the repository, a file looked for and made later, git's own and ignored files left out,
 // a sandboxed child (--permission) started without the recorder and its allowed folder recorded instead, '!' → null, a record
 // inside another's, prepare/finish, and the command line: run (its output, its exit code, its line) and each (n at a time, each
-// one's output whole in a group, a failure's annotation escaped, the lines in the order they ended, a cancelled run keeps what
-// ended and leaves no record folder). node tests/deps-offline.mjs
+// one's output whole in a group, a failure's annotation escaped, the lines in the order they ended, one that failed beside
+// others again alone, a cancelled run keeps what ended and leaves no record folder). node tests/deps-offline.mjs
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -89,6 +89,8 @@ put({
   'fail.mjs': "console.log('about to fail'); process.exit(3);\n",
   'step.mjs': "const n = process.argv[2]; console.log(`line1 ${n}`); if (n === 'b') console.log('50% of b\\r'); console.log(`line2 ${n}`); await new Promise((r) => setTimeout(r, { a: 1500, b: 0, c: 200, quick: 0, slow: 600000 }[n] ?? 0)); if (n === 'slow') console.log('never'); process.exit(n === 'b' ? 1 : 0);\n",
   'slow.mjs': "import fs from 'node:fs'; fs.writeFileSync(process.env.PIDS + '/' + process.argv[2], String(process.pid)); await new Promise((r) => setTimeout(r, process.argv[2] === 'slow' ? 600000 : 0));\n",
+  // (fails beside another one — it waits a moment to see one — and passes alone; 'bad' fails either way)
+  'crowd.mjs': "import fs from 'node:fs'; import path from 'node:path'; const d = process.env.CROWD, n = process.argv[2], me = path.join(d, n), sleep = (ms) => new Promise((r) => setTimeout(r, ms)); fs.writeFileSync(me, ''); const others = () => fs.readdirSync(d).filter((f) => f !== n); for (const t0 = Date.now(); !others().length && Date.now() - t0 < 1500; await sleep(20)); const o = others(); await sleep(400); fs.rmSync(me); console.log(o.length ? `beside ${o.sort().join(' ')}` : 'alone'); process.exit(o.length || n === 'bad' ? 1 : 0);\n",
 });
 fs.chmodSync(path.join(REPO, 'bin', 'tool'), 0o755);
 put({ 'ignored/secret.txt': 'secret\n', 'note.log': 'log\n' });
@@ -203,7 +205,7 @@ await t('run: the command\'s output as it is, its exit code, one result line', (
 
 await t('each: n at a time, each one\'s output whole in its group, a failure annotated (escaped), lines in the order they ended, exit 1 after all ran', () => {
   const res = path.join(TMP, 'each.jsonl'), t0 = Date.now();
-  const r = spawnSync(process.execPath, [CLI, 'each', '--results', res, '--jobs', '2', '--unit', 'u:{}', '--names', 'a b c', '--cwd', REPO, '--', process.execPath, 'step.mjs', '{}'], { encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [CLI, 'each', '--results', res, '--jobs', '2', '--no-retry', '--unit', 'u:{}', '--names', 'a b c', '--cwd', REPO, '--', process.execPath, 'step.mjs', '{}'], { encoding: 'utf8' });
   eq(r.status, 1, r.stdout + r.stderr);
   ok(Date.now() - t0 < 1500 + 200 + 6000, 'side by side');
   const out = r.stdout;
@@ -217,6 +219,24 @@ await t('each: n at a time, each one\'s output whole in its group, a failure ann
   ok(rows[2].deps?.['step.mjs'] === blob('step.mjs') && rows[0].deps === null, 'deps for a pass');
   const all = spawnSync(process.execPath, [CLI, 'each', '--results', res, '--jobs', '3', '--unit', 'v:{}', '--names', 'a c', '--cwd', REPO, '--', process.execPath, 'step.mjs', '{}'], { encoding: 'utf8' });
   ok(all.status === 0 && /✔ 2 個すべて通った/.test(all.stdout) && !/::error/.test(all.stdout), all.stdout);
+});
+
+await t('each, n > 1: one that failed beside others runs again alone — a pass with a warning, or the error; its later line is the one that counts', () => {
+  const res = path.join(TMP, 'retry.jsonl'), crowd = fs.mkdtempSync(path.join(TMP, 'crowd-'));
+  const go = (names) => spawnSync(process.execPath, [CLI, 'each', '--results', res, '--jobs', '3', '--unit', 'c:{}', '--names', names, '--cwd', REPO, '--', process.execPath, 'crowd.mjs', '{}'], { encoding: 'utf8', env: { ...process.env, CROWD: crowd } });
+  const r = go('x y bad'), out = r.stdout;
+  eq(r.status, 1, out + r.stderr);
+  for (const n of ['x', 'y']) ok(new RegExp(`::group::${n}（1 つだけでもう一度）\\nalone\\n✔ c:${n}`).test(out) && out.includes(`::warning title=c%3A${n}::`), `${n} again alone:\n${out}`);
+  const err = out.split('\n').filter((l) => l.startsWith('::error'));
+  eq([err.length, err[0]?.startsWith('::error title=c%3Abad::')], [1, true], out);
+  ok(/✘ 3 個のうち 1 個が落ちた: c:bad$/m.test(out), out);
+  const rows = fs.readFileSync(res, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  eq([rows.length, rows.slice(0, 3).every((x) => !x.ok), rows.slice(3).map((x) => [x.unit, x.ok])], [6, true, [['c:x', true], ['c:y', true], ['c:bad', false]]], 'the first tries, then the ones alone');
+  fs.rmSync(res);
+  const fine = go('x y');
+  ok(fine.status === 0 && /✔ 2 個すべて通った（2 個は 1 つだけでもう一度流して通った: x y）/.test(fine.stdout) && !/::error/.test(fine.stdout), fine.stdout);
+  const plain = spawnSync(process.execPath, [CLI, 'each', '--results', res, '--jobs', '2', '--no-retry', '--unit', 'c:{}', '--names', 'x y', '--cwd', REPO, '--', process.execPath, 'crowd.mjs', '{}'], { encoding: 'utf8', env: { ...process.env, CROWD: crowd } });
+  ok(plain.status === 1 && (plain.stdout.match(/^::error/gm) ?? []).length === 2 && !/1 つだけ/.test(plain.stdout), `--no-retry: as before\n${plain.stdout}`);
 });
 
 await t('each cancelled: what ended keeps its line, the units running stop, no record folder stays', async () => {
