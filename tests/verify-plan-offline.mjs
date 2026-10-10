@@ -161,6 +161,8 @@ await t('the same content: nothing runs; a re-run is not its own base; an engine
   const envE = envFor(d), eng = await V.main({ env: envE, cwd: d, fetchImpl: fakeGitHub(runs), out: quiet().out });
   eq([eng.offline, eng.bds, eng.bdsParts, eng.addons], ['full', true, ['bench', 'scratch', 'dev', 'addons'], 'all']);
   ok(/^bdsparts=\["bench","scratch","dev","addons"\]$/m.test(fs.readFileSync(envE.GITHUB_OUTPUT, 'utf8')) && /^addons=all$/m.test(fs.readFileSync(envE.GITHUB_OUTPUT, 'utf8')), 'outputs');
+  // (every offline test on one runner: more runners cost more minutes than they save in waiting — common/verify-plan.mjs SHARDS)
+  ok(/^shards=\[1\]$/m.test(fs.readFileSync(envE.GITHUB_OUTPUT, 'utf8')) && /^nshards=1$/m.test(fs.readFileSync(envE.GITHUB_OUTPUT, 'utf8')), 'every offline test: one runner');
 });
 
 await t('everything: by hand, [full ci], GitHub refusing (said, not a failure), no passed commit', async () => {

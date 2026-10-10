@@ -34,9 +34,11 @@ const PANEL_SIDE = (f) => f.startsWith('panel/') || PANEL_TESTS.includes(f) || /
 // story with a real client (dev-bds, play-bds), every addon's tests and pack. An addon's own files alone need only its tests:
 // none of the other parts reads a unit kept in bds/addons — they make their own)
 export const BDS_PARTS = ['bench', 'scratch', 'dev', 'addons'];
-// (every offline test: on this many runners side by side, each its part — `auto gate --all --shard i/n`, split by the tests'
-// usual times: common/run-tests.mjs TIME)
-export const SHARDS = 4;
+// (every offline test: on this many runners, each its part — `auto gate --all --shard i/n`. One: a runner's own cores already
+// run them side by side, and more runners cost more minutes than they save in waiting — measured 2026-10-10, one runner 16–19
+// minutes, four 27 minutes together for about 5 minutes less wait. Raise it only when the wait matters more than the minutes,
+// and give common/run-tests.mjs TIME the tests' times first: without them the split is by count)
+export const SHARDS = 1;
 const ADDON = /^bds\/addons\/([A-Za-z0-9_-]+)\//;
 const PANEL_PATH = /panel\/[A-Za-z0-9_./-]+\.(?:mjs|js|json)/g;
 const PANEL_PATH_ERE = 'panel/[A-Za-z0-9_./-]+\\.(mjs|js|json)';   // (the same for git grep -E: no (?:)

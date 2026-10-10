@@ -14,8 +14,9 @@ import { fileURLToPath } from 'node:url';
 export const SERIAL = new Set(['tests/make-offline.mjs', 'tests/guards-offline.mjs', 'tests/cli-offline.mjs', 'tests/ci-offline.mjs', 'tests/import-offline.mjs', 'tests/colony-offline.mjs', 'tests/app-offline.mjs', 'tests/app-browser.mjs', 'tests/device-offline.mjs', 'tests/host-offline.mjs', 'tests/dev-bds.mjs']);
 // tests that take long by design (the app lab drives a fake device through every step): their own time limit
 export const LONG = { 'tests/app-offline.mjs': 3600000, 'tests/offline.mjs': 1800000, 'tests/env-offline.mjs': 1800000 };
-// a test's usual seconds on a 4-core runner (measured: `auto gate --all`); a test not here counts as UNKNOWN. Only for the
-// shards' balance: a wrong number makes one shard longer, never a test left out
+// a test's usual seconds on a 4-core runner (from `auto gate --all`); a test not here counts as UNKNOWN. Only for the shards'
+// balance: a wrong number makes one shard longer, never a test left out. Empty while CI runs them on one runner
+// (common/verify-plan.mjs SHARDS): every test counts the same
 export const TIME = {};
 const UNKNOWN = 60;
 
