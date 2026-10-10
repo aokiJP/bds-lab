@@ -26,6 +26,17 @@ import * as DBG from './lib/debug.mjs';
 import { lendStart, lendFork } from './ui/lend.mjs';
 import { HOST_FILES } from './lib/hosttemplate.mjs';
 import * as MB from './lib/members.mjs';
+import * as GD from './lib/guide.mjs';
+import { helpLine, guideCard, palette, glossaryCard } from './ui/guide.mjs';
+import { checks as setupChecks } from './lib/setup.mjs';
+import { unitsTab } from './ui/units.mjs';
+import { releasesTab } from './ui/releases.mjs';
+import { scheduleTab } from './ui/schedule.mjs';
+import { statsTab } from './ui/stats.mjs';
+import { healthCard, reportButton } from './ui/health.mjs';
+import * as IB from './lib/inbox.mjs';
+import { bellButton, toggleInbox } from './ui/inbox.mjs';
+import { bulkCard } from './ui/bulk.mjs';
 
 // ---- the browser's storage (one that refuses it — a private window may — still works for the tab) ----
 const storage = (name) => { try { const s = window[name]; s.setItem('bdslab.probe', '1'); s.removeItem('bdslab.probe'); return s; } catch { return memoryStorage(); } };
@@ -133,11 +144,19 @@ function renderWho() {
   if (st.me) kids.push(h('img', { src: st.me.avatar_url, alt: '' }));
   if (list.length > 1) kids.push(h('select', { id: 'acct', 'aria-label': 'アカウントを切り替える', onchange: (e) => switchTo(e.target.value) }, list.map((a) => h('option', { value: a.login, selected: a.login === st.login ? 'selected' : null }, `${a.login}${a.remember ? '' : '（このタブだけ）'}`))));
   else if (st.me) kids.push(st.me.login);
+  if (st.me && st.as?.length) kids.push(h('button', { id: 'find', title: 'やりたいこと（Ctrl/⌘+K）', 'aria-label': 'やりたいこと', onclick: () => PAL.open() }, '🔎'));
+  const box = st.me && canLab() ? inboxStore() : null;
+  if (box) kids.push(bellButton({ inbox: box, go: inboxGo }));
   kids.push(h('button', { title: 'アカウントを加える', 'aria-label': 'アカウントを加える', onclick: () => renderSignIn('', { adding: true }) }, '＋'));
   if (st.login) kids.push(h('button', { onclick: () => signOut() }, '出る'));
   // (an error on this page or GitHub not answering: shown at once, a tap to what happened)
   const n = loud(); if (n && st.login) kids.unshift(h('button', { class: 'danger', id: 'faults', title: 'このページで起きたこと（設定 → デバッグ）', onclick: () => { st.tab = 'settings'; go('settings'); $('debug')?.scrollIntoView({ block: 'start' }); } }, `⚠ ${n}`));
   $('who').replaceChildren(...kids);
+}
+/** an account forgotten by this browser, its news (「お知らせ」) with it → the account now in use */
+function forget(login) {
+  for (const s of [LOCAL, TAB]) { try { for (let i = s.length - 1; i >= 0; i--) { const k = s.key(i); if (k?.startsWith(`${INBOX_PREFIX}${login}.`)) s.removeItem(k); } } catch { /* refused */ } }
+  return A.remove(login);
 }
 function switchTo(login) { if (!A.use(login)) return; st.tab = 'overview'; st.me = null; st.target = 'lab'; history.replaceState(null, '', location.pathname + location.search); connect(); }
 /** this account forgotten by this browser — a signed-in one's token revoked on GitHub first (a typed one stays valid on
@@ -145,7 +164,7 @@ function switchTo(login) { if (!A.use(login)) return; st.tab = 'overview'; st.me
 async function signOut({ why = '' } = {}) {
   const login = st.login, s = A.session(login), tok = A.token(login);
   if (s?.kind === 'oauth' && tok && CONFIG.authUrl) await S.logout(CONFIG.authUrl, tok);
-  const next = A.remove(login);
+  const next = forget(login);
   Object.assign(st, { login: null, me: null, lab: null, hosts: [], tab: 'overview', role: null, policy: P.DEFAULT_POLICY, audit: 'off' });
   clearInterval(st.timer);
   if (why) { renderWho(); return renderSignIn(why, { login }); }
@@ -179,9 +198,9 @@ function renderLocked(why) {
   // (someone the lab's owner did not invite: the one thing offered is to lend their own Actions minutes — ui/lend.mjs)
   if (st.me) return main().replaceChildren(h('p', { class: 'muted' }, why), lendStart({ api: st.api, me: st.me, labSlug: settings().lab, oauth: A.session(st.login)?.kind === 'oauth', appSlug: CONFIG.appSlug,
     onReady: (slug) => { saveSettings({ hosts: [...new Set([...settings().hosts, slug])] }); st.tab = 'hosts'; st.routed = true; connect(); },
-    other: () => { A.remove(st.login); Object.assign(st, { login: null, me: null }); renderWho(); renderSignIn(); } }));
+    other: () => { forget(st.login); Object.assign(st, { login: null, me: null }); renderWho(); renderSignIn(); } }));
   main().replaceChildren(h('div', { class: 'card' }, h('h2', {}, '🔒 使えません'), h('p', {}, why),
-    h('button', { onclick: () => { A.remove(st.login); Object.assign(st, { login: null, me: null }); renderWho(); renderSignIn(); } }, '別のアカウントで入る')));
+    h('button', { onclick: () => { forget(st.login); Object.assign(st, { login: null, me: null }); renderWho(); renderSignIn(); } }, '別のアカウントで入る')));
 }
 
 // ---- connecting: who, the lab, its policy, the hosts ----
@@ -209,7 +228,7 @@ async function connect() {
   if (!login) { renderWho(); return renderSignIn(); }
   if (st.signinErr) { toast(st.signinErr, true); st.signinErr = null; }
   st.login = login; st.me = null;
-  if (!A.token(login)) { A.remove(login); return connect(); }
+  if (!A.token(login)) { forget(login); return connect(); }
   if (!(await freshen(login))) return renderSignIn(st.signinErr, { login });
   st.apiToken = null; useToken(A.token(login));
   renderWho();
@@ -237,8 +256,10 @@ async function connect() {
     st.routed = true;
     if (want.tab) st.tab = want.tab;
     if (want.run && (!want.repo || want.repo.toLowerCase() === String(st.lab?.slug).toLowerCase())) st.focus = { run: Number(want.run) };
+    if (/[?&]inbox=1\b/.test(location.hash)) st.openInbox = true;
   }
   render();
+  if (st.openInbox) { st.openInbox = false; openInbox(); }
 }
 /** the lab's policy and this person's role in it (the organization's teams it names, when GitHub lets this account read
  *  them: else every role they might have counts, and only what all of them allow is offered) */
@@ -284,15 +305,16 @@ const capsOf = () => Object.fromEntries((st.lab?.caps ?? []).map((c) => [c.key, 
 const hasWf = (f) => (st.lab?.workflows ?? []).some((w) => String(w.path).endsWith(`/${f}`));
 
 // ---- the frame: tabs ----
-const TABS = [['overview', '概要'], ['runs', '進み具合'], ['start', '実行'], ['files', '成果物'], ['discord', 'Discord'], ['secrets', '秘密'], ['live', '端末'], ['hosts', '貸し借り'], ['members', 'メンバー'], ['setup', '準備'], ['audit', '監査'], ['settings', '設定']];
+const TABS = [['overview', '概要'], ['runs', '進み具合'], ['start', '実行'], ['units', 'アドオン'], ['releases', '配布'], ['files', '成果物'], ['schedule', '予約'], ['stats', '統計'], ['discord', 'Discord'], ['secrets', '秘密'],
+  ['live', '端末'], ['hosts', '貸し借り'], ['members', 'メンバー'], ['setup', '準備'], ['audit', '監査'], ['settings', '設定']];
 function render() {
   clearInterval(st.timer);
   renderWho();
   const tabs = TABS.filter(([k]) => (k === 'audit' ? may('audit.read') : canLab() || ['overview', 'hosts', 'settings'].includes(k)));
   if (!tabs.some(([k]) => k === st.tab)) st.tab = tabs[0][0];
-  const body = h('div', { id: 'tabbody' });
+  const body = h('div', { id: 'tabbody' }, helpLine(st.tab, LOCAL));
   main().replaceChildren(h('nav', { class: 'tabs' }, tabs.map(([k, label], i) => h('button', { class: st.tab === k ? 'on' : '', 'data-tab': k, title: i < 10 ? `キー ${(i + 1) % 10}` : null, onclick: () => go(k) }, label))), body);
-  ({ overview, runs, start, files, discord, secrets, live, hosts, members, setup, audit, settings: settingsTab })[st.tab](body);
+  ({ overview, runs, start, units, releases, files, schedule, stats, discord, secrets, live, hosts, members, setup, audit, settings: settingsTab })[st.tab](body);
 }
 /** another tab (the address follows: a reload or a shared link opens the same tab) */
 function go(tab) { st.tab = tab; history.replaceState(null, '', `#${tab}`); render(); }
@@ -305,6 +327,35 @@ function setup(body) {
     reload: async () => { await loadEnv(st.lab); if (st.tab === 'setup') render(); }, record: (action, detail) => record(action, detail) });
 }
 function audit(body) { auditTab(body, { api: st.api, lab: st.lab, policy: st.policy, role: st.role }); }
+// ---- アドオン・配布 (ui/units.mjs, ui/workspace.mjs, ui/releases.mjs): the lab's units made, taken in, changed, tested and
+// finished, and what it has given out — by GitHub alone: the contents API and unit.yml on the lab's own Actions ----
+/** a workflow of the lab started on its default branch — GitHub's call alone: the tab that calls it guards it, once */
+const dispatchRaw = (wf, inputs) => st.api.dispatch(st.lab.slug, wf, st.lab.repo.default_branch, inputs);
+function units(body) {
+  unitsTab(body, { api: st.api, lab: st.lab, gate, guarded, go, dispatch: dispatchRaw,
+    // (「AI で変える」 and 「AI で作る」: the 「実行」 tab's idea card, the unit to change filled in)
+    aiMake: hasWf('ai-make.yml') ? ({ unit } = {}) => { st.makeUnit = unit ?? ''; go('start'); setTimeout(() => { $('make')?.scrollIntoView({ block: 'start' }); $('idea')?.focus(); }, 50); } : null });
+}
+function releases(body) { releasesTab(body, { api: st.api, lab: st.lab, gate, guarded, dispatch: dispatchRaw, caps: capsOf() }); }
+// ---- 予約 (ui/schedule.mjs): the lab's timetable, .github/bds-lab-schedule.json — what is due started each hour by schedule.yml ----
+function schedule(body) {
+  scheduleTab(body, { api: st.api, lab: st.lab, workflows: st.lab.workflows ?? [], may, gate, guarded,
+    dispatchInputs: (f) => st.api.file(st.lab.slug, `.github/workflows/${f}`).then((x) => M.dispatchInputs(x?.text ?? '')) });
+}
+// ---- 統計 (ui/stats.mjs): the lab's runs and its lenders' as charts, each with its numbers as a table ----
+function stats(body) { statsTab(body, { api: st.api, lab: st.lab, hosts: st.hosts, find: (name) => { st.runsQ = name; st.runsShow = 'all'; go('runs'); } }); }
+// ---- 健康度 (ui/health.mjs, on 「概要」): the lab's health as a number, what would raise it, and the report for a company ----
+// (the 「準備」 checks it counts ask GitHub some ten times: read again at most every 5 minutes)
+let setupMemo = null;
+const healthCtx = () => {
+  const ctx = { api: st.api, lab: st.lab, hosts: st.hosts, me: st.me, config: CONFIG, panelUrl: `${location.origin}${location.pathname}`, signedInWithApp: A.session(st.login)?.kind === 'oauth',
+    policy: st.policy, policyErrors: st.policyErrors, version: st.version, go, reload: () => location.reload(), lending: isOwner() ? forkLendingNow : null };
+  ctx.checks = () => {
+    if (setupMemo?.lab !== st.lab.slug || Date.now() - setupMemo.at > 300_000) { setupMemo = { lab: st.lab.slug, at: Date.now(), p: setupChecks(ctx) }; setupMemo.p.catch(() => { setupMemo = null; }); }
+    return setupMemo.p;
+  };
+  return ctx;
+};
 function members(body) { membersTab(body, { api: st.api, lab: st.lab, me: st.me, policy: st.policy, role: st.role, policyErrors: st.policyErrors, may, guarded, lending: isOwner() ? forkLendingNow : null, reload: async () => { await loadPolicy(); st.adminLend = await adminLendNow(); render(); } }); }
 
 // ---- lending from forks of the lab (ui/lend.mjs): an administrator's own — always, the policy's adminsLend — and the owner's
@@ -356,10 +407,35 @@ async function forkLendingNow({ fresh = false } = {}) {
   return data;
 }
 
+// ---- this panel kept on the device (sw.js): it opens with no network, and a notification reaches a phone (a phone's
+// browser shows one only from a service worker). The cache is named by this page's version: a new deploy is a new one ----
+const SW = FRAMED || !globalThis.navigator?.serviceWorker ? Promise.resolve(null)
+  : navigator.serviceWorker.register(`./sw.js?v=${CONFIG.version ?? ''}`).then(() => navigator.serviceWorker.ready).catch(() => null);
+// (a new version taking over a page that had one: said once — the page goes on with what it has until it is read again)
+if (!FRAMED && globalThis.navigator?.serviceWorker?.controller) navigator.serviceWorker.addEventListener('controllerchange', () => toast('パネルの新しい版が届きました（読み直すと新しくなります）'));
+
 // ---- runs that end while the panel is open: told on this device (a notification when allowed, else a toast) and counted
 // in the tab's title — opt-in in 「設定」, kept per browser ----
 const NOTIFY_KEY = 'bdslab.panel.notify', BASE_TITLE = document.title, watched = new Map();
 const notifyOn = () => LOCAL.getItem(NOTIFY_KEY) === '1';
+/** a notification on this device when it asked for them: through the service worker when there is one, else the page's own
+ *  → true when shown. Tapped: the panel at `hash` (#runs?run=…: hashchange below opens it) */
+async function tell(title, body, tag, hash) {
+  if (!notifyOn() || globalThis.Notification?.permission !== 'granted') return false;
+  const reg = await Promise.race([SW, new Promise((r) => setTimeout(() => r(null), 3000))]);
+  try { if (reg?.showNotification) { await reg.showNotification(title, { body, tag, data: { url: `${location.origin}${location.pathname}${hash}` } }); return true; } } catch { /* the page's own below */ }
+  try { const n = new globalThis.Notification(title, { body, tag }); n.onclick = () => { window.focus(); location.hash = hash; }; return true; } catch { return false; }
+}
+// (a notification tapped while the panel is open: the same page, its address's #part changed — the tab and run it names)
+window.addEventListener('hashchange', () => {
+  const want = M.parseHash(location.hash);
+  if (!st.me || !st.lab || !want.tab) return;
+  if (want.repo && st.hosts.some((x) => M.same(x.slug, want.repo))) st.runsFrom = st.hosts.find((x) => M.same(x.slug, want.repo)).slug;
+  else if (want.run) st.runsFrom = st.lab.slug;
+  if (want.run) st.focus = { run: Number(want.run) };
+  go(want.tab);
+  if (/[?&]inbox=1\b/.test(location.hash)) openInbox();
+});
 setInterval(async () => {
   if (!st.lab || !st.api || !canLab() || document.hidden && !notifyOn()) return;
   let rs; try { rs = await st.api.runs(st.lab.slug, { per: 20 }); } catch { return; }
@@ -369,12 +445,53 @@ setInterval(async () => {
   document.title = going ? `(${going}) ${BASE_TITLE}` : BASE_TITLE;
   for (const r of ended) {
     const say = `${M.STATE_ICON[r.conclusion] ?? '•'} ${r.name}: ${r.conclusion}（${r.head_branch}）`;
-    if (notifyOn() && globalThis.Notification?.permission === 'granted') {
-      try { const n = new globalThis.Notification('bds-lab', { body: say, tag: `run-${r.id}` }); n.onclick = () => { window.focus(); st.focus = { run: r.id }; go('runs'); }; continue; } catch { /* a phone's browser makes them only from a service worker */ }
-    }
-    toast(say, r.conclusion !== 'success');
+    if (!(await tell('bds-lab', say, `run-${r.id}`, `#runs?run=${r.id}`))) toast(say, r.conclusion !== 'success');
   }
+  // (the same look kept as news; on the device only what the lines above did not tell, and only what is recent — a return
+  // after days is a list to read, not a burst: several at once are one notification, tapped open on the list)
+  const told = new Set(ended.map((r) => String(r.id)));
+  const fresh = (await news(rs).catch(() => [])).filter((e) => !(e.run && told.has(e.run)) && Date.now() - Date.parse(e.at) < 15 * 60_000);
+  if (fresh.length === 1) { const e = fresh[0]; await tell(e.title, e.body, e.id, e.run ? `#runs?${e.repo ? `repo=${e.repo}&` : ''}run=${e.run}` : `#${e.tab || 'overview'}`); }
+  else if (fresh.length > 1) await tell(`bds-lab: お知らせ ${fresh.length} 件`, fresh.slice(0, 3).map((e) => e.title).join('\n'), 'inbox', '#overview?inbox=1');
 }, 45_000);
+
+// ---- 「お知らせ」 (lib/inbox.mjs, ui/inbox.mjs): what happened since the last look — runs that ended or failed, someone asking
+// to join, a fork that began to lend, an invitation from one, a newer version — kept per account and lab in this browser
+// (only in this tab for an account not remembered), forgotten with the account; 🔔 at the top ----
+const INBOX_PREFIX = 'bdslab.panel.inbox.';
+function inboxStore() {
+  if (!st.login || !st.lab) return null;
+  return IB.store(A.get(st.login)?.remember === false ? TAB : LOCAL, `${INBOX_PREFIX}${st.login}.${st.lab.slug}`);
+}
+/** the list of news at the top of the page (no matter if it is open already) */
+function openInbox() { const box = canLab() ? inboxStore() : null; if (box && !$('inbox')) toggleInbox({ inbox: box, go: inboxGo }); }
+/** a piece of news opened: its tab, and the run it names */
+function inboxGo(tab, item) {
+  if (item?.run) {
+    const host = item.repo && st.hosts.find((x) => M.same(x.slug, item.repo));
+    st.runsFrom = host ? host.slug : st.lab.slug;
+    st.focus = { run: Number(item.run) };
+  }
+  go(tab || 'overview');
+}
+let looks = 0;
+/** the inbox brought up to date with the runs just read; every fourth look (3 minutes) the requests to join (an administrator)
+ *  and the forks' invitations (the owner), every sixteenth the lending forks (the owner: two reads a fork) — a part not read
+ *  this time is kept from the look before, so the next one that is read is compared with it → the news that was new */
+async function news(runs) {
+  const box = inboxStore();
+  if (!box) return [];
+  const n = looks++, wide = n % 4 === 0, owner = isOwner(), admin = st.lab.role === 'admin', name = st.lab.slug.split('/')[1];
+  const [issues, forks, inv] = await Promise.all([wide && admin ? st.api.issues(st.lab.slug).catch(() => null) : null, n % 16 === 0 && owner ? forkLendingNow().catch(() => null) : null,
+    wide && owner ? st.api.myInvitations().catch(() => null) : null]);
+  const last = box.last(), now = IB.snapshot({ runs, joins: issues ? M.joinRequests(issues) : null, forks: forks?.list ?? null,
+    invitations: inv ? inv.filter((i) => i.repository?.fork && M.same(i.repository?.name, name)) : null, version: st.version });
+  for (const k of ['joins', 'forks', 'invitations']) if (now[k] === null && Array.isArray(last?.[k])) now[k] = last[k];
+  const evs = IB.diff(last, now), had = new Set(box.list().map((x) => x.id));
+  box.remember(now);
+  box.add(evs);
+  return evs.filter((e) => !had.has(e.id));
+}
 
 // ---- is this page the newest the lab published? (config.json's version against pages.yml's last run) — a change pushed
 // is said when it is live, with a way to read it again ----
@@ -391,14 +508,22 @@ setInterval(() => { if (document.visibilityState === 'visible') checkVersion(); 
 
 // ---- keys (outside a text box): 1–9, 0 the tabs shown, / search the runs, r read again, ? which keys ----
 const shownTabs = () => [...document.querySelectorAll('nav.tabs button')].map((b) => b.dataset.tab);
-const KEYS_HELP = '1〜9・0: タブ　/: 実行を探す　r: 読み直す　?: この知らせ';
+const KEYS_HELP = 'Ctrl/⌘+K か ?: やりたいこと　1〜9・0: タブ　/: 実行を探す　r: 読み直す';
+// 「やりたいこと」 (ui/guide.mjs): what someone wants in their own words → the tab for it (and the part of it: an anchor)
+const PAL = palette({ tabs: () => shownTabs(), may: (a) => (st.lab ? may(a) : false), go: (tab, anchor, id) => {
+  if (id === 'guide') LOCAL.removeItem(`bdslab.panel.guide.hidden.${st.lab?.slug}`);
+  go(tab);
+  if (anchor) setTimeout(() => $(anchor)?.scrollIntoView({ block: 'start' }), 50);
+  if (id === 'inbox') openInbox();
+} });
 window.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && String(e.key).toLowerCase() === 'k' && st.me && st.as?.length) { e.preventDefault(); PAL.open(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing || !st.lab || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? '') || document.activeElement?.isContentEditable) return;
   const k = M.shortcut(e.key, shownTabs()); if (!k) return;
   e.preventDefault();
   if (k.tab) go(k.tab);
   else if (k.reload) render();
-  else if (k.help) toast(KEYS_HELP);
+  else if (k.help) PAL.open();
   else if (k.search) { if (st.tab !== 'runs') go('runs'); document.querySelector('input[type=search]')?.focus(); }
 });
 
@@ -416,7 +541,8 @@ function overview(body) {
     st.policyErrors.length ? h('div', { class: 'bad' }, `${P.POLICY_FILE} が正しくありません: パネルは何も許しません（直すまで）`, h('ul', {}, st.policyErrors.map((e) => h('li', {}, e)))) : null,
     h('div', { id: 'version' }),
     !CONFIG.authUrl && st.lab?.role === 'admin' ? h('p', { class: 'warn' }, '「GitHub でサインイン」はまだ使えません: ', h('button', { onclick: () => go('setup') }, '「準備」で整える'), '（App・サインインのサービス・Pages）') : null));
-  if (st.lab && canLab()) body.append(todoCard());
+  body.append(guideSlot());
+  if (st.lab && canLab()) { const hc = healthCtx(); body.append(todoCard(), healthCard(hc), h('div', { class: 'card' }, h('h2', {}, '📄 会社向けの報告書'), reportButton(hc))); }
   checkVersion().then((v) => $('version')?.replaceChildren(...(v.state === 'newer' ? [h('p', { class: 'warn' }, v.say, ' ', h('button', { onclick: () => location.reload() }, '読み直す'))] : v.state === 'deploying' || v.state === 'failed' ? [h('p', { class: v.state === 'failed' ? 'bad' : 'muted' }, v.say)] : [])));
   if (st.lab && st.lab.caps) {
     body.append(h('div', { class: 'card' }, h('h2', {}, st.lab.slug, h('span', { class: 'chip' }, M.ROLE_NAMES[st.lab.role]), h('span', { class: 'chip' }, st.lab.repo.visibility), link(st.lab.repo.html_url, 'GitHub')),
@@ -443,16 +569,35 @@ function overview(body) {
     h('ul', { class: 'plain' }, others.map((e) => h('li', { class: 'row' }, h('span', { class: 'grow' }, e.login, ' ', h('span', { class: 'muted' }, `${A.cfg(e.login).lab}・ホスト ${A.cfg(e.login).hosts.length}`)), h('button', { onclick: () => switchTo(e.login) }, '切り替える'))))));
 }
 
+/** this person's role for the guide (lib/guide.mjs guideSteps) */
+const guideRole = () => (isOwner() ? 'owner' : st.lab?.role === 'admin' ? 'admin' : canLab() ? 'writer' : (st.as ?? []).includes('lender') ? 'lender' : 'stranger');
+/** the beginner's guide, filled once what its steps need is read (the lab's runs, LAB_HOSTS) */
+function guideSlot() {
+  const slot = h('div', {});
+  act(async () => {
+    const role = guideRole(), lab = st.lab && canLab();
+    const [rs, lh] = await Promise.all([lab ? st.api.runs(st.lab.slug, { per: 1 }).catch(() => []) : [], lab ? st.api.variable(st.lab.slug, 'LAB_HOSTS').catch(() => null) : null]);
+    const caps = capsOf(), mine = st.hosts.filter((x) => x.role === 'lender');
+    const facts = { pages: Boolean(CONFIG.version), app: Boolean(CONFIG.appSlug), auth: Boolean(CONFIG.authUrl), discord: caps.notify?.ok === true || caps.discord?.ok === true,
+      ran: (rs ?? []).length > 0, lenders: Boolean(M.labHostsWith(lh)) || st.hosts.some((x) => st.lab && M.canBorrow(x, st.lab.slug)), lending: st.adminLend?.required ? st.adminLend.ok : mine.length > 0,
+      watched: Boolean(LOCAL.getItem('bdslab.panel.help.runs')), fork: mine.some((x) => M.forkOf(x.repo)) };
+    const card = guideCard({ role, facts, go, storage: LOCAL, labSlug: st.lab?.slug ?? settings().lab });
+    if (card) slot.replaceChildren(card);
+  });
+  return slot;
+}
 /** 「いまやること」: what needs doing now across the lab, the worst first, each a tap away (M.todos) — read for this person's
  *  role: the owner's forks and invitations, an administrator's secrets, a lender's last days */
 function todoCard() {
   const box = h('div', { class: 'card', id: 'todo' }, h('h2', {}, 'いまやること'), h('p', { class: 'muted' }, '見ています…'));
   act(async () => {
     const owner = isOwner(), admin = st.lab.role === 'admin', name = st.lab.slug.split('/')[1];
-    const [forks, inv, secrets, runs, listed] = await Promise.all([owner ? forkLendingNow().catch(() => null) : null, owner ? st.api.myInvitations().catch(() => null) : null,
-      admin ? st.api.secrets(st.lab.slug).catch(() => null) : null, st.api.runs(st.lab.slug, { per: 50 }).catch(() => []), owner ? st.api.variable(st.lab.slug, 'LAB_HOSTS').catch(() => null) : null]);
+    let noVars = false;
+    const [forks, inv, secrets, runs, listed, issues] = await Promise.all([owner ? forkLendingNow().catch(() => null) : null, owner ? st.api.myInvitations().catch(() => null) : null,
+      admin ? st.api.secrets(st.lab.slug).catch(() => null) : null, st.api.runs(st.lab.slug, { per: 50 }).catch(() => []),
+      admin ? st.api.variable(st.lab.slug, 'LAB_HOSTS').catch((e) => { noVars = e.status === 403; return null; }) : null, admin ? st.api.issues(st.lab.slug).catch(() => []) : []]);
     const inList = new Set(M.labHostsWith(listed).toLowerCase().split(' ')), today = Date.now();
-    const items = M.todos({ policyErrors: st.policyErrors, version: st.version, idleAdmins: forks?.idle ?? [],
+    const items = M.todos({ policyErrors: st.policyErrors, version: st.version, idleAdmins: forks?.idle ?? [], joins: M.joinRequests(issues ?? []).length, noVars,
       invites: (inv ?? []).filter((i) => i.repository?.fork && M.same(i.repository?.name, name)).length,
       unlisted: (forks?.list ?? []).filter((x) => x.rules && !inList.has(x.slug.toLowerCase())).map((x) => x.slug),
       stale: (secrets ?? []).filter((x) => M.secretAge(x.updated_at).stale).map((x) => x.name), health: M.workflowHealth(runs ?? []),
@@ -525,10 +670,18 @@ async function detail(slug, r, box, show) {
     const parts = [h('div', { class: 'bar' + (p.state === 'failure' ? ' bad' : '') }, h('i', { style: { width: `${p.pct}%` } })), h('div', { class: 'muted' }, `${p.done}/${p.total} 段 · ${M.fmtMs(p.ms)}${p.now ? ` · いま: ${p.now}` : ''}`)];
     for (const j of p.jobs) parts.push(h('div', {}, `${M.STATE_ICON[j.state] ?? '•'} ${j.name} — ${j.done}/${j.total}${j.now ? `（${j.now}）` : ''}`));
     // (a failed job's own words: its check run's annotations)
+    const said = [];
     for (const j of jobs.filter((x) => x.conclusion === 'failure').slice(0, 3)) {
       const id = String(j.check_run_url ?? '').split('/').pop();
       const an = id ? await st.api.annotations(slug, id).catch(() => []) : [];
+      said.push(...an);
       if (an.length) parts.push(h('pre', {}, an.slice(0, 8).map((a) => `${a.annotation_level}: ${a.title ? a.title + ' — ' : ''}${a.message}`).join('\n')));
+    }
+    // (why, in words, and the fix a tap away: lib/guide.mjs diagnose)
+    if (r.status === 'completed' && !['success', 'skipped', 'neutral'].includes(r.conclusion)) {
+      const why = GD.diagnose({ run: r, jobs, annotations: said, secrets: slug === st.lab?.slug ? st.lab.secrets : null, known: Object.keys(M.KNOWN_SECRETS) });
+      if (why.length) parts.push(h('div', { class: 'diagnose' }, h('h3', {}, '🩺 考えられる原因と直し方'), h('ul', { class: 'plain' }, why.map((x) => h('li', {}, h('strong', {}, x.title), h('div', { class: 'muted' }, x.fix),
+        x.prefill ? h('button', { onclick: () => { st.prefill = x.prefill; go('secrets'); } }, `「秘密」で ${x.prefill} を登録`) : x.tab && x.tab !== 'runs' ? h('button', { onclick: () => go(x.tab) }, '開く') : null)))));
     }
     if (arts.length) parts.push(artifactList(slug, r.id, arts, r.html_url));
     box.replaceChildren(...parts);
@@ -567,6 +720,7 @@ function start(body) {
     hosts.length ? null : h('p', { class: 'muted' }, '貸し手のホストは「貸し借り」で加えると、ここで選べます（その人の Actions の分で走ります）。'));
   body.append(where);
   if (st.target === 'auto') return body.append(autoForm(caps), h('div', { id: 'dform' }));
+  if (st.target === 'lab') { const mk = makeCard(caps); if (mk) body.append(mk); }
   if (st.target !== 'lab') return body.append(hostForm(hosts.find((x) => x.slug === st.target), caps), h('div', { id: 'dform' }));
   body.append(h('div', { class: 'card' }, h('h2', {}, 'すぐ始める'), h('ul', { class: 'plain' }, M.PRESETS.filter((p) => hasWf(p.workflow)).map((p) => {
     const c = p.needs ? caps[p.needs] : null, ok = !c || c.ok !== false;
@@ -599,6 +753,27 @@ function hostForm(x, caps) {
     ready ? null : h('div', { class: 'warn' }, c.need, ' ', h('button', { onclick: () => { st.prefill = 'LAB_HOST_TOKEN'; go('secrets'); } }, '「秘密」で登録する')),
     h('label', { for: 'hjob' }, '仕事'), job, unitRow, h('label', {}, wait, ' 結果を待つ（この実行の結果・Discord の知らせ・成果物になる。待たなければ結果は「進み具合」のホストで）'),
     h('div', { class: 'row' }, btn));
+}
+/** 「アイデアからアドオンを作る」: an idea in words → ai-make.yml (AI makes the addon, plays it on a real server with real
+ *  clients, ships a Release and tells Discord) — the API's tokens are the lab's (ANTHROPIC_API_KEY or OPENAI_API_KEY), asked first */
+function makeCard(caps) {
+  if (!hasWf('ai-make.yml')) return null;
+  const c = caps.make, idea = h('textarea', { id: 'idea', 'aria-label': 'どんなアドオン', placeholder: '例: ルビーの剣。右クリックで雷が落ちる。村人が 5 エメラルドで売ってくれる' });
+  // (from 「アドオン」's 「AI で変える」: that unit filled in, its part open)
+  const want = st.makeUnit ?? ''; st.makeUnit = null;
+  const unit = h('input', { type: 'text', id: 'makeunit', 'aria-label': '変えるユニット', placeholder: 'bds/rubyshop（今あるものを変えるときだけ）', value: want });
+  return h('div', { class: 'card', id: 'make' }, h('h2', {}, '💡 アイデアからアドオンを作る（AI）'),
+    h('p', { class: 'muted' }, 'やりたいことを日本語で書くだけで、AI がアドオンを作り、本物のサーバーとプレイヤーで遊んで確かめてから、.mcaddon をリリースと Discord に届けます（ai-make.yml・2 時間まで）。'),
+    c?.ok === false ? h('div', { class: 'warn' }, c.need, ' ', h('button', { onclick: () => { st.prefill = 'ANTHROPIC_API_KEY'; go('secrets'); } }, '「秘密」で登録する')) : null,
+    h('label', { for: 'idea' }, want ? `${want} をどう変える？` : 'どんなアドオン？'), idea, h('details', { open: want ? true : null }, h('summary', {}, '今あるユニットを変える'), unit),
+    h('div', { class: 'row' }, h('button', { class: 'primary', ...gate('dispatch'), disabled: c?.ok === false || !may('dispatch'), onclick: async () => {
+      const request = idea.value.trim(), u = unit.value.trim();
+      if (!request && !u) return toast('どんなアドオンか書いてください', true);
+      if (u && !/^(bds|end|ll)\/[a-z0-9_]+$/.test(u)) return toast('ユニットは bds/<名前> の形で', true);
+      if (!confirm('AI の API の料金（ラボの ANTHROPIC_API_KEY / OPENAI_API_KEY の分）を使います。始めますか')) return;
+      const ok = await guarded('dispatch', { workflow: 'ai-make.yml' }, () => st.api.dispatch(st.lab.slug, 'ai-make.yml', st.lab.repo.default_branch, { request, unit: u }), 'AI が作り始めました（「進み具合」で見られます。できたら Discord とリリースに届きます）');
+      if (ok !== undefined) { idea.value = ''; st.runsFrom = st.lab.slug; setTimeout(() => go('runs'), 2500); }
+    } }, '✨ 作ってもらう')));
 }
 /** a job on whichever lender may take it now (hostrun's host: auto — LAB_HOSTS, the App's token on each fork) */
 function autoForm(caps) {
@@ -728,6 +903,8 @@ function secrets(body) {
       const ok = await guarded('secrets.put', { name: n }, () => st.api.putSecret(st.lab.slug, n, value.value), `${n} を登録しました`);
       if (ok !== undefined) { value.value = ''; load(); loadEnv(st.lab); }
     } }, '登録する'))),
+  // (many at once, pasted from a .env: each one sealed and sent as above, each one through the policy)
+  bulkCard({ guarded, gate, toast, names: st.lab.secrets, putSecret: (n, v) => st.api.putSecret(st.lab.slug, n, v), reload: () => { load(); loadEnv(st.lab); } }),
   h('div', { class: 'card' }, h('h2', {}, 'このリポジトリの秘密'), list));
   if (name.value) value.focus();
   load();
@@ -816,10 +993,10 @@ function hostCard(x, brief = false) {
   return card;
 }
 function lenderForm(x) {
-  // (an administrator's own fork: always lent — its time zone and contact alone are theirs to change)
-  if (st.adminLend?.required && M.same(x.slug, st.adminLend.fork)) {
+  // (a fork of the lab: lent for good — whoever lends, an administrator or not; its time zone and contact alone are theirs)
+  if (M.same(M.forkOf(x.repo), st.lab?.slug ?? settings().lab) || (st.adminLend?.required && M.same(x.slug, st.adminLend.fork))) {
     const tz = h('input', { type: 'text', value: x.json.timezone ?? 'UTC', 'aria-label': '時間帯の地域' }), contact = h('input', { type: 'text', value: x.json.contact ?? '', 'aria-label': '連絡先' });
-    return h('div', {}, h('h3', {}, '貸す条件（管理者: いつも）'), h('p', { class: 'muted' }, `全部の仕事・一日中・期限なし・1 か月 ${M.ALWAYS_MINUTES} 分（public のフォークは標準のランナーの分が掛かりません）。止めるときは、持ち主に管理者を外してもらいます。`),
+    return h('div', {}, h('h3', {}, '貸す条件（ずっと）'), h('p', { class: 'muted' }, `全部の仕事・一日中・期限なし・1 か月 ${M.ALWAYS_MINUTES} 分（public のフォークは標準のランナーの分が掛かりません）。貸す人はずっと貸します: 止めるボタンはありません。`),
       h('label', {}, '時間帯の地域'), tz, h('label', {}, '連絡先'), contact,
       h('div', { class: 'row' }, h('button', { class: 'primary', onclick: () => act(async () => { await lendFork(st.api, { slug: x.slug, me: st.me.login, labSlug: st.lab.slug, rules: M.alwaysRules(tz.value.trim(), contact.value.trim()) }); const i = st.hosts.findIndex((y) => y.slug === x.slug); st.hosts[i] = await loadHost(x.slug); render(); }, '保存しました（いつも貸します）') }, '保存')));
   }
@@ -879,7 +1056,7 @@ function forksCard() {
         listed.has(x.slug.toLowerCase()) ? h('span', { class: 'chip' }, 'LAB_HOSTS') : null,
         h('div', { class: 'muted' }, x.rules ? `1 か月 ${x.rules.minutesPerMonth} 分・${x.rules.jobs.join(' ')}・${x.rules.hours}${x.rules.until ? `・${x.rules.until} まで` : ''}${d.files[x.slug]?.hostYmlOk ? '' : '・host.yml がラボと違う'}` : x.errors.join(' / '), x.always.ok ? '' : `（${x.always.why.join(' / ')}）`)),
       h('button', { onclick: () => act(sync(x.slug), `${x.slug} をラボに合わせました（動くのは host.yml だけ）`).then(draw) }, '🔄 合わせる'),
-      x.admin && !x.always.ok ? h('button', { onclick: () => act(setAlways(x), `${x.slug} をいつも貸すにしました`).then(draw) }, '⏱ いつも貸すに') : null,
+      !x.always.ok ? h('button', { onclick: () => act(setAlways(x), `${x.slug} をずっと貸すにしました`).then(draw) }, '⏱ ずっと貸すに') : null,
       listed.has(x.slug.toLowerCase()) ? h('button', { ...gate('variables'), onclick: () => guarded('variables', { name: 'LAB_HOSTS' }, () => addLabHost(x.slug, true), `${x.slug} を LAB_HOSTS から外しました`).then(draw) }, 'LAB_HOSTS から外す')
         : h('button', { ...gate('variables'), onclick: () => guarded('variables', { name: 'LAB_HOSTS' }, () => addLabHost(x.slug), `${x.slug} を LAB_HOSTS に入れました（hostrun の auto が選びます）`).then(draw) }, 'LAB_HOSTS に入れる')));
     box.replaceChildren(
@@ -919,9 +1096,10 @@ function settingsTab(body) {
     if (on.checked && globalThis.Notification && globalThis.Notification.permission !== 'granted') { const p = await globalThis.Notification.requestPermission().catch(() => 'denied'); if (p !== 'granted') toast('ブラウザが知らせを許していません（パネルの中の知らせだけになります）', true); }
     if (on.checked) LOCAL.setItem(NOTIFY_KEY, '1'); else LOCAL.removeItem(NOTIFY_KEY);
   });
-  body.append(h('div', { class: 'card' }, h('h2', {}, 'この端末'), h('label', {}, on, ' 実行が終わったら知らせる（パネルを開いている間。タブの題に動いている数）'),
-    h('p', { class: 'muted' }, 'スマホではブラウザのメニューの「ホーム画面に追加」で、アプリのように開けます。'), h('p', { class: 'muted' }, `キー: ${KEYS_HELP}`)));
-  body.append(debugCard());
+  body.append(h('div', { class: 'card' }, h('h2', {}, 'この端末'), h('label', {}, on, ' この端末に知らせる: 実行が終わった・落ちた、参加のお願い、フォークで貸し始めた、新しい版（パネルを開いている間。タブの題に動いている数）'),
+    h('p', { class: 'muted' }, '知らせたことは、上の 🔔「お知らせ」にも残ります（開いていなかった間のことも、次に開いたときに）。'),
+    h('p', { class: 'muted' }, 'スマホではブラウザのメニューの「ホーム画面に追加」で、アプリのように開けます（iPhone はこうすると知らせが届きます）。一度開いたパネルは、ネットがなくても開けます。'), h('p', { class: 'muted' }, `キー: ${KEYS_HELP}`)));
+  body.append(debugCard(), glossaryCard());
 }
 /** 「デバッグ」: this page's version, its errors and the last GitHub calls; a report to paste (tokens taken out) */
 function debugCard() {

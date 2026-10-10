@@ -4,6 +4,8 @@
 import { h, toast, act, link } from './dom.mjs';
 import * as MB from '../lib/members.mjs';
 import * as P from '../lib/policy.mjs';
+import * as M from '../lib/model.mjs';
+import * as G from '../lib/guide.mjs';
 
 /** ctx: { api, lab: { slug, repo, role }, me, policy, role, may(action), guarded(action, detail, fn, done), reload(),
  *  lending() (the owner's: the lab's lending forks → { list }, for each administrator's mark) } */
@@ -28,6 +30,15 @@ export function membersTab(body, ctx) {
       m.invitations.map((i) => h('li', { class: 'row' }, h('span', { class: 'grow' }, h('strong', {}, i.login), ' ', h('span', { class: 'chip' }, '招待中'), h('div', { class: 'muted' }, `${MB.PERMISSION_WORDS[i.permission] ?? i.permission}・相手が GitHub の通知かメールで受けると入ります`)),
         h('button', { title: '相手に渡すアドレス（GitHub の通知とメールにも届きます）', onclick: () => copy(MB.invitationUrl(lab.slug), '招待を受けるアドレスを写しました') }, '🔗 アドレス'),
         admin ? h('button', { onclick: () => ctx.guarded('members', { user: i.login, permission: 'none' }, () => MB.cancelInvitation(api, lab.slug, i.id), `${i.login} への招待を取り消しました`).then(load) }, '取り消す') : null))));
+    // (outsiders asking to join — issues on the lab, ui/lend.mjs: invited here with the role chosen above, or closed)
+    if (admin) api.issues(lab.slug).then((is) => {
+      const rq = M.joinRequests(is ?? []);
+      if (!rq.length) return;
+      list.prepend(h('div', { id: 'joins' }, h('h3', {}, `参加のお願い（${rq.length}）`), h('ul', { class: 'plain' }, rq.map((q) => h('li', { class: 'row', 'data-join': q.login },
+        h('span', { class: 'grow' }, h('strong', {}, q.login), ' ', link(q.url, `#${q.number}`), h('div', { class: 'muted' }, q.body)),
+        h('button', { class: 'primary', onclick: async () => { const r = await ctx.guarded('members', { user: q.login, permission: perm.value }, () => MB.setMember(api, lab.slug, q.login, perm.value)); if (r !== undefined) { await api.closeIssue(lab.slug, q.number).catch(() => {}); toast(`${q.login} を「${MB.PERMISSION_WORDS[perm.value]}」で招きました`); load(); } } }, `「${MB.PERMISSION_WORDS[perm.value].split('（')[0]}」で招く`),
+        h('button', { onclick: () => act(() => api.closeIssue(lab.slug, q.number), 'お願いを閉じました').then(load) }, '閉じる'))))));
+    }).catch(() => { /* issues not readable: none shown */ });
     // (each administrator but the owner: lending always from their fork, or not yet — the policy's adminsLend)
     if (ctx.lending && P.adminsLend(ctx.policy)) ctx.lending().then((d) => {
       for (const x of m.members.filter((y) => y.permission === 'admin' && y.login.toLowerCase() !== m.owner.toLowerCase())) {
@@ -43,10 +54,11 @@ export function membersTab(body, ctx) {
       const name = who.value.trim().replace(/^@/, '');
       if (perm.value === 'admin' && !confirm(`${name} を管理者にしますか（メンバー・秘密・設定も変えられるようになります）${P.adminsLend(ctx.policy) ? '。管理者はいつも時間を貸します: 入るとまず自分のフォークで貸し、その全権限をあなたに預けます' : ''}`)) return;
       const r = await ctx.guarded('members', { user: name, permission: perm.value }, () => MB.setMember(api, lab.slug, name, perm.value));
-      if (r !== undefined) { toast(r === 'invited' ? `${name} を招きました（相手が受けると入ります）` : `${name} の役割を変えました`); who.value = ''; load(); }
+      if (r !== undefined) { toast(`${r.startsWith('invited') ? `${name} を招きました（相手が受けると入ります）` : `${name} の役割を変えました`}${r.endsWith('-write') ? '。個人のリポジトリには役割がないので「書き込み」の協力者です（管理者にするなら組織のリポジトリに）' : ''}`); who.value = ''; load(); }
     } }, '招く')) : null,
     list));
   body.append(policyCard(ctx, admin));
+  if (admin) body.append(reviewCard(ctx));
   load();
 }
 
@@ -62,7 +74,11 @@ function policyCard(ctx, admin) {
     h('td', {}, (ask[a] = h('input', { type: 'checkbox', checked: g.confirm.includes(a), disabled: !admin, 'aria-label': `確かめる: ${a}` })))));
   const lendBox = h('input', { type: 'checkbox', checked: g.adminsLend, disabled: !admin, 'aria-label': '管理者はいつも貸す' });
   const idle = h('input', { type: 'number', min: 0, max: 1440, value: g.idleMinutes, disabled: !admin }), audit = h('select', { disabled: !admin }, ['auto', 'issue', 'off'].map((v) => h('option', { value: v, selected: v === g.audit ? 'selected' : null }, { auto: 'auto（非公開なら残す）', issue: '残す', off: '残さない' }[v])));
-  return h('div', { class: 'card' }, h('h2', {}, '役割（パネルでできること）'),
+  // (who changed the policy and when: the file's own commits — a company's change record)
+  const history = h('div', { class: 'muted' });
+  ctx.api.commits?.(ctx.lab.slug, { path: P.POLICY_FILE, per: 8 }).then((cs) => history.replaceChildren(...((cs ?? []).length ? [h('h3', {}, '変更の記録'), h('ul', { class: 'plain', id: 'policyhistory' }, cs.map((c) => h('li', {},
+    `${String(c.commit?.author?.date ?? '').slice(0, 10)} · ${c.author?.login ?? c.commit?.author?.name ?? '?'} · `, link(c.html_url, String(c.commit?.message ?? '').split('\n')[0].slice(0, 80)))))] : []))).catch(() => {});
+  return h('div', { class: 'card', id: 'policy' }, h('h2', {}, '役割（パネルでできること）'), history,
     h('p', { class: 'muted' }, `${P.POLICY_FILE} に書きます。GitHub の役割ごとに、パネルで許す操作を選びます（GitHub が許さないことはここで選んでもできません。管理者はいつも全部）。${ctx.policyErrors?.length ? ' いまのファイルは正しくありません: 保存すると直ります。' : ''}`),
     // (a ready-made grid in one tap; nothing is written until 「役割を保存」)
     admin ? h('div', { class: 'row' }, h('span', { class: 'muted' }, 'ひな形:'), Object.entries(MB.POLICY_PRESETS).map(([id, p]) => h('button', { 'data-preset': id, onclick: () => {
@@ -78,4 +94,22 @@ function policyCard(ctx, admin) {
       return ctx.guarded('members', { file: P.POLICY_FILE }, () => MB.savePolicy(ctx.api, ctx.lab.slug, grid), '役割を保存しました（既定の枝に）').then((r) => { if (r !== undefined) ctx.reload(); });
     } }, '役割を保存')) : h('p', { class: 'muted' }, '変えられるのは管理者だけです'),
     link(`https://github.com/${ctx.lab.slug}/blob/${ctx.lab.repo?.default_branch ?? 'main'}/${P.POLICY_FILE}`, 'GitHub でファイルを見る'));
+}
+
+/** アクセスの棚卸し: who has access and what to look at — each person's role, their last run, the administrators who do not lend
+ *  (adminsLend), invitations left waiting — made on asking (it reads the lab's people and newest 100 runs), as CSV too */
+function reviewCard(ctx) {
+  const out = h('div', {});
+  const make = () => act(async () => {
+    const [m, runs, lending] = await Promise.all([MB.readMembers(ctx.api, ctx.lab.slug, ctx.lab.repo), ctx.api.runs(ctx.lab.slug, { per: 100 }).catch(() => []), ctx.lending ? ctx.lending().catch(() => null) : null]);
+    const r = G.accessReview({ members: m.members, invitations: m.invitations, runs, owner: m.owner, lending: (lending?.list ?? []).filter((x) => x.always.ok).map((x) => x.owner), adminsLend: P.adminsLend(ctx.policy) });
+    const url = URL.createObjectURL(new Blob([G.accessCsv(r.rows)], { type: 'text/csv;charset=utf-8' }));
+    out.replaceChildren(h('p', { class: r.flagged ? 'warn' : 'ok' }, r.flagged ? `見ておくこと ${r.flagged} 件` : '✅ 気になるところはありません'),
+      h('table', { id: 'reviewtable' }, h('thead', {}, h('tr', {}, ['ログイン', '種類', '役割', '最後の実行', '注意'].map((t) => h('th', {}, t)))),
+        h('tbody', {}, r.rows.map((x) => h('tr', { 'data-review': x.login }, h('td', {}, x.login), h('td', {}, x.kind), h('td', {}, MB.PERMISSION_WORDS[x.role]?.split('（')[0] ?? x.role), h('td', {}, x.last ?? '—'), h('td', { class: x.flags.length ? 'warn' : '' }, x.flags.join(' / ') || '—'))))),
+      h('div', { class: 'row' }, h('a', { class: 'btn', href: url, download: `bds-lab-access-${ctx.lab.slug.replace('/', '_')}-${new Date().toISOString().slice(0, 10)}.csv` }, '⬇ CSV で書き出す')));
+  });
+  return h('div', { class: 'card', id: 'review' }, h('h2', {}, '🔍 アクセスの棚卸し'),
+    h('p', { class: 'muted' }, '誰がどの役割で入れるか、最後にいつ動かしたか、気をつけること（長く動きのない人・貸していない管理者・受けられていない招待）を一覧にします。定期的な見直し（会社の監査）にそのまま使えます。'),
+    h('div', { class: 'row' }, h('button', { class: 'primary', onclick: make }, '棚卸しを作る')), out);
 }

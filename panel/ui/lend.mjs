@@ -9,6 +9,7 @@
 import { h, toast, act, link } from './dom.mjs';
 import * as M from '../lib/model.mjs';
 import { HOST_FILES } from '../lib/hosttemplate.mjs';
+import * as MB from '../lib/members.mjs';
 
 /** the fork made a host, its say given to the lab's owner → { slug, delegated } (throws with what is wrong, in words).
  *  rules: .lab-host.json's JSON */
@@ -32,7 +33,7 @@ export async function lendFork(api, { slug, me, labSlug, rules }) {
   // (the fork's say given to the lab's owner: invited — GitHub's invitation, theirs to take; already in: nothing new. A sign-in
   // GitHub does not let invite says so, and the fork lends all the same: the lab reaches it with the App)
   let delegated = M.same(owner, me);
-  if (!delegated) { try { await api.addCollaborator(slug, owner, 'admin'); delegated = true; } catch (e) { if (![403, 404, 422].includes(e.status)) throw e; } }
+  if (!delegated) { try { await MB.putCollaborator(api, slug, owner, 'admin'); delegated = true; } catch (e) { if (![403, 404, 422].includes(e.status)) throw e; } }
   return { slug, delegated };
 }
 
@@ -40,9 +41,10 @@ export async function lendFork(api, { slug, me, labSlug, rules }) {
  *  panel: no sign-in card), labHosts(slug) (the fork into the lab's LAB_HOSTS: an administrator's own sign-in), onReady(slug,
  *  { delegated }), other() } */
 export function lendStart(ctx) {
-  const { api, me } = ctx, owner = ctx.labSlug.split('/')[0], always = Boolean(ctx.always);
+  // (whoever lends, lends for good: every job, all day, no last day — an administrator or someone the owner never invited alike)
+  const { api, me } = ctx, owner = ctx.labSlug.split('/')[0], always = true, admin = Boolean(ctx.always);
   const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; } })();
-  const until = always ? '' : M.dayOf(new Date(Date.now() + 90 * 86_400_000), tz), fixed = always ? { disabled: true, title: '管理者はいつも貸します' } : {};
+  const until = always ? '' : M.dayOf(new Date(Date.now() + 90 * 86_400_000), tz), fixed = { disabled: true, title: '貸す人はずっと貸します（全部の仕事・一日中・期限なし）' };
   const f = {
     slug: h('input', { type: 'text', value: `${me.login}/${ctx.labSlug.split('/')[1]}`, 'aria-label': 'フォーク', autocapitalize: 'off' }),
     minutes: h('input', { type: 'number', min: 1, max: M.ALWAYS_MINUTES, value: always ? M.ALWAYS_MINUTES : 600, 'aria-label': '1 か月に貸す分', ...fixed }),
@@ -59,9 +61,10 @@ export function lendStart(ctx) {
     toast(`${r.slug} で貸します${r.delegated ? `・持ち主 ${owner} に預けました（招待）` : `・持ち主 ${owner} を招けませんでした: フォークの Settings → Collaborators で招いてください`}${listed}`, !r.delegated);
     ctx.onReady(r.slug, r);
   });
-  const lend = h('div', { class: 'card', id: 'lend' }, h('h2', {}, always ? '⏱ 管理者はいつも時間を貸します' : '⏱ GitHub Actions の時間を貸す'),
-    always ? h('p', {}, `このラボの管理者（持ち主 ${owner} のほか）は、自分の GitHub Actions の時間をいつもラボに貸します（全部の仕事・一日中・期限なし）。貸すまで、パネルの管理者の操作は止まっています。`)
-      : h('p', {}, `このパネルでラボ（${ctx.labSlug}）を使えるのは、持ち主（${owner}）が招いた人だけです。あなたがここでできるのは、自分の GitHub Actions の時間をラボに貸すことだけです。`),
+  const lend = h('div', { class: 'card', id: 'lend' }, h('h2', {}, admin ? '⏱ 管理者はいつも時間を貸します' : '⏱ GitHub Actions の時間を貸す（ずっと）'),
+    admin ? h('p', {}, `このラボの管理者（持ち主 ${owner} のほか）は、自分の GitHub Actions の時間をいつもラボに貸します。貸すまで、パネルの管理者の操作は止まっています。`)
+      : h('p', {}, `このパネルでラボ（${ctx.labSlug}）を使えるのは、持ち主（${owner}）が招いた人だけです。あなたがここでできるのは、自分の GitHub Actions の時間をラボに貸すことと、参加をお願いすることだけです。`),
+    h('p', { class: 'warn' }, '貸すと、ずっと貸します: 全部の仕事・一日中・期限なし・止めるボタンはありません（public のフォークは GitHub の標準のランナーの分が掛かりません）。'),
     h('p', { class: 'muted' }, `貸すのはラボのフォーク 1 つだけで、その全権限（設定・中身・Actions・秘密）をラボの持ち主 ${owner} に預けます（フォークへの招待と、ラボの App）。ラボの中身・秘密・実行には触れず、あなたのほかのリポジトリにも触れません。パスワードや鍵も受け取りません。走るのは、条件が許すラボの試験だけです。`),
     h('ol', {},
       h('li', {}, link(`https://github.com/${ctx.labSlug}/fork`, 'ラボをフォークする'), '（public・ラボと同じ中身。public なので GitHub の標準のランナーの分は掛かりません）'),
@@ -74,7 +77,18 @@ export function lendStart(ctx) {
     h('label', {}, '許す仕事'), h('div', { class: 'row' }, M.HOST_JOBS.map((n) => h('label', {}, f.jobs[n], ` ${M.HOST_JOB_WORDS[n] ?? n}`))),
     h('div', { class: 'row' }, h('button', { class: 'primary', onclick: make }, 'フォークで貸す')));
   if (ctx.embedded) return lend;
+  // (asking to join: an issue on the lab the owner sees in 「メンバー」 and 「いまやること」 — or GitHub's own form when this sign-in
+  // may not open one)
+  const note = h('textarea', { 'aria-label': '参加のお願い', placeholder: '誰か・何をしたいか（持ち主に届きます）' });
+  const ask = () => act(async () => {
+    const title = `${M.JOIN_TITLE} ${me.login}`, body = `${note.value.trim() || '（ひとこと無し）'}\n\n— ${me.login}（管理パネルから）`;
+    try { await api.createIssue(ctx.labSlug, { title, body }); }
+    catch (e) { if (![403, 404, 410, 422].includes(e.status)) throw e; window.open(`https://github.com/${ctx.labSlug}/issues/new?${new URLSearchParams({ title, body })}`, '_blank', 'noopener'); throw new Error('このサインインでは出せません: 開いた GitHub の画面から出してください'); }
+    note.value = '';
+  }, `持ち主 ${owner} にお願いを出しました（招かれると、GitHub の通知かメールで届きます）`);
   return h('div', {}, lend,
+    h('div', { class: 'card', id: 'join' }, h('h2', {}, '🙋 参加をお願いする'), h('p', { class: 'muted' }, `持ち主 ${owner} に、ラボへの参加をお願いします（ラボの issue に出ます）。招かれるまで、できるのは貸すことだけです。`), note,
+      h('div', { class: 'row' }, h('button', { class: 'primary', onclick: ask }, 'お願いを出す'))),
     h('div', { class: 'card' }, h('p', { class: 'muted' }, `ログイン: ${me.login}。ラボに招かれているなら、招待を受けてから入り直してください。`),
       h('button', { onclick: ctx.other }, '別のアカウントで入る')));
 }

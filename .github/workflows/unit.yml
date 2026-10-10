@@ -1,0 +1,123 @@
+name: unit
+# One unit of this lab from the management panel's 「アドオン」 — no computer of yours in between: make a new one (bds new), take
+# a person's addon in (import: the pack the panel put on a branch of its own, lab-incoming/<name> — never in the default
+# branch's history — taken from there, the branch deleted at the end), test it (test / sim) or finish it (go: its
+# .mcaddon is this run's artifact unit-<name>, and notify tells Discord). new and import commit the unit to the branch it ran
+# on — or, when that branch takes no direct push (protected: a pull request needed), on a branch of its own, lab-unit/<name>-<run>,
+# with the link to its pull request (a push made with this run's own token starts no other workflow — GitHub's rule — so test it
+# from the panel next). The inputs reach the lab only as environment variables, checked there (common/unitci.mjs: names a-z0-9_,
+# files under incoming/ only) — never pasted into a shell line.
+run-name: "unit ${{ inputs.job }} ${{ inputs.unit }}"
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'new（新しく作る）・test・sim・go（.mcaddon まで）・import（取り込む）'
+        type: choice
+        options: [test, sim, go, new, import]
+        default: test
+      unit:
+        description: 'ユニットの名前（bds/addons/<名前>: 英小文字・数字・_。import では空でよい）'
+        type: string
+        default: ''
+      title:
+        description: 'new: 題'
+        type: string
+        default: ''
+      request:
+        description: 'new: 何をするアドオンか'
+        type: string
+        default: ''
+      file:
+        description: 'import: パネルが incoming/ に置いたファイル（incoming/<名前>）'
+        type: string
+        default: ''
+      words:
+        description: 'import: その人の言葉'
+        type: string
+        default: ''
+permissions:
+  contents: write
+concurrency:
+  group: unit-${{ inputs.unit || inputs.file || github.run_id }}
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with: { lfs: true }
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with: { node-version: 22 }
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with: { python-version: '3.12' }
+      # (the same BDS as the lab's CI: one download shared with verify.yml's bds job)
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: bds/.lab
+          key: bds-${{ runner.os }}-${{ hashFiles('bds/vendor/bds-version.txt', 'common/data/bds-versions.json') }}
+      - run: npm i -g esbuild@0.28 typescript@6.0.3
+      - run: node lab.mjs bds
+        working-directory: bds
+      # (import: the pack from its own branch into incoming/ — a plain name only, nothing outside the folder)
+      - name: the pack
+        if: inputs.job == 'import'
+        env:
+          FILE: ${{ inputs.file }}
+        run: |
+          name="${FILE#incoming/}"
+          if [[ "$FILE" != incoming/* || ! "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$ || "$name" == *..* ]]; then echo "::error title=unit import::FILE は incoming/<名前>"; exit 1; fi
+          git fetch -q --depth=1 origin "refs/heads/lab-incoming/$name"
+          mkdir -p incoming
+          git show "FETCH_HEAD:$FILE" > "$FILE"
+          ls -l "$FILE"
+      - id: unitci
+        name: the unit
+        env:
+          JOB: ${{ inputs.job }}
+          UNIT: ${{ inputs.unit }}
+          TITLE: ${{ inputs.title }}
+          REQUEST: ${{ inputs.request }}
+          FILE: ${{ inputs.file }}
+          WORDS: ${{ inputs.words }}
+        run: node lab.mjs unitci
+      # (new and import: the unit kept on the branch it ran on)
+      - name: keep the unit
+        if: (inputs.job == 'new' || inputs.job == 'import') && steps.unitci.outputs.ok == 'true' && steps.unitci.outputs.unit != ''
+        env:
+          JOB: ${{ inputs.job }}
+          MADE: ${{ steps.unitci.outputs.unit }}
+        run: |
+          git config user.name "bds-lab panel"
+          git config user.email "bds-lab-panel@users.noreply.github.com"
+          git add -A -- "bds/addons/$MADE"
+          if git diff --cached --quiet; then echo "nothing to keep"; exit 0; fi
+          git commit -q -m "unit: $JOB $MADE（管理パネルから）"
+          if git push -q origin "HEAD:$GITHUB_REF_NAME" || { git pull -q --rebase origin "$GITHUB_REF_NAME" && git push -q origin "HEAD:$GITHUB_REF_NAME"; }; then
+            echo "kept bds/addons/$MADE on $GITHUB_REF_NAME" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # (the branch refuses it — protected: changes through a pull request only — so the unit waits on a branch of its own,
+          # lab-unit/<name>-<run>, its pull request a link away: here, in the run's summary, and in the panel's 「アドオン」)
+          side="lab-unit/$MADE-$GITHUB_RUN_ID"
+          git push -q origin "HEAD:refs/heads/$side"
+          pr="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$GITHUB_REF_NAME...$side?expand=1"
+          echo "::warning title=unit $JOB::$GITHUB_REF_NAME は直接の push を受け付けません（守られた枝なら PR が要ります）: bds/addons/$MADE を枝 $side に置きました。PR を作る: $pr"
+          printf '### ⚠️ %s は直接の push を受け付けません\n\nbds/addons/%s を枝 `%s` に置きました。[PR を作る](%s)（守られた枝では PR を通して入れます）\n' "$GITHUB_REF_NAME" "$MADE" "$side" "$pr" >> "$GITHUB_STEP_SUMMARY"
+      # (import: the pack's own branch deleted whatever happened — a new try from the panel puts the pack on a new one)
+      - name: the pack's branch away
+        if: always() && inputs.job == 'import'
+        env:
+          FILE: ${{ inputs.file }}
+        run: |
+          name="${FILE#incoming/}"
+          if [[ "$FILE" != incoming/* || ! "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$ || "$name" == *..* ]]; then exit 0; fi
+          git push -q origin --delete "lab-incoming/$name" || echo "::warning title=unit import::取り込み用の枝 lab-incoming/$name を消せませんでした（GitHub で消してください）"
+      - if: always() && inputs.job == 'go'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unit-${{ inputs.unit }}
+          path: bds/dist/*.mcaddon
+          if-no-files-found: ignore
+          retention-days: 30

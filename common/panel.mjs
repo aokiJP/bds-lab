@@ -18,15 +18,22 @@ const RULES = [
   [/^panel\/(lib|ui)\/setup\.mjs$/, ['tests/setup-offline.mjs']],
   [/^panel\/(lib\/session|ui\/signin)\.mjs$/, ['tests/session-offline.mjs']],
   [/^panel\//, ['tests/panel-offline.mjs', BROWSER]],
+  // (the tabs of a lane each: their own test — and any of the panel's libraries or views, which they read, runs all four: they
+  // take a moment)
+  [/^panel\/(lib|ui)\/|^common\/unitci\.mjs$/, ['tests/units-offline.mjs']],
+  [/^panel\/(lib|ui)\/|^common\/schedule\.mjs$/, ['tests/schedule-offline.mjs']],
+  [/^panel\/(lib|ui)\//, ['tests/stats-offline.mjs']],
+  [/^panel\/(lib|ui)\/|^panel\/sw\.js$/, ['tests/inbox-offline.mjs']],
   [/^host\/template\//, ['tests/panel-offline.mjs']],
   [/^auth\//, ['tests/auth-offline.mjs', BROWSER]],
   [/^common\/(panel-config|ghapp)\.mjs$/, ['tests/appci-offline.mjs', 'tests/panel-offline.mjs']],
   [/^common\/panel\.mjs$/, ['tests/panel-offline.mjs']],
   [/^app\/(app\.mjs|lib\/runfiles\.mjs)$/, ['tests/panel-offline.mjs']],
-  [/^tests\/(panel-offline|panel-browser|governance-offline|setup-offline|session-offline|auth-offline|appci-offline)\.mjs$/, (f) => [f]],
+  [/^tests\/(panel-offline|panel-browser|governance-offline|setup-offline|session-offline|auth-offline|appci-offline|units-offline|schedule-offline|stats-offline|inbox-offline)\.mjs$/, (f) => [f]],
 ];
-export const ALL = ['tests/panel-offline.mjs', 'tests/governance-offline.mjs', 'tests/setup-offline.mjs', 'tests/session-offline.mjs', 'tests/auth-offline.mjs', 'tests/appci-offline.mjs', BROWSER];
-const LINTABLE = /^(panel|auth)\/.*\.(m?js)$|^common\/(panel|panel-config|ghapp)\.mjs$/;
+export const ALL = ['tests/panel-offline.mjs', 'tests/governance-offline.mjs', 'tests/setup-offline.mjs', 'tests/session-offline.mjs', 'tests/auth-offline.mjs', 'tests/appci-offline.mjs',
+  'tests/units-offline.mjs', 'tests/schedule-offline.mjs', 'tests/stats-offline.mjs', 'tests/inbox-offline.mjs', BROWSER];
+const LINTABLE = /^(panel|auth)\/.*\.(m?js)$|^common\/(panel|panel-config|ghapp|hosts|schedule|unitci)\.mjs$|^tests\/(panel|governance|setup|session|auth|appci|host|units|schedule|stats|inbox)-[a-z]+\.mjs$/;
 
 /** the changed files → { lint: [files], tests: [files] } (pure); quick leaves the browser out */
 export function plan(files, { quick = false } = {}) {
@@ -62,7 +69,7 @@ const eslint = (files) => (fs.existsSync(LOCAL_ESLINT) ? runOne(process.execPath
 
 /** the checks run → true when all passed; out: each one ✔/✘ with its time, a failure's lines */
 export function check({ files, quick = false, all = false, out = console.log } = {}) {
-  const p = all ? { lint: ['panel', 'auth', 'common/panel.mjs', 'common/panel-config.mjs', 'common/ghapp.mjs'], tests: ALL.filter((t) => !(quick && t === BROWSER)) } : plan(files ?? changed(), { quick });
+  const p = all ? { lint: ['panel', 'auth', 'common/panel.mjs', 'common/panel-config.mjs', 'common/ghapp.mjs', 'common/hosts.mjs', ...ALL], tests: ALL.filter((t) => !(quick && t === BROWSER)) } : plan(files ?? changed(), { quick });
   if (!p.lint.length && !p.tests.length) { out('panel: 変えたファイルに、パネルの試験の要るものはありません（--all ですべて）'); return true; }
   let ok = true;
   const say = (name, r) => { ok &&= r.ok; out(`${r.ok ? '✔' : '✘'} ${name}（${(r.ms / 1000).toFixed(1)} 秒）`); if (!r.ok) for (const x of failLines(r.out)) out(`    ${x}`); };

@@ -42,6 +42,8 @@ export const KNOWN_SECRETS = {
   GOOGLE_EMAIL: 'Minecraft を買った Google アカウント（APK を取る）',
   GOOGLE_AAS_TOKEN: 'その AAS トークン（node lab.mjs app token）',
   APP_CACHE_KEY: 'キャッシュと公開リポジトリのライブを封じる鍵',
+  ANTHROPIC_API_KEY: 'AI がアドオンを作る（ai-make）の Claude の API キー',
+  OPENAI_API_KEY: 'かわりに OpenAI 互換の API キー（ai-make）',
 };
 /** a repository's settings → what can be done there: [{ key, label, ok, need }] (need: what is missing, in words) */
 export function capabilities({ secrets, workflows = [], visibility = 'public', host = false, vars = null }) {
@@ -59,6 +61,7 @@ export function capabilities({ secrets, workflows = [], visibility = 'public', h
     c('hostrun', '貸し手の Actions で走らせる（hostrun: パソコンなしで）', (app || has('LAB_HOST_TOKEN')) && wf('hostrun.yml'), [!app && !has('LAB_HOST_TOKEN') && 'ラボの App（「準備」: 貸し手がホストに入れる）か LAB_HOST_TOKEN', !wf('hostrun.yml') && 'hostrun.yml'].filter(Boolean).join('・') + ' が要ります'),
     c('app', '本物のアプリで確かめる（app）', has('GOOGLE_EMAIL') && has('GOOGLE_AAS_TOKEN') && wf('app.yml'), 'GOOGLE_EMAIL・GOOGLE_AAS_TOKEN が要ります（node lab.mjs app secrets）'),
     c('signin', 'ゲームを Microsoft でサインイン（フレンドのワールド）', has('MS_EMAIL'), 'MS_EMAIL（と MS_PASSWORD）が要ります'),
+    c('make', 'アイデアから AI がアドオンを作る（ai-make）', (has('ANTHROPIC_API_KEY') || has('OPENAI_API_KEY')) && wf('ai-make.yml'), !wf('ai-make.yml') ? 'ai-make.yml がありません' : 'ANTHROPIC_API_KEY（か OPENAI_API_KEY）が要ります'),
     c('vault', visibility === 'public' ? '公開リポジトリのライブを封じる・キャッシュ' : '端末のキャッシュ（暗号化）', has('APP_CACHE_KEY') || has('GOOGLE_AAS_TOKEN'), 'APP_CACHE_KEY か GOOGLE_AAS_TOKEN が要ります'),
   ];
 }
@@ -260,7 +263,7 @@ export function hostRunInputs({ host, job, unit = '', wait = true, rules }) {
 export const bestHost = (list) => [...list].filter((x) => x.now?.ok).sort((a, b) => b.now.remaining - a.now.remaining || a.slug.localeCompare(b.slug))[0] ?? null;
 
 // ---- the address: #<tab>, or #runs?repo=<owner/repo>&run=<id> (Discord's 「管理パネル」 button opens that run) ----
-export const TAB_KEYS = ['overview', 'runs', 'start', 'files', 'discord', 'secrets', 'live', 'hosts', 'members', 'setup', 'audit', 'settings'];
+export const TAB_KEYS = ['overview', 'runs', 'start', 'units', 'releases', 'files', 'schedule', 'stats', 'discord', 'secrets', 'live', 'hosts', 'members', 'setup', 'audit', 'settings'];
 /** runs narrowed (pure): q in the name, title, branch or who started it; show: all · failed · going · mine (me: the login) */
 export function filterRuns(rs, { q = '', show = 'all', me = '' } = {}) {
   const w = String(q).trim().toLowerCase();
@@ -292,10 +295,17 @@ export function shortcut(key, tabs) {
   if (key === '0') return tabs[9] ? { tab: tabs[9] } : null;
   return ({ '/': { search: true }, r: { reload: true }, '?': { help: true } })[key] ?? null;
 }
+/** the title an outsider's request to join begins with (an issue on the lab: ui/lend.mjs; the owner's 「メンバー」) */
+export const JOIN_TITLE = '[bds-lab 参加のお願い]';
+/** the open requests to join among the lab's issues (pure) → [{ number, login, body, at, url }] */
+export const joinRequests = (issues = []) => issues.filter((i) => !i.pull_request && String(i.title ?? '').startsWith(JOIN_TITLE))
+  .map((i) => ({ number: i.number, login: i.user?.login ?? String(i.title).slice(JOIN_TITLE.length).trim(), body: String(i.body ?? '').slice(0, 500), at: i.created_at, url: i.html_url }));
 /** what needs doing now, from what the panel read (pure) → [{ level: 'bad' | 'warn' | 'info', text, tab }], the worst first.
  *  health: workflowHealth's; ending: [{ slug, until, days }] a lender's hosts whose last day is near */
-export function todos({ policyErrors = [], version = null, idleAdmins = [], invites = 0, unlisted = [], stale = [], health = [], ending = [] } = {}) {
+export function todos({ policyErrors = [], version = null, idleAdmins = [], invites = 0, unlisted = [], stale = [], health = [], ending = [], joins = 0, noVars = false } = {}) {
   const out = [], add = (level, text, tab = null) => out.push({ level, text, tab });
+  if (joins) add('warn', `参加のお願いが ${joins} 件`, 'members');
+  if (noVars) add('info', 'このサインインでは変数（LAB_HOSTS・LAB_NOTIFY）を読めません: App の権限（actions_variables）か、トークンの Variables: Read and write', 'setup');
   if (policyErrors.length) add('bad', '.github/bds-lab-panel.json が正しくありません: 直すまでパネルは何も許しません', 'members');
   for (const x of health.filter((y) => y.streak >= 2)) add('bad', `${x.name} が ${x.streak} 回続けて失敗しています`, 'runs');
   if (idleAdmins.length) add('warn', `まだいつも貸していない管理者: ${idleAdmins.join('・')}`, 'hosts');
@@ -306,6 +316,19 @@ export function todos({ policyErrors = [], version = null, idleAdmins = [], invi
   if (version?.state === 'newer' || version?.state === 'failed') add(version.state === 'failed' ? 'warn' : 'info', version.say);
   const rank = { bad: 0, warn: 1, info: 2 };
   return out.map((x, i) => [x, i]).sort((a, b) => rank[a[0].level] - rank[b[0].level] || a[1] - b[1]).map(([x]) => x);
+}
+/** a write GitHub refused, read from its own words (pure) → { kind, say } — kind: 'stale' (the file changed since it was read:
+ *  409 「<path> does not match <sha>」・「is at … but expected …」, 422 「"sha" wasn't supplied」), 'protected' (classic protection
+ *  or a ruleset: 「Changes must be made through a pull request」・「Protected branch update failed」・「Repository rule violations
+ *  found」), 'large' (the contents API's size: 422 「too large to be processed」, 413), 'ref' (a branch not made: 422 「Reference
+ *  update failed」 — a ruleset restricting creations among the causes) or null (none of these: GitHub's words are the reason) */
+export function refusal(status, message) {
+  const m = String(message ?? '');
+  if ((status === 409 || status === 422) && /does not match|\bis at \S+ but expected\b|"?sha"? wasn.t supplied/i.test(m)) return { kind: 'stale', say: 'ほかの人が先に変えました: 「読み直す」で今のものを読んでから、もう一度' };
+  if (/must be made through a pull request|Protected branch update failed|Repository rule violations found/i.test(m)) return { kind: 'protected', say: '既定の枝が守られています（変更は PR を通して入れる決まりです）' };
+  if (status === 413 || /too large to be processed/i.test(m)) return { kind: 'large', say: 'ファイルが大きすぎて GitHub が受け付けません（50 MB 前後まで）: 音や画像を減らして小さくしてください' };
+  if (/Reference update failed/i.test(m)) return { kind: 'ref', say: '枝を作れません（ruleset が枝を作るのを止めているかもしれません: lab-incoming/** を許してください）' };
+  return { kind: null, say: '' };
 }
 /** location.hash → { tab, repo, run } (pure; anything unknown → nulls) */
 export function parseHash(hash) {

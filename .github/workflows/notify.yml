@@ -1,5 +1,5 @@
 name: notify
-# Your Discord told when a run ends (app, verify, secrets, redroid, maint, auto, latest, ai-make, hostrun): a DM from your
+# Your Discord told when a run ends (app, verify, secrets, redroid, maint, auto, latest, ai-make, hostrun, unit): a DM from your
 # own bot (secrets DISCORD_BOT_TOKEN + DISCORD_USER_ID), else LAB_NOTIFY_WEBHOOK (a Discord / Slack webhook or ntfy.sh),
 # else nothing. Which runs (repository variable LAB_NOTIFY): auto (default: every failure, and a success only of a run
 # started by hand) · all · failures · off. The message: the result, the failed jobs and their first annotations, links to
@@ -10,7 +10,7 @@ name: notify
 # Each repository's own secrets decide where its news goes: a fork, or a lender's copy, tells its own people.
 on:
   workflow_run:
-    workflows: [app, verify, secrets, redroid, maint, auto, latest, ai-make, hostrun]
+    workflows: [app, verify, secrets, redroid, maint, auto, latest, ai-make, hostrun, unit]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -25,7 +25,14 @@ on:
 permissions: { contents: read, actions: read, checks: read }
 jobs:
   notify:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion != 'skipped'
+    # (the very rule of app/lib/runmsg.mjs shouldNotify, here too: a run it will not tell starts no runner — a pushed success,
+    # the most of them, under the default auto. String comparisons in expressions ignore case, as the lab's own does)
+    if: >-
+      github.event_name == 'workflow_dispatch' || (
+        github.event.workflow_run.conclusion != 'skipped' && vars.LAB_NOTIFY != 'off' && (
+          vars.LAB_NOTIFY == 'all' ||
+          (github.event.workflow_run.conclusion != 'success' && github.event.workflow_run.conclusion != 'neutral') ||
+          (vars.LAB_NOTIFY != 'failures' && github.event.workflow_run.event == 'workflow_dispatch')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

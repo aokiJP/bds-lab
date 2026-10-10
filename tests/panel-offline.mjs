@@ -31,9 +31,12 @@ await t('who may use it: write or admin on the lab, or lend (admin) / borrow (wr
 });
 
 await t('what a repository\'s own settings allow: its secrets\' names and workflows; unknown when the token may not list secrets (pure)', () => {
-  const wf = ['app.yml', 'notify.yml', 'secrets.yml', 'verify.yml', 'hostrun.yml'].map((f) => ({ path: `.github/workflows/${f}` }));
-  const all = M.capabilities({ secrets: ['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID', 'LAB_SECRETS_TOKEN', 'GOOGLE_EMAIL', 'GOOGLE_AAS_TOKEN', 'MS_EMAIL', 'APP_CACHE_KEY', 'LAB_HOST_TOKEN'], workflows: wf, visibility: 'public' });
+  const wf = ['app.yml', 'notify.yml', 'secrets.yml', 'verify.yml', 'hostrun.yml', 'ai-make.yml'].map((f) => ({ path: `.github/workflows/${f}` }));
+  const all = M.capabilities({ secrets: ['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID', 'LAB_SECRETS_TOKEN', 'GOOGLE_EMAIL', 'GOOGLE_AAS_TOKEN', 'MS_EMAIL', 'APP_CACHE_KEY', 'LAB_HOST_TOKEN', 'ANTHROPIC_API_KEY'], workflows: wf, visibility: 'public' });
   ok(all.every((c) => c.ok === true && c.need === ''), JSON.stringify(all));
+  // (AI makes an addon from an idea: ai-make.yml and an API key — Claude's or an OpenAI-compatible one)
+  const mk = (sec, w = wf) => M.capabilities({ secrets: sec, workflows: w }).find((c) => c.key === 'make');
+  ok(mk(['OPENAI_API_KEY']).ok === true && /ANTHROPIC_API_KEY/.test(mk([]).need) && /ai-make\.yml がありません/.test(mk(['ANTHROPIC_API_KEY'], wf.slice(0, 5)).need), JSON.stringify(mk([])));
   const bare = Object.fromEntries(M.capabilities({ secrets: ['DISCORD_BOT_TOKEN'], workflows: wf }).map((c) => [c.key, c]));
   ok(bare.discord.ok === false && /DISCORD_USER_ID/.test(bare.discord.need) && bare.notify.ok === false && /このパネルの「秘密」からなら/.test(bare.secretsForm.need), JSON.stringify(bare));
   const hook = Object.fromEntries(M.capabilities({ secrets: ['LAB_NOTIFY_WEBHOOK'], workflows: wf }).map((c) => [c.key, c]));
@@ -202,6 +205,12 @@ await t('each workflow\'s health, a secret\'s age, the keys, the role presets an
   ok(g.rate === 1 && g.ok === 1 && g.streak === 0 && hs.find((x) => x.path === 'notify.yml').rate === null, JSON.stringify(hs));
   const now = Date.parse('2026-10-08T00:00:00Z');
   ok(M.secretAge('2026-10-01T00:00:00Z', now).days === 7 && !M.secretAge('2026-10-01T00:00:00Z', now).stale && M.secretAge('2026-01-01T00:00:00Z', now).stale && M.secretAge(undefined, now).days === null);
+  // GitHub's refusals of a write, read from its own words (as GitHub gives them)
+  eq([[409, 'bds/addons/coins/src/main.ts does not match 0123abc'], [409, 'refs/heads/main is at 1111 but expected 2222'], [422, 'Invalid request.\n\n"sha" wasn\'t supplied.'],
+    [409, 'Could not update file: Changes must be made through a pull request.'], [409, 'Repository rule violations found\n\nChanges must be made through a pull request.\n\n'], [422, 'Protected branch update failed for refs/heads/main.'],
+    [422, 'Sorry, the file is too large to be processed. Consider creating/updating the file in a local clone and pushing it to GitHub.'], [413, 'Request body too large'], [422, 'Reference update failed'], [409, 'Conflict'], [500, 'Server Error']]
+    .map(([s, m]) => M.refusal(s, m).kind), ['stale', 'stale', 'stale', 'protected', 'protected', 'protected', 'large', 'large', 'ref', null, null]);
+  ok(M.refusal(409, 'Repository rule violations found').say.includes('PR') && M.refusal(422, 'Reference update failed').say.includes('lab-incoming/**'), 'said in words');
   const tabs = ['overview', 'runs', 'secrets'];
   eq([M.shortcut('2', tabs), M.shortcut('4', tabs), M.shortcut('/', tabs), M.shortcut('r', tabs), M.shortcut('?', tabs), M.shortcut('x', tabs)], [{ tab: 'runs' }, null, { search: true }, { reload: true }, { help: true }, null]);
   const base = MB.gridOf(P.checkPolicy({ version: 1, roles: { admin: ['*'], ops: ['dispatch'] }, teams: { oncall: 'ops' }, confirm: ['dispatch'], idleMinutes: 30, audit: 'issue' }).policy);
@@ -250,8 +259,13 @@ await t('a stranger lends: their own public fork of the lab becomes a host — h
 
 await t('panel check: a changed file → the checks it needs (ESLint, the offline tests, the browser unless quick); failures\' lines (pure)', async () => {
   const PN = await imp('common/panel.mjs');
-  eq(PN.plan(['panel/lib/members.mjs']), { lint: ['panel/lib/members.mjs'], tests: ['tests/panel-offline.mjs', 'tests/governance-offline.mjs', 'tests/panel-browser.mjs'] });
-  eq(PN.plan(['panel/ui/signin.mjs', 'auth/handler.mjs'], { quick: true }).tests, ['tests/panel-offline.mjs', 'tests/session-offline.mjs', 'tests/auth-offline.mjs']);
+  // (a library or a view of the panel: the tabs that read them — 「アドオン」「予約」「統計」「お知らせ」 — are tried too)
+  const LANES = ['tests/units-offline.mjs', 'tests/schedule-offline.mjs', 'tests/stats-offline.mjs', 'tests/inbox-offline.mjs'];
+  eq(PN.plan(['panel/lib/members.mjs']), { lint: ['panel/lib/members.mjs'], tests: ['tests/panel-offline.mjs', 'tests/governance-offline.mjs', ...LANES, 'tests/panel-browser.mjs'] });
+  eq(PN.plan(['panel/ui/signin.mjs', 'auth/handler.mjs'], { quick: true }).tests, ['tests/panel-offline.mjs', 'tests/session-offline.mjs', 'tests/auth-offline.mjs', ...LANES]);
+  eq(PN.plan(['common/unitci.mjs', 'common/schedule.mjs']), { lint: ['common/unitci.mjs', 'common/schedule.mjs'], tests: ['tests/units-offline.mjs', 'tests/schedule-offline.mjs'] }, 'the CLI side of 「アドオン」 and 「予約」');
+  eq(PN.plan(['panel/sw.js'], { quick: true }).tests, ['tests/panel-offline.mjs', 'tests/inbox-offline.mjs'], 'the service worker');
+  eq(PN.plan(['tests/stats-offline.mjs']).tests, ['tests/stats-offline.mjs'], 'a lane test: itself');
   eq(PN.plan(['README.md', 'bds/lab.mjs']), { lint: [], tests: [] }, 'not the panel: nothing');
   eq(PN.plan(['host/template/.lab-host.json', 'tests/setup-offline.mjs']).tests, ['tests/panel-offline.mjs', 'tests/setup-offline.mjs']);
   eq(PN.failLines('ok a\nFAIL b\n  why\nok c').slice(0, 2), ['FAIL b', '  why']);
@@ -284,6 +298,58 @@ await t('administrators always lend (adminsLend): the rules that lend always, an
   eq(td.map((x) => [x.level, x.tab]), [['bad', 'members'], ['bad', 'runs'], ['warn', 'hosts'], ['warn', 'hosts'], ['warn', 'secrets'], ['warn', 'hosts'], ['info', 'hosts'], ['info', null]], JSON.stringify(td));
   ok(/verify が 3 回続けて/.test(td[1].text) && /招待が 2 件/.test(td[3].text) && /あと 2 日/.test(td[5].text), JSON.stringify(td));
   eq(M.todos({}), [], 'nothing to do: nothing said');
+});
+
+await t('fewer errors and outsiders who ask: a role GitHub refuses on a person\'s repository (422) left out; requests to join read from the lab\'s issues; variables GitHub refused once not asked again (pure / fake)', async () => {
+  const MB = await imp('panel/lib/members.mjs'), { gh } = await imp('panel/lib/gh.mjs');
+  const calls = [], api = { call: async (m, p, b) => { calls.push(`${m} ${p} ${JSON.stringify(b)}`); if (b?.permission && b.permission !== 'push') throw Object.assign(new Error('Validation Failed'), { status: 422 }); return { id: 1 }; } };
+  eq(await MB.putCollaborator(api, 'me/lab', 'friend', 'admin'), { value: { id: 1 }, plain: true });
+  eq(calls, ['PUT /repos/me/lab/collaborators/friend {"permission":"admin"}', 'PUT /repos/me/lab/collaborators/friend {}'], 'tried with the role, then without');
+  let e = null; try { await MB.putCollaborator({ call: async () => { throw Object.assign(new Error('x'), { status: 422 }); } }, 'me/lab', 'f', 'push'); } catch (x) { e = x; } ok(e?.status === 422, 'write itself refused: said, not retried');
+  const rq = M.joinRequests([{ number: 3, title: `${M.JOIN_TITLE} lee`, body: 'hi', user: { login: 'lee' }, html_url: 'u' }, { number: 4, title: 'other' }, { number: 5, title: `${M.JOIN_TITLE} x`, pull_request: {} }]);
+  eq(rq.map((x) => [x.number, x.login, x.body]), [[3, 'lee', 'hi']]);
+  eq(M.todos({ joins: 2, noVars: true }).map((x) => [x.level, x.tab]), [['warn', 'members'], ['info', 'setup']]);
+  let n = 0;
+  const g = gh({ token: 't', base: 'https://x', fetchImpl: async () => { n++; return { status: 403, ok: false, headers: { get: () => null }, text: async () => '{"message":"Resource not accessible by integration"}' }; } });
+  ok(await g.variableNames('o/r') === null, 'refused: no names');
+  for (let i = 0; i < 3; i++) { let x = null; try { await g.variable('o/r', 'LAB_HOSTS'); } catch (y) { x = y; } ok(x?.status === 403, 'the same answer'); }
+  eq(n, 1, 'asked GitHub once: no request after a 403 on that repository\'s variables');
+});
+
+await t('the guide for someone new: every tab explained, the words, what they want from their own words (any kana, any form), the next step by role, why a run failed in words, an access review as CSV (pure)', async () => {
+  const G = await imp('panel/lib/guide.mjs');
+  for (const k of M.TAB_KEYS) ok(G.HELP[k]?.what && G.HELP[k].title, `help for ${k}`);
+  for (const x of G.INTENTS) ok(M.TAB_KEYS.includes(x.tab), `${x.id} goes to a tab`);
+  const top = (q, o) => G.findIntents(q, o)[0]?.id;
+  eq([top('アドオンを作りたい'), top('ひみつ'), top('パスワードを登録したい'), top('止めたい'), top('かんりしゃをまねく'), top('かしたい'), top('わからない'), top('エラーが出る'), top('ディスコード')],
+    ['make', 'secrets', 'secrets', 'cancel', 'members', 'lend', 'guide', 'debug', 'discord']);
+  ok(!G.findIntents('秘密を登録', { may: (a) => a !== 'secrets.put' }).some((x) => x.id === 'secrets') && !G.findIntents('監査', { tabs: ['overview'] }).length, 'what this person may not do or see: not offered');
+  ok(G.findIntents('').length > 0 && G.findIntents('zzzz').length === 0, 'nothing typed: the common ones; nonsense: nothing');
+  eq(G.findTerms('ふぉーく').map((x) => x.term), ['フォーク']);
+  const owner = G.guideSteps('owner', { pages: true, app: true });
+  ok(owner.total === 7 && owner.done === 3 && owner.next.id === 'auth', JSON.stringify(owner.next));
+  ok(G.guideSteps('owner', { pages: 1, app: 1, auth: 1, discord: 1, ran: 1, lenders: 1 }).next === null, 'all done: no next');
+  eq(G.guideSteps('admin', {}).steps.map((x) => x.id), ['signin', 'lend', 'discord', 'run']);
+  eq(G.guideSteps('stranger', {}).steps.map((x) => x.id), ['fork', 'lend', 'join']);
+  eq(G.guideSteps('writer', { ran: true }).next.id, 'watch');
+  const known = Object.keys(M.KNOWN_SECRETS);
+  const d1 = G.diagnose({ run: { conclusion: 'failure' }, annotations: [{ message: 'FAIL gate: tests/panel-offline.mjs' }, { message: 'DISCORD_BOT_TOKEN is not set' }], secrets: ['GOOGLE_EMAIL'], known });
+  ok(d1.some((x) => x.prefill === 'DISCORD_BOT_TOKEN' && x.tab === 'secrets') && d1.some((x) => /試験が落ちました（panel-offline\.mjs）/.test(x.title)), JSON.stringify(d1));
+  ok(!G.diagnose({ run: { conclusion: 'failure' }, annotations: [{ message: 'DISCORD_BOT_TOKEN missing' }], secrets: ['DISCORD_BOT_TOKEN'], known }).some((x) => x.prefill), 'a secret that is there is not asked for');
+  eq(G.diagnose({ run: { conclusion: 'timed_out' } }).map((x) => x.title), ['時間切れです']);
+  eq(G.diagnose({ run: { conclusion: 'cancelled' } }).map((x) => x.title), ['止められました']);
+  ok(/API rate limit/.test('API rate limit') && G.diagnose({ run: { conclusion: 'failure' }, annotations: [{ message: 'API rate limit exceeded' }] })[0].title === 'GitHub の回数の上限です');
+  ok(/注釈にありません/.test(G.diagnose({ run: { conclusion: 'failure' } })[0].title), 'nothing known: where to look');
+  const now = Date.parse('2026-10-08T00:00:00Z'), day = 86_400_000;
+  const rv = G.accessReview({ owner: 'me', now, adminsLend: true, lending: ['ad1'],
+    members: [{ login: 'me', permission: 'admin' }, { login: 'ad1', permission: 'admin' }, { login: 'ad2', permission: 'admin' }, { login: 'w', permission: 'push' }, { login: 'old', permission: 'push' }],
+    invitations: [{ login: 'inv', permission: 'push', at: new Date(now - 10 * day).toISOString() }],
+    runs: [{ triggering_actor: { login: 'w' }, created_at: new Date(now - 2 * day).toISOString() }, { actor: { login: 'old' }, created_at: new Date(now - 200 * day).toISOString() }, { triggering_actor: { login: 'ad1' }, created_at: new Date(now - day).toISOString() }, { triggering_actor: { login: 'ad2' }, created_at: new Date(now - day).toISOString() }] });
+  const by = Object.fromEntries(rv.rows.map((r) => [r.login, r.flags]));
+  eq([by.me, by.w, by.old, by.ad1, by.ad2, by.inv], [[], [], ['200 日動きなし'], ['管理者（全部できる）'], ['管理者（全部できる）', '管理者なのに貸していない'], ['招待が 10 日そのまま']]);
+  eq(rv.flagged, 3, 'what to look at: the idle one, the admin who does not lend, the waiting invitation');
+  const csv = G.accessCsv(rv.rows);
+  ok(csv.startsWith('\ufeffログイン,種類,役割') && csv.includes('ad2,メンバー,admin') && csv.trim().split('\n').length === 7, csv);
 });
 
 await t('the secret sealed as libsodium seals it (crypto_box_seal; vectors from libsodium) and its parts against Node\'s own X25519 and BLAKE2b', () => {
