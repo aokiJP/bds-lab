@@ -61,6 +61,11 @@ await t('the plan (pure): the same content = nothing; the panel alone = its own 
   eq([ext.offline, ext.bds], ['full', true], 'a panel file loaded from outside');
 });
 
+await t('the extra ones asked for (pure): by hand, or the marker in the commit\'s title — not only named in its text', () => {
+  eq([V.fullAsked('workflow_dispatch', ''), V.fullAsked('push', '[full ci] the engine changed'), V.fullAsked('push', 'the engine changed [full ci]\n\nwhy')], [true, true, true]);
+  eq([V.fullAsked('push', 'verify plans its jobs\n\n- by hand or [full ci] in the commit: everything'), V.fullAsked('push', ''), V.fullAsked('push', null)], [false, false, false]);
+});
+
 await t('everything (pure): by hand or [full ci], no passed commit, or a reason given', () => {
   for (const p of [V.planVerify({ full: true, base: 'a1b2c3d4', files: [PUI] }), V.planVerify({ base: null, files: [] }), V.planVerify({ full: true, reason: '計画を作れない（x）: すべての試験' })]) eq([p.offline, p.bds, p.browser], ['full', true, true]);
   ok(/手で始めた/.test(V.planVerify({ full: true }).why) && /見つからない/.test(V.planVerify({}).why), 'said why');
@@ -140,11 +145,16 @@ await t('everything: by hand, [full ci], GitHub refusing (said, not a failure), 
   const runs = [{ head_sha: c1, event: 'push' }];
   for (const env of [envFor(d, { GITHUB_EVENT_NAME: 'workflow_dispatch' }), envFor(d, { message: 'big change [full ci]' })]) {
     const p = await V.main({ env, cwd: d, fetchImpl: fakeGitHub(runs), out: quiet().out });
-    eq([p.offline, p.bds], ['full', true]);
+    eq([p.offline, p.bds, p.extra], ['full', true, true]);
+    ok(/^extra=true$/m.test(fs.readFileSync(env.GITHUB_OUTPUT, 'utf8')), 'extra in the outputs');
   }
+  const named = envFor(d, { message: 'verify plans its jobs\n\n- by hand or [full ci] in the commit: everything' });
+  const p2 = await V.main({ env: named, cwd: d, fetchImpl: fakeGitHub(runs), out: quiet().out });
+  eq([p2.offline, p2.bds, p2.extra], ['panel', false, false], 'the marker only named in the text');
+  ok(/^extra=false$/m.test(fs.readFileSync(named.GITHUB_OUTPUT, 'utf8')), 'extra=false');
   const q = quiet(), env = envFor(d);
   const refused = await V.main({ env, cwd: d, fetchImpl: fakeGitHub(500), out: q.out });
-  eq([refused.offline, refused.bds], ['full', true]);
+  eq([refused.offline, refused.bds, refused.extra], ['full', true, false], 'everything, not the extra ones');
   ok(/計画を作れない（GitHub が 500 で断りました）/.test(refused.why) && /^bds=true$/m.test(fs.readFileSync(env.GITHUB_OUTPUT, 'utf8')), refused.why);
   const none = await V.main({ env: envFor(d), cwd: d, fetchImpl: fakeGitHub([]), out: quiet().out });
   eq([none.offline, none.bds], ['full', true], 'no passed commit');

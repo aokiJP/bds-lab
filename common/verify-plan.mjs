@@ -5,9 +5,12 @@
 // tests (a few minutes) instead of every offline test (~20).
 //   node common/verify-plan.mjs   in the workflow: GITHUB_TOKEN (actions: read), GITHUB_REPOSITORY, GITHUB_API_URL,
 //                                 GITHUB_EVENT_NAME, GITHUB_EVENT_PATH, GITHUB_RUN_ATTEMPT → offline=full|panel|none, tests=…,
-//                                 browser=true|false, bds=true|false in $GITHUB_OUTPUT, the reason in $GITHUB_STEP_SUMMARY
-// By hand (workflow_dispatch), [full ci] in the commit, no passed commit among the last 400, or anything it cannot read: every
-// job, as before. It never fails the run itself: a plan it cannot make is the whole run.
+//                                 browser=true|false, bds=true|false, extra=true|false in $GITHUB_OUTPUT, the reason in
+//                                 $GITHUB_STEP_SUMMARY
+// By hand (workflow_dispatch) or [full ci] in the commit's title (its first line): every job and the extra ones too (macOS,
+// Endstone, LeviLamina: extra=true) — the marker only named in a commit's text starts nothing more (a macOS minute counts as
+// 10). No passed commit among the last 400, or anything it cannot read: every job, as before (not the extra ones). It never
+// fails the run itself: a plan it cannot make is the whole run.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -38,6 +41,9 @@ export function need(f, external = new Set()) {
   if (PANEL_TESTS.includes(f)) return 'panel';
   return BDS_FREE.test(f) ? 'offline' : 'all';
 }
+
+/** everything asked for (pure): by hand, or [full ci] in the commit's title — not anywhere in its text */
+export const fullAsked = (event, message) => event === 'workflow_dispatch' || String(message ?? '').split('\n')[0].includes('[full ci]');
 
 const list = (fs0, n = 3) => `${fs0.slice(0, n).join('、')}${fs0.length > n ? ` ほか ${fs0.length - n} 個` : ''}`;
 
@@ -104,8 +110,8 @@ export async function main({ env = process.env, cwd = TOP, fetchImpl = fetch, ou
   try {
     let message = '';
     try { message = JSON.parse(fs.readFileSync(env.GITHUB_EVENT_PATH, 'utf8'))?.head_commit?.message ?? ''; } catch { /* no event: none */ }
-    const full = env.GITHUB_EVENT_NAME === 'workflow_dispatch' || message.includes('[full ci]');
-    if (full) p = planVerify({ full });
+    const full = fullAsked(env.GITHUB_EVENT_NAME, message);
+    if (full) p = { ...planVerify({ full }), extra: true };
     else {
       const passed = await passedShas({ api: env.GITHUB_API_URL || 'https://api.github.com', repo: env.GITHUB_REPOSITORY, token: env.GITHUB_TOKEN }, fetchImpl);
       // (a re-run is asked for: HEAD itself is not its own base)
@@ -117,11 +123,12 @@ export async function main({ env = process.env, cwd = TOP, fetchImpl = fetch, ou
   } catch (e) {
     p = planVerify({ full: true, reason: `計画を作れない（${String(e.message).replace(/\s+/g, ' ').slice(0, 200)}）: すべての試験` });
   }
-  const lines = [`offline=${p.offline}`, `tests=${p.tests.join(' ')}`, `browser=${p.browser}`, `bds=${p.bds}`];
+  p.extra = p.extra === true;
+  const lines = [`offline=${p.offline}`, `tests=${p.tests.join(' ')}`, `browser=${p.browser}`, `bds=${p.bds}`, `extra=${p.extra}`];
   for (const l of lines) out(l);
   out(p.why);
   if (env.GITHUB_OUTPUT) fs.appendFileSync(env.GITHUB_OUTPUT, lines.join('\n') + '\n');
-  if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `### verify の計画\n${p.why}\n\nすべて流すには: Actions の verify を手で（Run workflow）か、commit の文に \`[full ci]\`\n`);
+  if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `### verify の計画\n${p.why}\n\nすべて（macOS・Endstone・LeviLamina も）流すには: Actions の verify を手で（Run workflow）か、commit の題（1 行目）に \`[full ci]\`\n`);
   return p;
 }
 

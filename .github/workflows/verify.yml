@@ -5,7 +5,8 @@ name: verify
 # file it uses changed, the panel alone runs the panel's own tests (a few minutes) instead of every offline test (~20), and
 # the autopilot's memory and the change log run nothing. The run's summary says why.
 # On push and pull requests: Linux only (the offline tests and the BDS lab). By hand (workflow_dispatch) or a push whose commit
-# message has [full ci]: everything, macOS too, and
+# title (its first line: the plan's extra — only named in a commit's text, it starts nothing more) has [full ci]: everything,
+# macOS too, and
 # Endstone (Linux) and LeviLamina (Windows) — a macOS minute counts as 10 and a Windows one as 2 on a private repository.
 # (hashFiles is not allowed in a job's `if`: there it made the whole file invalid and no job ever ran; it is a step now)
 on:
@@ -40,6 +41,7 @@ jobs:
       tests: ${{ steps.plan.outputs.tests }}
       browser: ${{ steps.plan.outputs.browser }}
       bds: ${{ steps.plan.outputs.bds }}
+      extra: ${{ steps.plan.outputs.extra }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with: { fetch-depth: 0, filter: 'blob:none' }
@@ -60,7 +62,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[full ci]')) && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        os: ${{ fromJSON(needs.plan.outputs.extra == 'true' && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     # (the app lab's fake device alone is ~20 minutes on 2 cores; a private repository's runner has 2)
     timeout-minutes: 45
@@ -158,7 +160,8 @@ jobs:
 
   end:
     # Endstone on Linux: Python venv + endstone from PyPI; Endstone downloads the BDS it supports
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[full ci]')
+    needs: plan
+    if: needs.plan.outputs.extra == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     defaults: { run: { working-directory: end } }
@@ -202,7 +205,8 @@ jobs:
 
   ll:
     # LeviLamina natively on Windows: lip installs LeviLamina + LegacyScriptEngine; xmake builds native mods
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[full ci]')
+    needs: plan
+    if: needs.plan.outputs.extra == 'true'
     runs-on: windows-latest
     timeout-minutes: 60
     defaults: { run: { working-directory: ll, shell: bash } }
