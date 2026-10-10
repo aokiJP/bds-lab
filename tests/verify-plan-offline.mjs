@@ -244,6 +244,12 @@ await t('verify.yml runs what the plan names: every output handed on, each step 
   ok(y.includes("--unit 'bds:addon:{}'") && y.includes('auto gate --tests') && y.includes('--record --results'), 'the addons and the offline tests recorded');
   ok(y.includes('node common/verify-plan.mjs --merge --out') && y.includes('name: verify-state') && /name: verify-results-/.test(y), 'the state job saves the memory');
   ok(/schedule:\s*\n(?:\s*#.*\n)*\s*- cron:/.test(y) && /full:\s*\n\s*description:/.test(y), 'nightly, and full by hand');
+  // (the first `node lab.mjs` of a checkout reads every file to make the lab's starting point: done before any unit is recorded)
+  for (const [job, next, cmd] of [['offline', 'bds', 'node lab.mjs help > /dev/null'], ['bds', 'end', 'node ../lab.mjs help > /dev/null']]) {
+    const body = y.slice(y.indexOf(`\n  ${job}:\n`), y.indexOf(`\n  ${next}:\n`)).split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+    const at = body.indexOf(cmd), first = body.search(/common\/deps\.mjs|--record/);
+    ok(at > 0 && first > at, `${job}: the lab's starting point made before the first recorded unit`);
+  }
 });
 
 await t('notify.yml starts a runner exactly for the runs app notify tells (its if, evaluated as GitHub does: strings without case)', async () => {

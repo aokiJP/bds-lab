@@ -86,6 +86,9 @@ jobs:
         with: { python-version: '3.12' }
       - if: needs.plan.outputs.tests != ''
         run: npm i -g esbuild@0.28 typescript@6.0.3
+      # (the lab's starting point, .lab-base.json: the first `node lab.mjs` in a fresh checkout reads every file to make it — made
+      # here, before anything is recorded, or the first unit would look as if it had read the whole lab)
+      - run: node lab.mjs help > /dev/null
       # real bugs, not style: names that do not exist, values computed and never used, code that cannot run (tests/eslint.config.mjs)
       # — a unit of its own: it reads every script, so any script's change runs it again
       - name: ESLint
@@ -141,6 +144,8 @@ jobs:
           path: bds/.lab
           key: bds-${{ runner.os }}-${{ hashFiles('bds/vendor/bds-version.txt', 'common/data/bds-versions.json') }}
       - run: node lab.mjs bds
+      # (the lab's starting point, before anything is recorded: bds/lab.mjs above does not make it, the top lab.mjs does)
+      - run: node ../lab.mjs help > /dev/null
       - if: matrix.part == 'bench'
         run: node ../common/deps.mjs run bds:bench --results "$RUNNER_TEMP/results/bds.jsonl" -- node bench/bench.mjs selftest
       # the from-scratch lessons: the reference passes every one in the sandbox and on this BDS, the empty template fails
