@@ -205,6 +205,12 @@ await t('each workflow\'s health, a secret\'s age, the keys, the role presets an
   ok(g.rate === 1 && g.ok === 1 && g.streak === 0 && hs.find((x) => x.path === 'notify.yml').rate === null, JSON.stringify(hs));
   const now = Date.parse('2026-10-08T00:00:00Z');
   ok(M.secretAge('2026-10-01T00:00:00Z', now).days === 7 && !M.secretAge('2026-10-01T00:00:00Z', now).stale && M.secretAge('2026-01-01T00:00:00Z', now).stale && M.secretAge(undefined, now).days === null);
+  // GitHub's refusals of a write, read from its own words (as GitHub gives them)
+  eq([[409, 'bds/addons/coins/src/main.ts does not match 0123abc'], [409, 'refs/heads/main is at 1111 but expected 2222'], [422, 'Invalid request.\n\n"sha" wasn\'t supplied.'],
+    [409, 'Could not update file: Changes must be made through a pull request.'], [409, 'Repository rule violations found\n\nChanges must be made through a pull request.\n\n'], [422, 'Protected branch update failed for refs/heads/main.'],
+    [422, 'Sorry, the file is too large to be processed. Consider creating/updating the file in a local clone and pushing it to GitHub.'], [413, 'Request body too large'], [422, 'Reference update failed'], [409, 'Conflict'], [500, 'Server Error']]
+    .map(([s, m]) => M.refusal(s, m).kind), ['stale', 'stale', 'stale', 'protected', 'protected', 'protected', 'large', 'large', 'ref', null, null]);
+  ok(M.refusal(409, 'Repository rule violations found').say.includes('PR') && M.refusal(422, 'Reference update failed').say.includes('lab-incoming/**'), 'said in words');
   const tabs = ['overview', 'runs', 'secrets'];
   eq([M.shortcut('2', tabs), M.shortcut('4', tabs), M.shortcut('/', tabs), M.shortcut('r', tabs), M.shortcut('?', tabs), M.shortcut('x', tabs)], [{ tab: 'runs' }, null, { search: true }, { reload: true }, { help: true }, null]);
   const base = MB.gridOf(P.checkPolicy({ version: 1, roles: { admin: ['*'], ops: ['dispatch'] }, teams: { oncall: 'ops' }, confirm: ['dispatch'], idleMinutes: 30, audit: 'issue' }).policy);

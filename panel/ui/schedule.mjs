@@ -22,8 +22,8 @@ const fill = (el, ...kids) => el.replaceChildren(...kids.flat(Infinity).filter((
  *  file's (pure): changed elsewhere since it was read (409 「… does not match <sha>」), the branch moved under the write (409
  *  「is at … but expected …」), made elsewhere while it was read as none (422 「"sha" wasn't supplied」). Any other 409 / 422 is
  *  not — a protected default branch, a ruleset: read again, it would be refused the same */
-const staleSha = (e) => (e?.status === 409 || e?.status === 422) && /does not match|\bis at \S+ but expected\b|"?sha"? wasn.t supplied/i.test(String(e?.message ?? ''));
-const PROTECTED = '既定の枝が守られているかもしれません（PR が要ります）';
+const staleSha = (e) => M.refusal(e?.status, e?.message).kind === 'stale';
+const protectedSay = (e) => { const r = M.refusal(e?.status, e?.message); return r.kind === 'protected' ? r.say : '既定の枝が守られているかもしれません（PR が要ります）'; };
 
 /** the 「予約」 tab. ctx: { api, lab: { slug, repo }, workflows (the lab's workflows as GitHub lists them — { name, path, state }
  *  — or their file names: the active ones but schedule.yml are offered; schedule.yml's own state is shown when it is among
@@ -65,7 +65,7 @@ export function scheduleTab(body, ctx) {
     const r = await ctx.guarded('dispatch', { file: S.SCHEDULE_FILE, ...(workflow ? { workflow } : {}) },
       () => api.putFile(lab.slug, S.SCHEDULE_FILE, out.text, st.sha ?? undefined, `panel: 予約 — ${message}`).catch((e) => {
         if (staleSha(e)) stale = true;
-        else if (e?.status === 409 || e?.status === 422) throw Object.assign(new Error(`${e.message} — ${PROTECTED}`), { status: e.status });
+        else if (e?.status === 409 || e?.status === 422) throw Object.assign(new Error(`${e.message} — ${protectedSay(e)}`), { status: e.status });
         throw e;
       }), done);
     // (changed elsewhere since it was read: read again, nothing written over; the form closed — its place in the list may have moved)

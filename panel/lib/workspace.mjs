@@ -13,6 +13,7 @@
 // new and import commit the unit to the default branch; go uploads dist/*.mcaddon as the artifact unit-<name>.
 // Pure but for the calls to GitHub at the end (through lib/gh.mjs). No DOM, no node:.
 import { UNIT, isUnitName } from './units.mjs';
+import { refusal } from './model.mjs';
 
 export const WORKFLOW = 'unit.yml';
 export const JOBS = ['new', 'test', 'go', 'sim', 'import'];
@@ -25,6 +26,9 @@ export const UNIT_SAY = '名前は英小文字で始まる英小文字・数字�
 /** a person's pack: these kinds, up to this size */
 export const IMPORT_TYPES = ['.mcaddon', '.mcpack', '.zip'];
 export const MAX_BYTES = 50 * 1024 * 1024;
+// (over this, said before it is sent: a long upload from a phone, and GitHub's contents API has refused packs not far above the
+// limit — 422 「too large to be processed」 — though it took 49 MB in the lab's own run)
+export const BIG_BYTES = 25 * 1024 * 1024;
 /** where a pack waits for unit.yml: incoming/<a safe name> — nothing above it, no way out */
 export const INCOMING = /^incoming\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.(mcaddon|mcpack|zip)$/i;
 
@@ -160,8 +164,10 @@ export async function putIncoming(api, slug, { path, message }, content, base = 
   if (!content) throw new Error('ファイルが読めませんでした');
   const sha = (await api.call('GET', `/repos/${slug}/git/ref/${enc(`heads/${base}`)}`))?.object?.sha;
   if (!sha) throw new Error(`既定の枝 ${base} の先頭が読めません`);
-  await api.call('POST', `/repos/${slug}/git/refs`, { ref: `refs/heads/${branch}`, sha });
-  try { return await api.call('PUT', `/repos/${slug}/contents/${enc(path)}`, { message, content, branch }); } catch (e) { await dropIncoming(api, slug, branch); throw e; }
+  // (GitHub's refusal said in words where its own are terse: a branch a ruleset will not let be made, a pack too large)
+  const why = (e) => { const r = refusal(e.status, e.message); return r.kind ? Object.assign(new Error(`${r.say}（${String(e.message).replace(/\s+/g, ' ').trim()}）`), { status: e.status }) : e; };
+  try { await api.call('POST', `/repos/${slug}/git/refs`, { ref: `refs/heads/${branch}`, sha }); } catch (e) { throw why(e); }
+  try { return await api.call('PUT', `/repos/${slug}/contents/${enc(path)}`, { message, content, branch }); } catch (e) { await dropIncoming(api, slug, branch); throw why(e); }
 }
 /** a person's pack taken in: put on its branch (putIncoming; base: the default branch), then unit.yml started with it
  *  (dispatch(workflow, inputs): GitHub's call, on the default branch) → its path. unit.yml not started: the branch deleted */
@@ -186,7 +192,8 @@ export async function saveUnitFile(api, slug, path, text, sha, message) {
   try { const r = await api.putFile(slug, path, text, sha, message); return { sha: r?.content?.sha ?? null, commit: r?.commit?.html_url ?? null }; }
   catch (e) {
     if (e.status !== 409 && e.status !== 422) throw e;
-    if (/does not match|"sha" wasn't supplied/i.test(String(e.message))) throw new Error('ほかの人が先に変えました: 「読み直す」で今のものを読んでから、もう一度');
-    throw Object.assign(new Error(`${String(e.message).replace(/\s+/g, ' ').trim()} — 既定の枝が守られているかもしれません（PR が要ります）`), { status: e.status });
+    const r = refusal(e.status, e.message);
+    if (r.kind === 'stale') throw new Error(r.say);
+    throw Object.assign(new Error(`${String(e.message).replace(/\s+/g, ' ').trim()} — ${r.kind === 'protected' ? r.say : '既定の枝が守られているかもしれません（PR が要ります）'}`), { status: e.status });
   }
 }

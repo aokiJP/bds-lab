@@ -298,6 +298,17 @@ await t('a person\'s pack put on a branch of its own (the default branch\'s head
     let e = null; try { await W.importUnit(g.api, 'o/lab', q, 'UEs=', (wf, inputs) => g.api.dispatch('o/lab', wf, 'main', inputs), 'main'); } catch (x) { e = x; }
     ok(why.test(e?.message) && !g.st.refs.has(q.branch) && g.st.seen.at(-1).method === 'DELETE' && g.st.seen.at(-1).path === `/repos/o/lab/git/refs/heads/${q.branch}`, `${e?.message} ${g.st.seen.map((s) => `${s.method} ${s.path}`).join(' | ')}`);
   }
+  // GitHub's own refusals in words: a pack the contents API will not take (422, as GitHub words it) — its branch dropped — and a
+  // branch a ruleset will not let be made (422 「Reference update failed」) — nothing put, nothing started
+  {
+    const big = fakeGitHub({ files: LAB, fail: { '/repos/o/lab/contents/incoming/x-20261008T1203-ab12.zip': { method: 'PUT', status: 422, message: 'Sorry, the file is too large to be processed. Consider creating/updating the file in a local clone and pushing it to GitHub.' } } });
+    const q = W.importPlan({ fileName: 'x.zip', size: 1, now: Date.UTC(2026, 9, 8, 12, 3), nonce: 'ab12' });
+    let e = null; try { await W.importUnit(big.api, 'o/lab', q, 'UEs=', (wf, inputs) => big.api.dispatch('o/lab', wf, 'main', inputs), 'main'); } catch (x) { e = x; }
+    ok(/^ファイルが大きすぎて GitHub が受け付けません/.test(e?.message) && /too large to be processed/.test(e?.message) && !big.st.refs.has(q.branch), e?.message);
+    const rule = fakeGitHub({ files: LAB, fail: { '/repos/o/lab/git/refs': { method: 'POST', status: 422, message: 'Reference update failed' } } });
+    let e2 = null; try { await W.importUnit(rule.api, 'o/lab', q, 'UEs=', (wf, inputs) => rule.api.dispatch('o/lab', wf, 'main', inputs), 'main'); } catch (x) { e2 = x; }
+    ok(/^枝を作れません（ruleset が枝を作るのを止めているかもしれません: lab-incoming\/\*\* を許してください）/.test(e2?.message) && !rule.st.seen.some((s) => s.method === 'PUT' || /dispatches/.test(s.path)), `${e2?.message} ${rule.st.seen.map((s) => s.method + ' ' + s.path).join(' | ')}`);
+  }
   // a name that is not one, or no bytes: nothing sent at all
   const n0 = f.st.seen.length;
   for (const bad of [{ path: 'incoming/../x.zip' }, { path: '.github/workflows/x.zip' }, { path: 'incoming/a/b.zip' }, { path: 'incoming/.x.zip' }]) { let e = null; try { await W.putIncoming(f.api, 'o/lab', { ...bad, message: 'm' }, 'QQ==', 'main'); } catch (x) { e = x; } ok(/使えません/.test(e?.message), bad.path); }
@@ -318,12 +329,15 @@ await t('a person\'s pack put on a branch of its own (the default branch\'s head
   ok(/ほかの人が先に変えました/.test(late?.message) && f.st.files.get('bds/addons/coins/src/main.ts').data.toString() === '// 3\n', 'another\'s change not overwritten');
   let nosha = null; try { await W.saveUnitFile(f.api, 'o/lab', 'bds/addons/coins/src/main.ts', 'mine', null, 'm'); } catch (x) { nosha = x; }
   ok(/ほかの人が先に変えました/.test(nosha?.message), 'a file there already, saved with no sha: the same words');
-  // a protected default branch (a ruleset, a pull request needed) answers 409 or 422 too: GitHub's own words, not another's change
-  for (const [status, message] of [[409, 'Repository rule violations found\n\nChanges must be made through a pull request.\n\n'], [422, 'Protected branch update failed for refs/heads/main.']]) {
+  // a protected default branch answers 409 (or 422) too, in GitHub's own words — classic protection, a ruleset: not another's
+  // change, and said for what it is; another 409 / 422: GitHub's words, with what it may be
+  for (const [status, message, sure] of [[409, 'Repository rule violations found\n\nChanges must be made through a pull request.\n\n', true], [409, 'Could not update file: Changes must be made through a pull request.', true],
+    [422, 'Protected branch update failed for refs/heads/main.', true], [409, 'Something else went wrong', false]]) {
     const g = fakeGitHub({ files: LAB, fail: { '/repos/o/lab/contents/bds/addons/coins/src/main.ts': { method: 'PUT', status, message } } });
     const at = await W.readUnitFile(g.api, 'o/lab', 'bds/addons/coins/src/main.ts');
     let e = null; try { await W.saveUnitFile(g.api, 'o/lab', 'bds/addons/coins/src/main.ts', 'mine', at.sha, 'm'); } catch (x) { e = x; }
-    ok(e && !/ほかの人が先に変えました/.test(e.message) && e.message.includes(message.split('\n')[0]) && /既定の枝が守られているかもしれません（PR が要ります）/.test(e.message) && e.status === status, `${status}: ${e?.message}`);
+    ok(e && !/ほかの人が先に変えました/.test(e.message) && e.message.includes(message.split('\n')[0]) && e.status === status
+      && (sure ? /既定の枝が守られています（変更は PR を通して入れる決まりです）/.test(e.message) : /既定の枝が守られているかもしれません（PR が要ります）/.test(e.message)), `${status}: ${e?.message}`);
   }
 });
 
@@ -559,7 +573,12 @@ await t('the cards (fake DOM, fake GitHub): 新しく作る starts unit.yml with
   const im = UW.importCard(ctx), bytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 1, 2, 250, 251, 252]);
   await im.button(/^取り込む$/).click();
   ok(/ファイルを選んでください/.test(toast.textContent) && log.guarded.length === 1, 'no file: said');
-  im.byId('import-file').files = [{ name: 'Their Pack (v2).mcaddon', size: bytes.length, bytes }];
+  // (a big one is said as it is chosen — before anything is sent; a small one says nothing)
+  const quiet = f.st.seen.length;
+  im.byId('import-file').files = [{ name: 'Big.mcaddon', size: 30 * 1024 * 1024, bytes: [] }]; await im.byId('import-file').fire('change');
+  ok(/^31\.5 MB の大きなパックです: 送るのに時間がかかります/.test(im.byId('import-state').textContent) && f.st.seen.length === quiet, im.byId('import-state').textContent);
+  im.byId('import-file').files = [{ name: 'Their Pack (v2).mcaddon', size: bytes.length, bytes }]; await im.byId('import-file').fire('change');
+  ok(im.byId('import-state').textContent === '', 'a small one: nothing said');
   im.byId('import-words').value = '新しい版で動くように';
   const before = f.st.seen.length, onMain = [...f.st.files.keys()].join();
   await im.button(/^取り込む$/).click();

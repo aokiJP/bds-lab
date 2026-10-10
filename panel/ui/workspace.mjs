@@ -74,6 +74,11 @@ export function importCard(ctx) {
   const unit = h('input', { type: 'text', id: 'import-unit', placeholder: '空ならファイルの名前から', autocapitalize: 'off', spellcheck: 'false' });
   const words = h('textarea', { id: 'import-words', placeholder: '例: 新しい Minecraft で動かなくなったので直してほしい。お店の値段を半分に' });
   const state = h('div', { class: 'muted', id: 'import-state' });
+  // (a big pack: said as it is chosen — the time it takes, and what to do if GitHub refuses it)
+  file.addEventListener('change', () => {
+    const f = file.files?.[0];
+    state.replaceChildren(f && f.size > W.BIG_BYTES ? h('span', { class: 'warn' }, `${fmtBytes(f.size)} の大きなパックです: 送るのに時間がかかります（Wi-Fi で）。GitHub が大きすぎると断ったら、音や画像を減らして小さくしてください。`) : '');
+  });
   const take = async () => {
     const f = file.files?.[0];
     if (!f) return toast('ファイルを選んでください', true);

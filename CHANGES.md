@@ -9,6 +9,9 @@
   版・試験の数・最新の .mcaddon）。新しく作る・人のアドオンを取り込む（専用の枝 `lab-incoming/…` に置き、既定の枝の履歴に残さない）・
   ファイルを直す（sha つきの commit）・試験・仕上げ・AI で変える。GitHub の Actions の `unit.yml` → `node lab.mjs unitci`
   （`common/unitci.mjs`: パネルと同じ検査、引数で渡してシェルを通さない、結果はまとめ・注釈・出力に）。
+- 本物の GitHub で確かめた（PR の枝で一時に）: unit.yml の sim・test・go・new・import と 49 MB のパックの取り込み、取り込み用の枝を
+  作っても verify・pages が動かないこと、schedule.yml が GITHUB_TOKEN で既定の枝の pages.yml を始めること・予約がないと自分を
+  止めること。GitHub の断りの文（sha の食い違い・守られた枝・ruleset・大きすぎる・枝を作れない）を `M.refusal` で読み、言い切る。
 - 🔀 既定の枝が守られている（PR が要る）ラボでは、`unit.yml` がユニットを `lab-unit/<名前>-<実行>` に置いて PR のリンクを出し、
   「アドオン」に「PR を待っているユニット」として出す（`git/matching-refs`）。手順そのものを、push を断る仕掛けの手元のリポジトリで試験。
 - 📦 **配布**（`lib/releases.mjs`・`ui/releases.mjs`）: リリースのファイル・大きさ・ダウンロードの数・合計、リンクを写す、Discord に知らせる。

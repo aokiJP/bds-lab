@@ -524,14 +524,18 @@ await t('the 「予約」 tab, a write GitHub refuses: one whose sha read is no 
     g.refusal = Object.assign(new Error(said), { status });
     await btn(form(body), '保存')[0].click();
     ok(form(body) && label(form(body), 'why').value === 'typed' && label(form(body), '時刻').value === '05:00', `${status}: the form kept as typed`);
-    ok(last().startsWith(said) && last().endsWith('既定の枝が守られているかもしれません（PR が要ります）'), last());
+    ok(last().startsWith(said) && last().endsWith('既定の枝が守られています（変更は PR を通して入れる決まりです）'), last());
     eq([g.reads, g.files[P].sha], [reads, 's1'], `${status}: nothing read again, nothing written`);
   }
   // (a row's own button: the same — and the form open meanwhile left as it is)
   g.refusal = Object.assign(new Error('GitHub: 409 Repository rule violations found'), { status: 409 });
   const reads = g.reads;
   await btn(rows(body)[0], '止める')[0].click();
-  ok(form(body) && label(form(body), 'why').value === 'typed' && g.reads === reads && /既定の枝が守られているかもしれません/.test(last()), last());
+  ok(form(body) && label(form(body), 'why').value === 'typed' && g.reads === reads && /既定の枝が守られています/.test(last()), last());
+  // (a 409 GitHub says nothing more of: its words, with what it may be)
+  g.refusal = Object.assign(new Error('GitHub: 409 Conflict'), { status: 409 });
+  await btn(rows(body)[0], '止める')[0].click();
+  ok(form(body) && /GitHub: 409 Conflict — 既定の枝が守られているかもしれません（PR が要ります）$/.test(last()), last());
   // changed elsewhere since it was read — GitHub says the sha does not match: read again, nothing written over, the form closed
   g.files[P] = { text: JSON.stringify({ version: 1, jobs: [mine, { id: 'theirs', workflow: 'verify.yml', every: 'hour' }] }), sha: 'elsewhere' };
   await btn(form(body), '保存')[0].click();

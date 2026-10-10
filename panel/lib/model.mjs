@@ -317,6 +317,19 @@ export function todos({ policyErrors = [], version = null, idleAdmins = [], invi
   const rank = { bad: 0, warn: 1, info: 2 };
   return out.map((x, i) => [x, i]).sort((a, b) => rank[a[0].level] - rank[b[0].level] || a[1] - b[1]).map(([x]) => x);
 }
+/** a write GitHub refused, read from its own words (pure) → { kind, say } — kind: 'stale' (the file changed since it was read:
+ *  409 「<path> does not match <sha>」・「is at … but expected …」, 422 「"sha" wasn't supplied」), 'protected' (classic protection
+ *  or a ruleset: 「Changes must be made through a pull request」・「Protected branch update failed」・「Repository rule violations
+ *  found」), 'large' (the contents API's size: 422 「too large to be processed」, 413), 'ref' (a branch not made: 422 「Reference
+ *  update failed」 — a ruleset restricting creations among the causes) or null (none of these: GitHub's words are the reason) */
+export function refusal(status, message) {
+  const m = String(message ?? '');
+  if ((status === 409 || status === 422) && /does not match|\bis at \S+ but expected\b|"?sha"? wasn.t supplied/i.test(m)) return { kind: 'stale', say: 'ほかの人が先に変えました: 「読み直す」で今のものを読んでから、もう一度' };
+  if (/must be made through a pull request|Protected branch update failed|Repository rule violations found/i.test(m)) return { kind: 'protected', say: '既定の枝が守られています（変更は PR を通して入れる決まりです）' };
+  if (status === 413 || /too large to be processed/i.test(m)) return { kind: 'large', say: 'ファイルが大きすぎて GitHub が受け付けません（50 MB 前後まで）: 音や画像を減らして小さくしてください' };
+  if (/Reference update failed/i.test(m)) return { kind: 'ref', say: '枝を作れません（ruleset が枝を作るのを止めているかもしれません: lab-incoming/** を許してください）' };
+  return { kind: null, say: '' };
+}
 /** location.hash → { tab, repo, run } (pure; anything unknown → nulls) */
 export function parseHash(hash) {
   const [k, q = ''] = String(hash ?? '').replace(/^#/, '').split('?');
