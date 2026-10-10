@@ -51,7 +51,7 @@ bds-lab は「頼まれたアドオンを、本物の BDS と本物のクライ�
 | 原因を探す・テストを鍛える | `why.mjs`・`gaps.mjs`・`mutate.mjs`・`chaos.mjs`・`record.mjs`・`flaky.mjs`・`bisect.mjs`・`checkpoint.mjs`（undo）・`pytb.mjs`（Python の traceback） |
 | 持ち込み・保守 | `brief.mjs`（人のアドオンを読む）・`apidiff.mjs`（API の版の差）・`maintain.mjs`・`upkeep.mjs`・`maint.mjs`（19 の健康診断）・`latest.mjs`（定期の全ユニット試験）・`scan.mjs`（アドオンが何をできるか）・`colony.mjs`（クラフターズコロニーの配布ワールド・アドオン: 探す・取る・確かめる・組み直す・変換・導入・ユニットに・地形をサンドボックスのコースに・最新で動くものを借りる harvest）・`borrow.mjs`（借りたアドオン: 見た記録・種で決まる順・記事の決まり・借りた印と、配る道すべての止め）・`hosts.mjs`（貸し手の GitHub の時間: ホストの登録・送る前の検査・走らせる・予算（自分の台帳と GitHub の数の多いほう）・報告・`host ci` = 管理パネルから hostrun.yml で。ひな形は host/template） |
 | 配る | `release.mjs`・`github.mjs`・`share.mjs`（ラボ本体のリリース）・`update.mjs`（上書き更新）・`deploy.mjs`（自分の BDS へ、戻せる）・`secret-scan.mjs`（鍵の漏れ止め） |
-| AI | `make.mjs`（AI に作らせ go が決める）・`ci.mjs`（GitHub の Issue から）・`auto.mjs`（自動操縦）・`auto-guard.mjs`（AI が決めてはいけない床）・`run-tests.mjs`（オフライン試験を並べて走らせる：ゲート・share の単体再試験）・`verify-plan.mjs`（CI の verify の計画：前に通ったコミットから変わったファイルで、本物の BDS・すべてのオフライン試験・パネルの試験だけ・何もしない を決める） |
+| AI | `make.mjs`（AI に作らせ go が決める）・`ci.mjs`（GitHub の Issue から）・`auto.mjs`（自動操縦）・`auto-guard.mjs`（AI が決めてはいけない床）・`run-tests.mjs`（オフライン試験を並べて走らせる：ゲート・share の単体再試験）・`verify-plan.mjs`（CI の verify の計画：前に通ったコミットから変わったファイルで、本物の BDS・すべてのオフライン試験・パネルの試験だけ・何もしない を決める）・`verify-state.mjs`（verify が覚える「通ったもの」の形と、ファイルの中身の呼び方: git の blob id・フォルダの名前の一覧） |
 | 知識（スキル） | `skills.mjs`（規則の層・インストール・ベンチ）・`skill-forge.mjs`（スキル本文の採点・振り分け・磨き）・`skill-evolve.mjs`（物差しの成長・全 AI 向けの 1 本のプロンプト） |
 
 ## 状態の置き場所
