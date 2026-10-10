@@ -23,10 +23,12 @@ export const SERIAL = new Set(['tests/make-offline.mjs', 'tests/guards-offline.m
 export const LONG = { 'tests/app-offline.mjs': 3600000, 'tests/offline.mjs': 1800000, 'tests/env-offline.mjs': 1800000 };
 // a test's usual seconds on CI's runner (verify's every offline test, 2026-10); a test not here counts as UNKNOWN. For the order
 // (the longest first) and the shards' balance: a wrong number makes a run or a shard longer, never a test left out
+// (a test in PARTS: all its parts' time together; each part counts as its share)
 export const TIME = {
-  'tests/app-offline.mjs': 445, 'tests/rd-overlap-offline.mjs': 267, 'tests/env-offline.mjs': 234, 'tests/offline.mjs': 194, 'tests/device-offline.mjs': 86,
-  'tests/host-offline.mjs': 65, 'tests/colony-offline.mjs': 50, 'tests/realplayer-offline.mjs': 48, 'tests/scratch-offline.mjs': 40, 'tests/rd-title-offline.mjs': 36,
-  'tests/login-offline.mjs': 25, 'tests/cli-offline.mjs': 23, 'tests/rd-boot-offline.mjs': 20, 'tests/sim-offline.mjs': 16, 'tests/auto-offline.mjs': 13, 'tests/lint-offline.mjs': 13,
+  'tests/app-offline.mjs': 800, 'tests/env-offline.mjs': 300, 'tests/offline.mjs': 300, 'tests/rd-overlap-offline.mjs': 140, 'tests/device-offline.mjs': 120,
+  'tests/host-offline.mjs': 110, 'tests/colony-offline.mjs': 100, 'tests/cli-offline.mjs': 80, 'tests/realplayer-offline.mjs': 65, 'tests/scratch-offline.mjs': 50,
+  'tests/rd-title-offline.mjs': 37, 'tests/lint-offline.mjs': 28, 'tests/sim-offline.mjs': 26, 'tests/auto-offline.mjs': 22, 'tests/rd-boot-offline.mjs': 20, 'tests/login-offline.mjs': 18,
+  'tests/deps-offline.mjs': 18, 'tests/import-offline.mjs': 17, 'tests/guards-offline.mjs': 16,
 };
 const UNKNOWN = 60;
 // tests that run as parts side by side: each part a process of its own (its args, its env; a SERIAL test each part in a copy of
@@ -36,6 +38,7 @@ const UNKNOWN = 60;
 export const PARTS = {
   'tests/app-offline.mjs': [1, 2, 3, 4].map((i) => ({ env: { APP_TEST_SHARD: `${i}/4` } })),
   'tests/offline.mjs': [{ args: ['bds'] }, { args: ['end'] }, { args: ['ll', 'docker'] }],
+  'tests/env-offline.mjs': [{ env: { ENV_TEST_PART: '1' } }, { env: { ENV_TEST_PART: '2' } }],
 };
 const partName = (p) => [...(p.args ?? []), ...Object.entries(p.env ?? {}).map(([k, v]) => `${k}=${v}`)].join(' ');
 // the parts' results as one: { t, ok, code, ms, lines } and finish values ({ deps }: a union, null if any part's is null or two disagree)

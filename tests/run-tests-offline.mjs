@@ -82,7 +82,7 @@ await t('a result line as each test ends (there before onDone); they start the l
   const log = newLog(), results = path.join(TMP, 'results-1.jsonl'), seen = [];
   const list = ['sim', 'zz', 'offline', 'app'].map(testOf);
   await R.runTests(list, { cwd: LAB, jobs: 1, results, parts: {}, env: { ...process.env, LOG: log }, onDone: (r) => { const rows = fs.readFileSync(results, 'utf8').trim().split('\n').map((l) => JSON.parse(l)); seen.push([rows.length, rows.at(-1).unit === r.t]); } });
-  eq(read(log, 'order.txt').trim().split('\n'), ['app', 'offline', 'zz', 'sim'], 'TIME: app 445 s, offline 194 s, zz unknown (60 s), sim 16 s');
+  eq(read(log, 'order.txt').trim().split('\n'), ['app', 'offline', 'zz', 'sim'], 'TIME: app 800 s, offline 300 s, zz unknown (60 s), sim 26 s');
   eq(seen, [[1, true], [2, true], [3, true], [4, true]], 'a line each time one ended');
   const rows = fs.readFileSync(results, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   eq(rows.map((x) => [x.unit, x.ok, x.deps, Number.isInteger(x.ms)]), ['app', 'offline', 'zz', 'sim'].map((n) => [testOf(n), true, null, true]), 'without a wrap: deps null');

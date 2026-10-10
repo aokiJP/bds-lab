@@ -94,6 +94,12 @@ jobs:
       - name: ESLint
         if: matrix.os == 'ubuntu-latest' && needs.plan.outputs.eslint == 'true'
         run: node common/deps.mjs run step:eslint --results "$RUNNER_TEMP/results/steps.jsonl" -- npx --yes eslint@9 -c tests/eslint.config.mjs .
+      # the management panel (panel/) in a real headless Chrome, GitHub's API stood in for by routes: who is locked out, what each
+      # person may do, a secret sealed in the page, the live device driven, a lender stopping. A minute and a half of its own:
+      # started here, beside the offline tests below, and waited for after them (its own step says how it ended)
+      - name: management panel (real browser), started beside the offline tests
+        if: matrix.os == 'ubuntu-latest' && needs.plan.outputs.browser == 'true'
+        run: (node common/deps.mjs run tests/panel-browser.mjs --results "$RUNNER_TEMP/results/steps.jsonl" -- node tests/panel-browser.mjs > "$RUNNER_TEMP/browser.log" 2>&1; echo $? > "$RUNNER_TEMP/browser.code") < /dev/null > /dev/null 2>&1 &
       # the gate the autopilot keeps an engine change by and `share` checks a release with (common/auto-guard.mjs), and the rest — the
       # three labs end to end, the real player's packets, NetherNet, the environment, the app lab, latest, maint, upkeep, login, lan:
       # the ones the plan names. A result line as each one ends (a run cancelled keeps what ended)
@@ -111,11 +117,11 @@ jobs:
       - name: GitHub flows (fake gh)
         if: matrix.os == 'ubuntu-latest' && needs.plan.outputs.smoke == 'true'
         run: node common/deps.mjs run step:github-smoke --results "$RUNNER_TEMP/results/steps.jsonl" -- node bds/bench/github-smoke.mjs
-      # the management panel (panel/) in a real headless Chrome, GitHub's API stood in for by routes: who is locked out,
-      # what each person may do, a secret sealed in the page, the live device driven, a lender stopping
       - name: management panel (real browser)
         if: matrix.os == 'ubuntu-latest' && needs.plan.outputs.browser == 'true'
-        run: node common/deps.mjs run tests/panel-browser.mjs --results "$RUNNER_TEMP/results/steps.jsonl" -- node tests/panel-browser.mjs
+        run: |
+          while [ ! -f "$RUNNER_TEMP/browser.code" ]; do sleep 2; done
+          cat "$RUNNER_TEMP/browser.log"; exit "$(cat "$RUNNER_TEMP/browser.code")"
       - if: matrix.os == 'ubuntu-latest' && contains(needs.plan.outputs.tests, 'tests/lan-offline.mjs') && hashFiles('common/nethernet-connect/dist/src/index.js') == ''
         run: echo "::warning title=lan-offline not run::common/nethernet-connect/dist is not in this repository - vendor it from the nethernet-connect project (node scripts/vendor.mjs <this lab>), then lan and its test run here"
       # (what passed and what each read: the state job puts it in the memory; kept a day)
