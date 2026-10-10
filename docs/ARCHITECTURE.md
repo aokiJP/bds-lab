@@ -51,7 +51,7 @@ bds-lab は「頼まれたアドオンを、本物の BDS と本物のクライ�
 | 原因を探す・テストを鍛える | `why.mjs`・`gaps.mjs`・`mutate.mjs`・`chaos.mjs`・`record.mjs`・`flaky.mjs`・`bisect.mjs`・`checkpoint.mjs`（undo）・`pytb.mjs`（Python の traceback） |
 | 持ち込み・保守 | `brief.mjs`（人のアドオンを読む）・`apidiff.mjs`（API の版の差）・`maintain.mjs`・`upkeep.mjs`・`maint.mjs`（19 の健康診断）・`latest.mjs`（定期の全ユニット試験）・`scan.mjs`（アドオンが何をできるか）・`colony.mjs`（クラフターズコロニーの配布ワールド・アドオン: 探す・取る・確かめる・組み直す・変換・導入・ユニットに・地形をサンドボックスのコースに・最新で動くものを借りる harvest）・`borrow.mjs`（借りたアドオン: 見た記録・種で決まる順・記事の決まり・借りた印と、配る道すべての止め）・`hosts.mjs`（貸し手の GitHub の時間: ホストの登録・送る前の検査・走らせる・予算（自分の台帳と GitHub の数の多いほう）・報告・`host ci` = 管理パネルから hostrun.yml で。ひな形は host/template） |
 | 配る | `release.mjs`・`github.mjs`・`share.mjs`（ラボ本体のリリース）・`update.mjs`（上書き更新）・`deploy.mjs`（自分の BDS へ、戻せる）・`secret-scan.mjs`（鍵の漏れ止め） |
-| AI | `make.mjs`（AI に作らせ go が決める）・`ci.mjs`（GitHub の Issue から）・`auto.mjs`（自動操縦）・`auto-guard.mjs`（AI が決めてはいけない床）・`run-tests.mjs`（オフライン試験を並べて走らせる：ゲート・share の単体再試験） |
+| AI | `make.mjs`（AI に作らせ go が決める）・`ci.mjs`（GitHub の Issue から）・`auto.mjs`（自動操縦）・`auto-guard.mjs`（AI が決めてはいけない床）・`run-tests.mjs`（オフライン試験を並べて走らせる：ゲート・share の単体再試験）・`verify-plan.mjs`（CI の verify の計画：前に通ったコミットから変わったファイルで、本物の BDS・すべてのオフライン試験・パネルの試験だけ・何もしない を決める） |
 | 知識（スキル） | `skills.mjs`（規則の層・インストール・ベンチ）・`skill-forge.mjs`（スキル本文の採点・振り分け・磨き）・`skill-evolve.mjs`（物差しの成長・全 AI 向けの 1 本のプロンプト） |
 
 ## 状態の置き場所
@@ -71,7 +71,7 @@ bds-lab は「頼まれたアドオンを、本物の BDS と本物のクライ�
 | lint | 全スクリプトの構文・全 JSON・コマンド表と文書の一致・モジュール地図・既知の不具合の型（`tests/lint-offline.mjs`） | ゲート・CI |
 | ESLint | 見た目ではなく本物の不具合だけ: 無い名前・計算して使わない値・届かないコード・いつも同じ条件（`tests/eslint.config.mjs`、ラボの依存にはしない: `npx --yes eslint@9 -c tests/eslint.config.mjs .`） | CI |
 | ゲート（27 本） | `common/auto-guard.mjs` の `gate`：docs・dev・kit・make・ci・auto・update・share・sim・status・deploy・c2s・upkeep-front・ts・bb・schema・pytb・sample・import・skills・rp・forge・cli・scratch・lint・colony・ui（`ui` と `start`） | `node lab.mjs auto gate`（並列。`--all` で全オフライン試験、`--jobs n`）、自動操縦がラボ本体を変えるたび、`share` の単体再試験、CI |
-| CI のその他 | offline・realplayer・nethernet・env・app・latest・maint・upkeep・maintain・login・GitHub の流れ・lan、各ラボの実機試験 | push のたび（`.github/workflows/verify.yml`） |
+| CI のその他 | offline・realplayer・nethernet・env・app・latest・maint・upkeep・maintain・login・GitHub の流れ・lan、各ラボの実機試験 | push のたび、変わったものに要る分だけ（`.github/workflows/verify.yml` の計画 `common/verify-plan.mjs`：同じ中身は 2 度試験しない・BDS の実機はそれが使うファイルが変わったときだけ・パネルだけならパネルの試験だけ）。手で始めるか commit に `[full ci]` ですべて |
 | 実機 | `tests/dev-bds.mjs`（本物の BDS で約 15 分）・`bds/bench/bench.mjs selftest`・`scratch selftest --real`・`skill verify` | 手元・定期 |
 
 ## 安全の床
