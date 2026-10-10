@@ -335,12 +335,16 @@ function putBack(id, paths) {
 const dropWork = (id) => fs.rmSync(path.join(WORK, id), { recursive: true, force: true });
 
 // ---------- the gate: the offline tests an engine change must keep passing ----------
-export function gate(pol, out, only = null, { jobs } = {}) {
+// (results: a file, a JSON line per test as it ends; wrap: a module run-tests gives each test to — common/deps.mjs records what
+// each one read, for verify)
+export function gate(pol, out, only = null, { jobs, results, wrap } = {}) {
   const res = [], list = [];
   for (const t of only ?? pol.gate) { if (!fs.existsSync(path.join(TOP, t))) res.push({ t, ok: true, skip: true }); else list.push(t); }
   if (!list.length) return res;
-  // side by side (common/run-tests.mjs: LAB_GATE_JOBS, default the cores; the tests that share the lab folder run alone)
-  const r = spawnSync(process.execPath, [path.join(REPO, 'common', 'run-tests.mjs'), '--json', '--cwd', TOP, '--timeout', '900000', ...(jobs ? ['--jobs', String(jobs)] : []), ...list],
+  // side by side (common/run-tests.mjs: LAB_GATE_JOBS, default the cores; the tests that share the lab folder each in a copy of
+  // their own, or alone)
+  const r = spawnSync(process.execPath, [path.join(REPO, 'common', 'run-tests.mjs'), '--json', '--cwd', TOP, '--timeout', '900000', ...(jobs ? ['--jobs', String(jobs)] : []),
+    ...(results ? ['--results', results] : []), ...(wrap ? ['--wrap', wrap] : []), ...list],
     { cwd: TOP, encoding: 'utf8', maxBuffer: 256e6, env: { ...process.env, LAB_NOTRACE: '1', FORCE_COLOR: '0', LAB_AUTO_IN_GATE: '1' } });
   let rows = null; try { rows = JSON.parse(r.stdout); } catch { /* the runner itself failed */ }
   if (!Array.isArray(rows)) rows = list.map((t) => ({ t, ok: false, lines: [`✘ the test runner failed: ${((r.stderr || r.stdout || '').trim().split('\n').at(-1)) || 'exit ' + r.status}`] }));
@@ -670,9 +674,13 @@ export async function autoCmd(args, out = console.log) {
     const extra = all ? fs.readdirSync(path.join(TOP, 'tests')).filter((f) => /^(offline|[\w-]+-offline)\.mjs$/.test(f)).map((f) => `tests/${f}`).filter((t) => !pol.gate.includes(t)).sort() : [];
     // --shard i/n: this runner's part (the same split on every runner: from the list and the times alone, never this machine's)
     const sh = /^(\d+)\/(\d+)$/.exec(flag('--shard') ?? ''), first = Number(flag('--first')) || 0;
-    let only = all ? [...pol.gate, ...extra] : null;
+    // --tests "<a b c>": only these (one not here is skipped, as a gate test is); --results <file>: a JSON line per test as it ends;
+    // --record: each with what it read (common/deps.mjs: verify runs a test again only when one of those files changed)
+    const tests = flag('--tests'), results = flag('--results'), record = a.includes('--record');
+    let only = tests !== undefined ? String(tests).split(/\s+/).filter(Boolean) : all ? [...pol.gate, ...extra] : null;
     if (sh) { only = shardOf(only ?? pol.gate, Number(sh[1]), Number(sh[2]), { first }); out(`shard ${sh[1]}/${sh[2]}: ${only.length} tests — ${only.join(' ')}`); }
-    const t0 = Date.now(), r = gate(pol, out, only, { jobs }); const bad = r.filter((x) => !x.ok); out(bad.length ? `FAIL gate: ${bad.map((x) => x.t).join(' ')}` : `PASS gate (${r.filter((x) => !x.skip).length} tests, ${Math.round((Date.now() - t0) / 1000)} s)`); return !bad.length;
+    const t0 = Date.now(), r = gate(pol, out, only, { jobs, results: results && path.resolve(results), wrap: record ? path.join(REPO, 'common', 'deps.mjs') : undefined });
+    const bad = r.filter((x) => !x.ok); out(bad.length ? `FAIL gate: ${bad.map((x) => x.t).join(' ')}` : `PASS gate (${r.filter((x) => !x.skip).length} tests, ${Math.round((Date.now() - t0) / 1000)} s)`); return !bad.length;
   }
   if (sub === 'next') return next(out);
   if (sub === 'done') return done(a.slice(1), out);
@@ -702,6 +710,6 @@ export async function autoCmd(args, out = console.log) {
     out(`auto: ${ran} task(s)`);
     return true;
   }
-  out('usage: node lab.mjs auto [run [--ticks n|--forever] [--dry] [--via v] [--model m] | next | plan | done <id> ok|fail ["lesson"] | gate [--all] [--jobs n] [--on <owner/repo>|auto] | log [n] | stop ["why"] | resume | policy [key=value] | schedule hourly|daily|off]');
+  out('usage: node lab.mjs auto [run [--ticks n|--forever] [--dry] [--via v] [--model m] | next | plan | done <id> ok|fail ["lesson"] | gate [--all | --tests "<a b>"] [--jobs n] [--record] [--results <file>] [--on <owner/repo>|auto] | log [n] | stop ["why"] | resume | policy [key=value] | schedule hourly|daily|off]');
   return false;
 }
