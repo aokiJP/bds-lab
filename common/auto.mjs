@@ -28,6 +28,8 @@
 //   node lab.mjs auto done <id> ok|fail ["<lesson>"]   …and its result (an engine task is gated here; fail → put back)
 //   node lab.mjs auto gate [--all] [--jobs n] [--on <owner/repo>|auto]  the gate tests on the lab as it is, side by side (--all:
 //                                          every offline test; --on: on a lender's host, node lab.mjs host; policy gateOn)
+//        [--shard i/n [--first s]]         only this runner's part of them (CI's shards side by side, common/run-tests.mjs
+//                                          shardOf: by each test's usual time; s: what shard 1 spends besides, in seconds)
 //   node lab.mjs auto plan                 is there work, and for which labs (a schedule decides on it before its set-up)
 //   node lab.mjs auto log [n]   auto stop ["why"]   auto resume   auto policy [key=value ...]   auto schedule hourly|daily|off
 // LAB_AUTO_ROOT: another bds-lab folder (tests). LAB_AUTO_ISSUES=<json>: issues instead of gh (tests). LAB_CI_DRY=1: gh/git
@@ -39,6 +41,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { policy, stopped, floorHash, canSpend, isProtected, SECRET, PROTECTED, DEFAULT_POLICY } from './auto-guard.mjs';
 import { hostCmd, hostsSummary } from './hosts.mjs';
+import { shardOf } from './run-tests.mjs';
 
 const REPO = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const TOP = process.env.LAB_AUTO_ROOT || REPO;
@@ -665,7 +668,11 @@ export async function autoCmd(args, out = console.log) {
     // --jobs n: how many side by side (1 = one by one); a test whose vendored part is missing says so and is not a failure
     const pol = policy(TOP), all = a.includes('--all'), jobs = Number(flag('--jobs')) || undefined;
     const extra = all ? fs.readdirSync(path.join(TOP, 'tests')).filter((f) => /^(offline|[\w-]+-offline)\.mjs$/.test(f)).map((f) => `tests/${f}`).filter((t) => !pol.gate.includes(t)).sort() : [];
-    const t0 = Date.now(), r = gate(pol, out, all ? [...pol.gate, ...extra] : null, { jobs }); const bad = r.filter((x) => !x.ok); out(bad.length ? `FAIL gate: ${bad.map((x) => x.t).join(' ')}` : `PASS gate (${r.filter((x) => !x.skip).length} tests, ${Math.round((Date.now() - t0) / 1000)} s)`); return !bad.length;
+    // --shard i/n: this runner's part (the same split on every runner: from the list and the times alone, never this machine's)
+    const sh = /^(\d+)\/(\d+)$/.exec(flag('--shard') ?? ''), first = Number(flag('--first')) || 0;
+    let only = all ? [...pol.gate, ...extra] : null;
+    if (sh) { only = shardOf(only ?? pol.gate, Number(sh[1]), Number(sh[2]), { first }); out(`shard ${sh[1]}/${sh[2]}: ${only.length} tests — ${only.join(' ')}`); }
+    const t0 = Date.now(), r = gate(pol, out, only, { jobs }); const bad = r.filter((x) => !x.ok); out(bad.length ? `FAIL gate: ${bad.map((x) => x.t).join(' ')}` : `PASS gate (${r.filter((x) => !x.skip).length} tests, ${Math.round((Date.now() - t0) / 1000)} s)`); return !bad.length;
   }
   if (sub === 'next') return next(out);
   if (sub === 'done') return done(a.slice(1), out);

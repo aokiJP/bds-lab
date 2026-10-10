@@ -38,9 +38,13 @@ jobs:
       actions: read
     outputs:
       offline: ${{ steps.plan.outputs.offline }}
+      shards: ${{ steps.plan.outputs.shards }}
+      nshards: ${{ steps.plan.outputs.nshards }}
       tests: ${{ steps.plan.outputs.tests }}
       browser: ${{ steps.plan.outputs.browser }}
       bds: ${{ steps.plan.outputs.bds }}
+      bdsparts: ${{ steps.plan.outputs.bdsparts }}
+      addons: ${{ steps.plan.outputs.addons }}
       extra: ${{ steps.plan.outputs.extra }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -56,13 +60,17 @@ jobs:
     # all three labs end to end against fake servers (tests/fake): flavors, deploy, helpers, reload, pack, and the macOS way
     # (server side in a container, through a fake docker CLI); the real player's packets against a recording client.
     # macos-latest runs the lab itself natively on macOS (GitHub's macOS runners have no Docker: the container path is the fake).
-    # The plan's panel: ESLint and the panel's own tests only (what common/panel.mjs gives the changed panel files)
+    # The plan's panel: ESLint and the panel's own tests only (what common/panel.mjs gives the changed panel files).
+    # Every offline test: on the plan's shards side by side, each runner its part (auto gate --shard: split by the tests' usual
+    # times, the ones that share the lab folder spread over the runners — on one they run one after another); ESLint, the
+    # GitHub flows and the real browser on shard 1, which takes that much less of the tests (--first)
     needs: plan
     if: needs.plan.outputs.offline == 'full' || needs.plan.outputs.offline == 'panel'
     strategy:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(needs.plan.outputs.extra == 'true' && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
     runs-on: ${{ matrix.os }}
     # (the app lab's fake device alone is ~20 minutes on 2 cores; a private repository's runner has 2)
     timeout-minutes: 45
@@ -76,7 +84,7 @@ jobs:
       - if: needs.plan.outputs.offline == 'full'
         run: npm i -g esbuild@0.28 typescript@6.0.3
       # real bugs, not style: names that do not exist, values computed and never used, code that cannot run (tests/eslint.config.mjs)
-      - if: matrix.os == 'ubuntu-latest'
+      - if: matrix.os == 'ubuntu-latest' && matrix.shard == 1
         run: npx --yes eslint@9 -c tests/eslint.config.mjs .
       # every offline test side by side (common/run-tests.mjs; the ones that share the lab folder one by one): the gate the
       # autopilot keeps an engine change by and `share` checks a release with (common/auto-guard.mjs), and the rest — the three
@@ -87,7 +95,7 @@ jobs:
         env:
           # (the vendored nethernet-connect present: its test must run; absent: it says SKIP, and the warning below says why)
           LAB_REQUIRE_LAN: ${{ hashFiles('common/nethernet-connect/dist/src/index.js') != '' && '1' || '0' }}
-        run: node lab.mjs auto gate --all
+        run: node lab.mjs auto gate --all --shard ${{ matrix.shard }}/${{ needs.plan.outputs.nshards }} --first 110
       # (the panel's tests the changed panel files need, from the plan's own list; a failing one is an annotation too, as an
       # addon's is: its last lines, readable where the log is not)
       - name: the panel's tests
@@ -105,26 +113,32 @@ jobs:
           done
           [ -z "$bad" ] || { echo "failed:$bad"; exit 1; }
       - name: GitHub flows (fake gh)
-        if: needs.plan.outputs.offline == 'full'
+        if: needs.plan.outputs.offline == 'full' && matrix.shard == 1
         run: node bds/bench/github-smoke.mjs
       # the management panel (panel/) in a real headless Chrome, GitHub's API stood in for by routes: who is locked out,
       # what each person may do, a secret sealed in the page, the live device driven, a lender stopping
       - name: management panel (real browser)
-        if: matrix.os == 'ubuntu-latest' && needs.plan.outputs.browser == 'true'
+        if: matrix.os == 'ubuntu-latest' && matrix.shard == 1 && needs.plan.outputs.browser == 'true'
         run: node tests/panel-browser.mjs
-      - if: needs.plan.outputs.offline == 'full' && hashFiles('common/nethernet-connect/dist/src/index.js') == ''
+      - if: needs.plan.outputs.offline == 'full' && matrix.shard == 1 && hashFiles('common/nethernet-connect/dist/src/index.js') == ''
         run: echo "::warning title=lan-offline not run::common/nethernet-connect/dist is not in this repository - vendor it from the nethernet-connect project (node scripts/vendor.mjs <this lab>), then lan and its test run here"
 
   bds:
-    # (only when a file it uses changed since the last commit verify passed on: the plan)
+    # the real server's parts side by side, each on its own runner (one after another they took ~35 minutes; side by side the
+    # longest, dev, ~14): bench — the bench's selftest; scratch — the from-scratch lessons; dev — the AI tools' story and the
+    # app lab's game verbs with a real client; addons — each addon's tests and pack. Only the parts the plan names: every one
+    # when a file the real server uses changed, or the addons part alone for the addons whose own files alone changed
     needs: plan
     if: needs.plan.outputs.bds == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ${{ fromJSON(needs.plan.outputs.bdsparts) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
     defaults: { run: { working-directory: bds } }
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with: { lfs: true }
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with: { node-version: 22 }
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -132,20 +146,28 @@ jobs:
           path: bds/.lab
           key: bds-${{ runner.os }}-${{ hashFiles('bds/vendor/bds-version.txt', 'common/data/bds-versions.json') }}
       - run: node lab.mjs bds
-      - run: node bench/bench.mjs selftest
+      - if: matrix.part == 'bench'
+        run: node bench/bench.mjs selftest
       # the from-scratch lessons: the reference passes every one in the sandbox and on this BDS, the empty template fails
-      - run: node ../lab.mjs scratch selftest --real
+      - if: matrix.part == 'scratch'
+        run: node ../lab.mjs scratch selftest --real
       # why, chaos, shrink, gaps, record, harden (a scripted AI) and mutate on the real server, end to end
-      - run: node ../tests/dev-bds.mjs
+      - if: matrix.part == 'dev'
+        run: node ../tests/dev-bds.mjs
       # the server's side of the app lab's game verbs (where, items, face, lookat: their very js) with a real client joined
-      - run: node ../tests/play-bds.mjs
+      - if: matrix.part == 'dev'
+        run: node ../tests/play-bds.mjs
       # (an addon whose tests fail is also an annotation: which addon, and the last lines it printed — readable on the run's
-      # page and through the API where the log is not)
-      - name: test and pack every addon
+      # page and through the API where the log is not. The plan's addons: all, or the names of those whose files alone changed)
+      - name: test and pack the addons
+        if: matrix.part == 'addons'
+        env:
+          ADDONS: ${{ needs.plan.outputs.addons }}
         run: |
           set -eo pipefail
-          for d in addons/*/; do
-            a=$(basename "$d"); [ -f "addons/$a/bp/manifest.json" ] || continue
+          if [ "$ADDONS" = all ]; then list=$(for d in addons/*/; do basename "$d"; done); else list=$ADDONS; fi
+          for a in $list; do
+            [ -f "addons/$a/bp/manifest.json" ] || continue
             echo "::group::$a"
             if ! node lab.mjs test -a "$a" 2>&1 | tee "$RUNNER_TEMP/addon.log"; then
               echo "::endgroup::"
@@ -154,7 +176,7 @@ jobs:
             fi
             node lab.mjs pack -a "$a"; echo "::endgroup::"
           done
-      - if: always()
+      - if: always() && matrix.part == 'addons'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with: { name: bds-addons, path: 'bds/dist/*', if-no-files-found: ignore }
 

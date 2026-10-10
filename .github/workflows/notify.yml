@@ -25,7 +25,14 @@ on:
 permissions: { contents: read, actions: read, checks: read }
 jobs:
   notify:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion != 'skipped'
+    # (the very rule of app/lib/runmsg.mjs shouldNotify, here too: a run it will not tell starts no runner — a pushed success,
+    # the most of them, under the default auto. String comparisons in expressions ignore case, as the lab's own does)
+    if: >-
+      github.event_name == 'workflow_dispatch' || (
+        github.event.workflow_run.conclusion != 'skipped' && vars.LAB_NOTIFY != 'off' && (
+          vars.LAB_NOTIFY == 'all' ||
+          (github.event.workflow_run.conclusion != 'success' && github.event.workflow_run.conclusion != 'neutral') ||
+          (vars.LAB_NOTIFY != 'failures' && github.event.workflow_run.event == 'workflow_dispatch')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

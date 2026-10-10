@@ -70,8 +70,8 @@ bds-lab は「頼まれたアドオンを、本物の BDS と本物のクライ�
 |---|---|---|
 | lint | 全スクリプトの構文・全 JSON・コマンド表と文書の一致・モジュール地図・既知の不具合の型（`tests/lint-offline.mjs`） | ゲート・CI |
 | ESLint | 見た目ではなく本物の不具合だけ: 無い名前・計算して使わない値・届かないコード・いつも同じ条件（`tests/eslint.config.mjs`、ラボの依存にはしない: `npx --yes eslint@9 -c tests/eslint.config.mjs .`） | CI |
-| ゲート（27 本） | `common/auto-guard.mjs` の `gate`：docs・dev・kit・make・ci・auto・update・share・sim・status・deploy・c2s・upkeep-front・ts・bb・schema・pytb・sample・import・skills・rp・forge・cli・scratch・lint・colony・ui（`ui` と `start`） | `node lab.mjs auto gate`（並列。`--all` で全オフライン試験、`--jobs n`）、自動操縦がラボ本体を変えるたび、`share` の単体再試験、CI |
-| CI のその他 | offline・realplayer・nethernet・env・app・latest・maint・upkeep・maintain・login・GitHub の流れ・lan、各ラボの実機試験 | push のたび、変わったものに要る分だけ（`.github/workflows/verify.yml` の計画 `common/verify-plan.mjs`：同じ中身は 2 度試験しない・BDS の実機はそれが使うファイルが変わったときだけ・パネルだけならパネルの試験だけ）。手で始めるか commit の題（1 行目）に `[full ci]` ですべて（macOS・Endstone・LeviLamina も） |
+| ゲート（27 本） | `common/auto-guard.mjs` の `gate`：docs・dev・kit・make・ci・auto・update・share・sim・status・deploy・c2s・upkeep-front・ts・bb・schema・pytb・sample・import・skills・rp・forge・cli・scratch・lint・colony・ui（`ui` と `start`） | `node lab.mjs auto gate`（並列。`--all` で全オフライン試験、`--jobs n`、`--shard i/n` でそのうちの 1 台分: 各試験のふだんの時間で分ける）、自動操縦がラボ本体を変えるたび、`share` の単体再試験、CI（4 台に分けて同時に） |
+| CI のその他 | offline・realplayer・nethernet・env・app・latest・maint・upkeep・maintain・login・GitHub の流れ・lan、各ラボの実機試験 | push のたび、変わったものに要る分だけ（`.github/workflows/verify.yml` の計画 `common/verify-plan.mjs`：同じ中身は 2 度試験しない・BDS の実機はそれが使うファイルが変わったときだけ、4 つ（bench・scratch・dev・addons）を別々のランナーで同時に、アドオンのファイルだけならそのアドオンの試験だけ・パネルだけならパネルの試験だけ・オフラインの試験は 4 台に分けて同時に）。手で始めるか commit の題（1 行目）に `[full ci]` ですべて（macOS・Endstone・LeviLamina も） |
 | 実機 | `tests/dev-bds.mjs`（本物の BDS で約 15 分）・`bds/bench/bench.mjs selftest`・`scratch selftest --real`・`skill verify` | 手元・定期 |
 
 ## 安全の床
