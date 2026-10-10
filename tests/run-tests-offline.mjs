@@ -39,7 +39,7 @@ const FAKE = `import fs from 'node:fs'; import path from 'node:path'; import { f
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), name = path.basename(fileURLToPath(import.meta.url), '.mjs').replace(/-offline$/, '');
 const LOG = process.env.LOG, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), at = (f) => path.join(TOP, f);
 fs.appendFileSync(path.join(LOG, 'order.txt'), name + '\\n');
-const me = { name, pid: process.pid, cwd: process.cwd(), top: TOP, data: fs.readFileSync(at('data.txt'), 'utf8').trim(), added: fs.existsSync(at('new.txt')), old: fs.existsSync(at('old.txt')), ignored: fs.existsSync(at('ignored.log')), wrap: process.env.FAKE_WRAP ?? null, start: Date.now() };
+const me = { name, pid: process.pid, cwd: process.cwd(), top: TOP, data: fs.readFileSync(at('data.txt'), 'utf8').trim(), added: fs.existsSync(at('new.txt')), old: fs.existsSync(at('old.txt')), ignored: fs.existsSync(at('ignored.log')), base: fs.existsSync(at('.lab-base.json')) && fs.existsSync(at('.lab/base/x.txt')), wrap: process.env.FAKE_WRAP ?? null, start: Date.now() };
 fs.writeFileSync(path.join(LOG, name + '.start'), JSON.stringify(me));
 const meet = (process.env.RENDEZVOUS ?? '').split(' ').filter(Boolean);
 if (meet.includes(name)) for (const t0 = Date.now(); !meet.every((n) => fs.existsSync(path.join(LOG, n + '.start'))); await sleep(30)) if (Date.now() - t0 > 20000) { console.log('✘ ' + name + ': alone (the others never started)'); process.exit(1); }
@@ -54,23 +54,25 @@ const NAMES = ['make', 'cli', 'guards', 'app', 'a', 'b', 'sim', 'zz'];
 const testOf = (n) => (n === 'offline' ? 'tests/offline.mjs' : `tests/${n}-offline.mjs`);
 fs.mkdirSync(path.join(LAB, 'tests'), { recursive: true });
 for (const n of [...NAMES, 'offline']) fs.writeFileSync(path.join(LAB, testOf(n)), FAKE);
-fs.writeFileSync(path.join(LAB, 'data.txt'), 'v1\n'); fs.writeFileSync(path.join(LAB, 'old.txt'), 'old\n'); fs.writeFileSync(path.join(LAB, '.gitignore'), '*.log\n');
+fs.writeFileSync(path.join(LAB, 'data.txt'), 'v1\n'); fs.writeFileSync(path.join(LAB, 'old.txt'), 'old\n'); fs.writeFileSync(path.join(LAB, '.gitignore'), '*.log\n.lab/\n.lab-base.json\n');
 fs.mkdirSync(path.join(LAB, '.github', 'workflows'), { recursive: true }); fs.writeFileSync(path.join(LAB, '.github', 'workflows', 'verify.yml'), 'name: verify\n');
 git('init', '-q'); git('add', '-A'); git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'one');
 const HEAD_DATA = git('rev-parse', 'HEAD:data.txt');
 // the work tree's changes, not committed: a changed file, a new one, a deleted one, an ignored one
 fs.writeFileSync(path.join(LAB, 'data.txt'), 'v2\n'); fs.writeFileSync(path.join(LAB, 'new.txt'), 'new\n'); fs.rmSync(path.join(LAB, 'old.txt')); fs.writeFileSync(path.join(LAB, 'ignored.log'), 'log\n');
+// the lab's starting point lab.mjs makes on its first run (ignored by git): a copy carries it, or its first `node lab.mjs` reads every file
+fs.writeFileSync(path.join(LAB, '.lab-base.json'), '{}\n'); fs.mkdirSync(path.join(LAB, '.lab', 'base'), { recursive: true }); fs.writeFileSync(path.join(LAB, '.lab', 'base', 'x.txt'), 'x\n');
 const STATUS = git('status', '--porcelain', '--ignored');
 const ISO_REAL = fs.realpathSync(ISO);
 
-await t('SERIAL tests side by side, each in a copy of its own with the changes not committed; the lab folder stays as it was; no copy stays', async () => {
+await t('SERIAL tests side by side, each in a copy of its own with the changes not committed and the lab\'s starting point (.lab-base.json, .lab/base); the lab folder stays as it was; no copy stays', async () => {
   const log = newLog();
   const res = await R.runTests([testOf('make'), testOf('cli'), testOf('a')], { cwd: LAB, jobs: 3, env: { ...process.env, LOG: log, RENDEZVOUS: 'make cli' } });
   eq(res.map((r) => [r.t, r.ok]), [[testOf('make'), true], [testOf('cli'), true], [testOf('a'), true]], JSON.stringify(res.map((r) => r.lines)));
   const [m, c, a] = ['make', 'cli', 'a'].map((n) => started(log, n));
   ok(m.top !== c.top && m.top.startsWith(ISO_REAL) && c.top.startsWith(ISO_REAL) && m.cwd === m.top && c.cwd === c.top, `own copies: ${m.top} ${c.top}`);
   eq(a.top, fs.realpathSync(LAB), 'the others in the lab folder');
-  for (const x of [m, c]) eq([x.data, x.added, x.old, x.ignored], ['v2', true, false, false], `${x.name} sees the changes, not the ignored file`);
+  for (const x of [m, c]) eq([x.data, x.added, x.old, x.ignored, x.base], ['v2', true, false, false, true], `${x.name} sees the changes, not the ignored file — but the lab's starting point`);
   ok(!fs.existsSync(path.join(LAB, '.lab-current')) && !fs.existsSync(path.join(LAB, 'runs')), 'nothing written into the lab folder');
   eq(git('status', '--porcelain', '--ignored'), STATUS, 'the lab folder as it was');
   eq([worktrees(), left()], [1, []], 'no copy stays');

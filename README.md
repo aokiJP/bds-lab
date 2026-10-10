@@ -135,7 +135,7 @@ node lab.mjs scratch gaps              # サンドボックスと実機の食い
 
 ## 品質
 
-- 27 本のオフライン試験のゲート（`node lab.mjs auto gate`。lint・コマンドの回帰・一から作る教材の検証を含む。並べて走らせて約 2 分）と、オフライン試験の全部（`node lab.mjs auto gate --all`）、push ごとの CI（全オフライン試験と ESLint）、本物の BDS での試験（`node tests/dev-bds.mjs`）。
+- 27 本のオフライン試験のゲート（`node lab.mjs auto gate`。lint・コマンドの回帰・一から作る教材の検証を含む。並べて走らせて約 2 分）と、オフライン試験の全部（`node lab.mjs auto gate --all`）、push ごとの CI（前に通ったときに読んだファイルの中身が変わった試験だけ。本物の BDS は PR の最後と既定の枝と毎晩: `common/verify-plan.mjs`）、本物の BDS での試験（`node tests/dev-bds.mjs`）。
 - AI のトークンを使うものは、明示したときだけ動きます（`--via`、自動操縦の上限。上限が読めなければ 0 として止まる）。どのコマンドも `--help` ではヘルプだけを出します。
 - 確かめていないことは「確かめていない」と書きます。
 

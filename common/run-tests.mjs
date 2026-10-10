@@ -87,6 +87,13 @@ function makeCopy(top) {
       if (st.isSymbolicLink()) fs.symlinkSync(fs.readlinkSync(from), to);
       else { fs.copyFileSync(from, to); fs.chmodSync(to, st.mode & 0o7777); }
     }
+    // the lab's starting point, which git ignores (.lab-base.json and .lab/base: lab.mjs makes them on its first run in a folder):
+    // as the lab folder has it, or the copy's first `node lab.mjs` reads every file to make its own — not what the test did there,
+    // and it would look as if the test had read the whole lab
+    for (const f of ['.lab-base.json', path.join('.lab', 'base')]) {
+      const from = path.join(top, f);
+      if (fs.existsSync(from)) fs.cpSync(from, path.join(dir, f), { recursive: true });
+    }
     return c;
   } catch {
     if (parent) dropCopy({ top, parent, dir: path.join(parent, path.basename(top)) });

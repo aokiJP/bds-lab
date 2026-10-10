@@ -70,11 +70,14 @@ ok(!badJ.length, `data: ${jsons.length} JSON files parse`, badJ.join('\n'));
   ok(!missing.length, `gate: all ${gate.length} tests exist`, missing.join(' '));
   // (.lab-github/: the same files where a lender's host carries them — GitHub starts nothing from there: common/hosts.mjs)
   const ci = files.filter((f) => /^\.(lab-)?github\/workflows\/.*\.yml$/.test(f)).map(rd).join('\n');
-  // (CI runs `auto gate --all`: every tests/*-offline.mjs and tests/offline.mjs, whatever their names — the same pattern below)
+  // (CI runs every tests/*-offline.mjs and tests/offline.mjs, whatever their names — the same pattern below: `auto gate --all`, or
+  // verify's plan, which can name each of them (common/verify-plan.mjs listUnits) to `auto gate --tests`)
   const all = /node lab\.mjs auto gate --all/.test(ci);
-  const loose = files.filter((f) => /^tests\/[\w-]+\.mjs$/.test(f) && /-offline\.mjs$|^tests\/offline\.mjs$/.test(f) && !gate.includes(f) && !ci.includes(f) && !all);
+  const { listUnits } = await import(pathToFileURL(path.join(TOP, 'common', 'verify-plan.mjs')).href);
+  const planned = /node lab\.mjs auto gate --tests "\$TESTS"/.test(ci) && /TESTS: \$\{\{ needs\.plan\.outputs\.tests \}\}/.test(ci) ? new Set(listUnits(TOP)) : new Set();
+  const loose = files.filter((f) => /^tests\/[\w-]+\.mjs$/.test(f) && /-offline\.mjs$|^tests\/offline\.mjs$/.test(f) && !gate.includes(f) && !ci.includes(f) && !all && !planned.has(f));
   ok(!loose.length, 'gate: every offline test runs in the gate or in CI (none forgotten)', loose.join(' '));
-  ok(all, 'CI: every offline test, side by side (node lab.mjs auto gate --all in .github/workflows)', '');
+  ok(all || planned.size > 0, 'CI: every offline test can run (node lab.mjs auto gate --all, or verify\'s plan naming any of them to auto gate --tests)', '');
   for (const t of ['tests/cli-offline.mjs', 'tests/scratch-offline.mjs', 'tests/lint-offline.mjs']) ok(gate.includes(t), `gate: ${t} is in it`, gate.join(' '));
 }
 

@@ -1,156 +1,250 @@
-// The verify run's plan (.github/workflows/verify.yml, its first job): which of its jobs this push needs, from what changed
-// since the last commit verify passed on. The same content is never verified twice (a pull request's head, then its merge; a run
-// a newer push cancelled is counted from the last one that passed, so nothing is left out); the real server's job (bds, ~35
-// minutes of a runner) runs only when something it runs changed; a change to the management panel alone runs the panel's own
-// tests (a few minutes) instead of every offline test (~20).
-//   node common/verify-plan.mjs   in the workflow: GITHUB_TOKEN (actions: read), GITHUB_REPOSITORY, GITHUB_API_URL,
-//                                 GITHUB_EVENT_NAME, GITHUB_EVENT_PATH, GITHUB_RUN_ATTEMPT → offline=full|panel|none, tests=…,
-//                                 shards=[1,…] nshards=n, browser=true|false, bds=true|false, bdsparts=["bench",…], addons=all|<names>,
-//                                 extra=true|false in $GITHUB_OUTPUT, the reason in $GITHUB_STEP_SUMMARY
-// By hand (workflow_dispatch) or [full ci] in the commit's title (its first line): every job and the extra ones too (macOS,
-// Endstone, LeviLamina: extra=true) — the marker only named in a commit's text starts nothing more (a macOS minute counts as
-// 10). No passed commit among the last 400, or anything it cannot read: every job, as before (not the extra ones). It never
-// fails the run itself: a plan it cannot make is the whole run.
+// The verify run's plan (.github/workflows/verify.yml, its first job) and its memory (the state job, its last): which units this
+// run needs — an offline test, a workflow step, a part of the real server — from what each one read when it last passed
+// (common/deps.mjs recorded it, common/verify-state.mjs names the contents). A unit runs again only when the content of a file
+// it read changed, when it is new or failed last time, or on another machine: nothing is verified twice (a merge of what
+// passed, a revert, a push that changed only the panel runs only what reads what changed).
+// The real server (bds:*) runs at the end of a pull request, not on each push: a commit title with [bds] (or [full ci]), by
+// hand, a push to the default branch, or the nightly run; on the other pushes the summary says what waits and how to run it.
+// Nightly (schedule): also what has not passed for STALE_DAYS, so every unit runs at least once a week. [full ci] in the title,
+// or by hand with full: everything and the extra ones (macOS, Endstone, LeviLamina). No memory yet, or one it cannot read:
+// every unit allowed. When the offline job runs at all, the offline tests that took under CHEAP_MS come along (cheap insurance
+// against what a record cannot see, a test that lists files with git).
+// The memory is the artifact verify-state (verify-state.json) of a trusted run only — a push, by hand or nightly, of this very
+// repository's verify.yml: a pull request's run can change the workflow, so its artifacts are never read.
+//   node common/verify-plan.mjs        the plan: GITHUB_TOKEN (actions: read), GITHUB_REPOSITORY, GITHUB_API_URL,
+//                                      GITHUB_EVENT_NAME, GITHUB_EVENT_PATH, GITHUB_REF_NAME → offline, tests, eslint, smoke,
+//                                      browser, bds, bdsparts, addons, extra in $GITHUB_OUTPUT; why in $GITHUB_STEP_SUMMARY
+//   node common/verify-plan.mjs --merge --out <file>   the memory: the newest trusted state and this run's (GITHUB_RUN_ID)
+//                                      verify-results-* artifacts → the new state (nothing written when one cannot be read: the
+//                                      state before stays the newest)
+// It never fails the run over its memory: a plan it cannot make is every unit allowed. Tested by tests/verify-plan-offline.mjs.
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { plan as panelPlan, ALL as PANEL_TESTS } from './panel.mjs';
+import { policy } from './auto-guard.mjs';
+import { STATE_VERSION, treeAt, valuesOf, envKey } from './verify-state.mjs';
+import { listEntries, readEntry } from '../sandbox-be/src/colony/zip.js';
 
 const TOP = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const BROWSER = 'tests/panel-browser.mjs';
-const DEPTH = 400;
+export const STALE_DAYS = 7;
+export const CHEAP_MS = 15000;
+export const KEEP_DAYS = 60;
+// the workflow's steps that are units of their own (the offline job runs them), and the real server's parts (each a job)
+export const STEPS = ['step:eslint', 'step:github-smoke', 'tests/panel-browser.mjs'];
+export const BDS_PARTS = ['bench', 'scratch', 'dev', 'play'];
+const TRUSTED = new Set(['push', 'workflow_dispatch', 'schedule']);
+const isBds = (u) => u.startsWith('bds:');
+const isTest = (u) => !isBds(u) && !STEPS.includes(u);
+const msg = (e) => String(e?.message ?? e).replace(/\s+/g, ' ').slice(0, 200);
 
-// (no test reads these: the autopilot's memory — already left out of the trigger — and the change log, which only `share`
-// writes)
-const NOTHING = /^auto\/|^CHANGES\.md$/;
-// (what the real server's job never runs or reads: the panel and its sign-in service, the docs, the AI's and fanout's tools,
-// the other workflows, the lenders' template, the offline and browser tests, this plan and the offline tests' runner)
-const BDS_FREE = /^(panel|auth|docs|\.claude|\.fanout|\.devcontainer|host\/template)\/|^\.github\/(?!workflows\/verify\.yml$)|^[^/]+\.md$|^tests\/([\w-]+-(offline|browser)|offline|eslint\.config)\.mjs$|^common\/(verify-plan|run-tests)\.mjs$/;
-// (code that loads a panel file and is tested by the panel's own tests: the CLI behind schedule.yml and unit.yml, panel check;
-// this plan and its test only name panel files)
-const PANEL_SIDE = (f) => f.startsWith('panel/') || PANEL_TESTS.includes(f) || /^common\/(panel|schedule|unitci|verify-plan)\.mjs$|^tests\/verify-plan-offline\.mjs$/.test(f);
-// (the real server's work, each part its own job side by side: the bench's selftest, the from-scratch lessons, the AI tools'
-// story with a real client (dev-bds, play-bds), every addon's tests and pack. An addon's own files alone need only its tests:
-// none of the other parts reads a unit kept in bds/addons — they make their own)
-export const BDS_PARTS = ['bench', 'scratch', 'dev', 'addons'];
-// (every offline test: on this many runners, each its part — `auto gate --all --shard i/n`. One: a runner's own cores already
-// run them side by side, and more runners cost more minutes than they save in waiting — measured 2026-10-10, one runner 16–19
-// minutes, four 27 minutes together for about 5 minutes less wait. Raise it only when the wait matters more than the minutes,
-// and give common/run-tests.mjs TIME the tests' times first: without them the split is by count)
-export const SHARDS = 1;
-const ADDON = /^bds\/addons\/([A-Za-z0-9_-]+)\//;
-const PANEL_PATH = /panel\/[A-Za-z0-9_./-]+\.(?:mjs|js|json)/g;
-const PANEL_PATH_ERE = 'panel/[A-Za-z0-9_./-]+\\.(mjs|js|json)';   // (the same for git grep -E: no (?:)
-
-/** what one changed file needs (pure) → 'nothing' | 'panel' (the panel's own tests) | 'offline' (every offline test) | 'all'
- *  (and the real server's job too). external: panel files code outside the panel loads (externalPanel) — those are 'all' */
-export function need(f, external = new Set()) {
-  if (NOTHING.test(f)) return 'nothing';
-  if (f.startsWith('panel/')) return external.has(f) ? 'all' : 'panel';
-  if (PANEL_TESTS.includes(f)) return 'panel';
-  return BDS_FREE.test(f) ? 'offline' : 'all';
+/** the checkout's units: the offline tests `auto gate --all` runs (in its order), the steps, the real server's parts and one
+ *  per addon with a pack (a name the workflow can put on a command line: letters, digits, _ and -) */
+export function listUnits(root = TOP) {
+  const pol = policy(root);
+  const all = fs.readdirSync(path.join(root, 'tests')).filter((f) => /^(offline|[\w-]+-offline)\.mjs$/.test(f)).map((f) => `tests/${f}`);
+  const tests = [...new Set([...pol.gate, ...all.filter((t) => !pol.gate.includes(t)).sort()])].filter((t) => fs.existsSync(path.join(root, t)));
+  let addons = [];
+  try { addons = fs.readdirSync(path.join(root, 'bds', 'addons')).filter((n) => /^[A-Za-z0-9_-]+$/.test(n) && fs.existsSync(path.join(root, 'bds', 'addons', n, 'bp', 'manifest.json'))).sort(); } catch { /* none */ }
+  return [...tests, ...STEPS, ...BDS_PARTS.map((p) => `bds:${p}`), ...addons.map((n) => `bds:addon:${n}`)];
 }
 
-/** everything asked for (pure): by hand, or [full ci] in the commit's title — not anywhere in its text */
-export const fullAsked = (event, message) => event === 'workflow_dispatch' || String(message ?? '').split('\n')[0].includes('[full ci]');
-
-const list = (fs0, n = 3) => `${fs0.slice(0, n).join('、')}${fs0.length > n ? ` ほか ${fs0.length - n} 個` : ''}`;
-
-/** the plan (pure) → { offline: 'full'|'panel'|'none', shards (runners for it), tests: [the panel's tests, the browser apart], browser, bds,
- *  bdsParts: [the real server's parts to run], addons: 'all' | [the addons whose files alone changed], why }.
- *  full: by hand or [full ci]; base: the last commit verify passed on (null: none found); files: changed since base;
- *  present: is this addon still there (one deleted is not tested) */
-export function planVerify({ full = false, base = null, files = [], external = new Set(), reason = '', present = () => true } = {}) {
-  if (full || !base) return { offline: 'full', shards: SHARDS, tests: [], browser: true, bds: true, bdsParts: BDS_PARTS, addons: 'all', why: reason || (full ? '手で始めた・[full ci]: すべての試験' : `前に通ったコミットが（最近の ${DEPTH} 個に）見つからない: すべての試験`) };
-  const by = { nothing: [], panel: [], offline: [], all: [] };
-  for (const f of files) by[need(f, external)].push(f);
-  const offline = by.all.length || by.offline.length ? 'full' : by.panel.length ? 'panel' : 'none';
-  const p = offline === 'panel' ? panelPlan(by.panel).tests : [];
-  const tests = p.filter((t) => t !== BROWSER), browser = offline === 'full' || p.includes(BROWSER);
-  // (the real server: only the addons whose own files alone changed — or every part, when anything else it uses did)
-  const addonOnly = by.all.length > 0 && by.all.every((f) => ADDON.test(f));
-  const names = addonOnly ? [...new Set(by.all.map((f) => ADDON.exec(f)[1]))].filter((n) => present(n)).sort() : [];
-  const bdsParts = !by.all.length ? [] : addonOnly ? (names.length ? ['addons'] : []) : BDS_PARTS, bds = bdsParts.length > 0;
-  const head = files.length ? `前に通った ${base.slice(0, 7)} から ${files.length} 個のファイルが変わった` : `前に通った ${base.slice(0, 7)} と同じ中身`;
-  const off = offline === 'full' ? `すべて（${list([...by.all, ...by.offline])}）`
-    : offline === 'panel' ? `パネルの分だけ（${tests.length} 本${browser ? '・本物のブラウザ' : ''}: ${list(by.panel)}）` : '要らない';
-  const real = !by.all.length ? '流さない（BDS の試験が使うものは変わっていない）'
-    : addonOnly ? (names.length ? `アドオン ${list(names, 5)} の試験だけ（ラボの本体は変わっていない）` : '流さない（変わったアドオンはもうない）')
-    : `すべて（${list(by.all)}）`;
-  return { offline, shards: offline === 'full' ? SHARDS : 1, tests, browser, bds, bdsParts, addons: addonOnly ? names : 'all', why: `${head}。オフラインの試験: ${off}。本物の BDS: ${real}` };
+/** every key the state's units read → its value in root's HEAD */
+export function valuesNow(state, root = TOP) {
+  const keys = new Set();
+  for (const e of Object.values(state?.units ?? {})) if (e?.deps && typeof e.deps === 'object') for (const k of Object.keys(e.deps)) keys.add(k);
+  return valuesOf([...keys], treeAt(root, 'HEAD'));
 }
 
-const git = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 256 << 20 });
-  if (r.status !== 0) throw new Error(`git ${args[0]}: ${String(r.stderr || r.error?.message || r.status).trim().split('\n')[0]}`);
-  return r.stdout;
-};
-
-/** the panel files that code outside the panel loads, and what they import inside the panel, again and again → Set (reads the
- *  checkout: git grep). A path in a comment line or a .md file is not a load; one in a line of code always is (a string to
- *  load later, too) */
-export function externalPanel(cwd = TOP) {
-  const r = spawnSync('git', ['grep', '-n', '-I', '-E', PANEL_PATH_ERE], { cwd, encoding: 'utf8', maxBuffer: 256 << 20 });
-  if (r.status > 1 || r.error) throw new Error(`git grep: ${String(r.stderr || r.error?.message).trim().split('\n')[0]}`);
-  const found = new Set();
-  for (const line of (r.stdout ?? '').split('\n')) {
-    const m = /^([^:]+):\d+:(.*)$/.exec(line);
-    if (!m || m[1].endsWith('.md') || PANEL_SIDE(m[1]) || /^\s*(\/\/|\/?\*|#)/.test(m[2])) continue;
-    for (const [p] of m[2].matchAll(PANEL_PATH)) found.add(path.posix.normalize(p));
+/** which units run and why (pure): not in the state (new, or it failed last time), passed on another machine, a file it read
+ *  changed (up to 3 named), or — staleDays — not passed for that long; when the offline job runs at all, the offline tests that
+ *  took under cheapMs come along → Map(unit → why) in the units' order */
+export function select(state, units, values, { env = envKey(), now = Date.now(), staleDays = 0, cheapMs = CHEAP_MS } = {}) {
+  const had = state?.units && typeof state.units === 'object' ? state.units : {}, why = new Map();
+  for (const u of units) {
+    const e = Object.hasOwn(had, u) ? had[u] : null;
+    if (!e) { why.set(u, '前に通った記録がない（新しい・前に落ちた）'); continue; }
+    if (typeof e !== 'object' || !e.deps || typeof e.deps !== 'object') { why.set(u, '前の記録が読めない'); continue; }
+    if (e.env !== env) { why.set(u, `別の環境で通った記録（${e.env ?? '不明'}）`); continue; }
+    const changed = Object.keys(e.deps).filter((k) => e.deps[k] !== values[k]);
+    if (changed.length) { why.set(u, `変わった: ${changed.slice(0, 3).join('、')}${changed.length > 3 ? ` ほか ${changed.length - 3} 個` : ''}`); continue; }
+    const at = Date.parse(e.at ?? '');
+    if (staleDays > 0 && !(now - at <= staleDays * 864e5)) why.set(u, `${staleDays} 日より前に通ったきり`);
   }
-  const todo = [...found];
-  while (todo.length) {
-    const f = todo.pop();
-    let text = '';
-    try { text = fs.readFileSync(path.join(cwd, f), 'utf8'); } catch { continue; }
-    for (const m of text.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"](\.{1,2}\/[^'"]+)['"]/g)) {
-      const g = path.posix.normalize(path.posix.join(path.posix.dirname(f), m[1]));
-      if (g.startsWith('panel/') && !found.has(g)) { found.add(g); todo.push(g); }
+  if ([...why.keys()].some((u) => !isBds(u))) {
+    for (const u of units) {
+      const ms = had[u]?.ms;
+      if (!why.has(u) && isTest(u) && Number.isFinite(ms) && ms < cheapMs) why.set(u, `安いので一緒に（前に ${Math.round(ms / 1000)} 秒）`);
     }
   }
-  return found;
+  return new Map(units.filter((u) => why.has(u)).map((u) => [u, why.get(u)]));
 }
 
-/** the commits verify passed on (its runs of a push or by hand: those tested the very commit) → Set of shas */
-export async function passedShas({ api, repo, token }, fetchImpl = fetch) {
-  const r = await fetchImpl(`${api}/repos/${repo}/actions/workflows/verify.yml/runs?status=success&per_page=100`, {
-    headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'bds-lab' },
-  });
+/** the plan (pure) → { offline, tests, eslint, smoke, browser, bds, bdsParts, addons, extra, run, waiting, skipped }:
+ *  full — everything and the extra ones; no state — every unit allowed; the real server's units only when bdsAllowed (or full),
+ *  the others wait (run and waiting: Map(unit → why)) */
+export function planVerify({ units = [], state = null, values = {}, env = envKey(), now = Date.now(), full = false, bdsAllowed = false, staleDays = 0, reason = '' } = {}) {
+  const picked = full || !state ? new Map(units.map((u) => [u, full ? '手で full・[full ci]: すべて' : reason || '前に通った記録（状態）がない: すべて']))
+    : select(state, units, values, { env, now, staleDays });
+  const run = new Map(), waiting = new Map();
+  for (const [u, why] of picked) (isBds(u) && !(full || bdsAllowed) ? waiting : run).set(u, why);
+  const tests = [...run.keys()].filter(isTest);
+  const addons = [...run.keys()].filter((u) => u.startsWith('bds:addon:')).map((u) => u.slice('bds:addon:'.length));
+  const bdsParts = [...BDS_PARTS.filter((p) => run.has(`bds:${p}`)), ...(addons.length ? ['addons'] : [])];
+  const eslint = run.has('step:eslint'), smoke = run.has('step:github-smoke'), browser = run.has('tests/panel-browser.mjs');
+  return { offline: tests.length > 0 || eslint || smoke || browser, tests, eslint, smoke, browser, bds: bdsParts.length > 0, bdsParts, addons, extra: !!full, run, waiting, skipped: units.length - picked.size };
+}
+
+/** what the run asks for (pure): the event's name, its payload, the branch → { full, bds, staleDays }. [full ci] / [bds] count in
+ *  the head commit's title (its first line) only; by hand: the plan with the real server, full = everything */
+export function askedOf(name, ev = {}, ref = '') {
+  const title = String(ev?.head_commit?.message ?? '').split('\n')[0];
+  const full = title.includes('[full ci]') || (name === 'workflow_dispatch' && String(ev?.inputs?.full) === 'true');
+  const onDefault = name === 'push' && !!ev?.repository?.default_branch && ref === ev.repository.default_branch;
+  return { full, bds: full || title.includes('[bds]') || name === 'workflow_dispatch' || name === 'schedule' || onDefault, staleDays: name === 'schedule' ? STALE_DAYS : 0 };
+}
+
+/** the plan's outputs for $GITHUB_OUTPUT (pure; a matrix of nothing is an error even for a job that will not run) */
+export const outputs = (p) => [`offline=${p.offline}`, `tests=${p.tests.join(' ')}`, `eslint=${p.eslint}`, `smoke=${p.smoke}`, `browser=${p.browser}`, `bds=${p.bds}`,
+  `bdsparts=${JSON.stringify(p.bdsParts.length ? p.bdsParts : ['none'])}`, `addons=${p.addons.join(' ')}`, `extra=${p.extra}`];
+
+/** the plan in words (pure): where its memory came from, what runs and why, how many do not, what waits for the real server */
+export function summary(p, from = null) {
+  const L = [];
+  L.push(`記録: ${from ? `実行 #${from.number ?? from.id}（${String(from.sha ?? '').slice(0, 7)}${from.branch ? `・${from.branch}` : ''}${from.at ? `・${String(from.at).slice(0, 16).replace('T', ' ')} UTC` : ''}）のもの` : 'なし（初めて・読めない）'}`);
+  const what = [];
+  if (p.tests.length) what.push(`オフラインの試験 ${p.tests.length} 本`);
+  if (p.eslint) what.push('ESLint');
+  if (p.smoke) what.push('GitHub の流れ');
+  if (p.browser) what.push('本物のブラウザ');
+  if (p.bds) what.push(`本物の BDS（${[...BDS_PARTS.filter((x) => p.bdsParts.includes(x)), ...(p.addons.length ? [`アドオン ${p.addons.join('・')}`] : [])].join('・')}）`);
+  L.push(`流す: ${p.run.size ? `${p.run.size} 個 — ${what.join('・')}` : 'なし'}`);
+  for (const [u, why] of [...p.run].slice(0, 40)) L.push(`- ${u}: ${why}`);
+  if (p.run.size > 40) L.push(`- ほか ${p.run.size - 40} 個`);
+  L.push(`流さない: ${p.skipped} 個（前に通ったときに読んだファイルの中身が変わっていない）`);
+  if (p.waiting.size) {
+    L.push(`本物の BDS は PR の最後に: ${p.waiting.size} 個が待っている。流すには commit の題（1 行目）に [bds] を入れるか、Actions の verify を手で（Run workflow）`);
+    for (const [u, why] of [...p.waiting].slice(0, 12)) L.push(`- ${u}: ${why}`);
+    if (p.waiting.size > 12) L.push(`- ほか ${p.waiting.size - 12} 個`);
+  }
+  if (!p.extra) L.push('すべて（macOS・Endstone・LeviLamina も）流すには: Actions の verify を手で full にするか、commit の題に [full ci]');
+  return L;
+}
+
+// ---------- the memory on GitHub: artifacts ----------
+const headers = (token) => ({ authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'bds-lab' });
+async function getJson(fetchImpl, url, token) {
+  const r = await fetchImpl(url, { headers: headers(token) });
   if (!r.ok) throw new Error(`GitHub が ${r.status} で断りました`);
-  const j = await r.json();
-  return new Set((j.workflow_runs ?? []).filter((x) => x.event === 'push' || x.event === 'workflow_dispatch').map((x) => x.head_sha).filter(Boolean));
+  return r.json();
+}
+async function getBytes(fetchImpl, url, token) {
+  const r = await fetchImpl(url, { headers: headers(token) });
+  if (!r.ok) throw new Error(`GitHub が ${r.status} で断りました`);
+  return Buffer.from(await r.arrayBuffer());
+}
+/** the files of an artifact's zip whose names end with ext → [{ name, text }] (pure) */
+export function zipTexts(buf, ext) {
+  return listEntries(buf).filter((e) => !e.dir && e.name.endsWith(ext)).map((e) => ({ name: e.name, text: readEntry(buf, e).toString('utf8') }));
 }
 
-/** the plan for the checkout's HEAD → the plan (and $GITHUB_OUTPUT, $GITHUB_STEP_SUMMARY written when set) */
-export async function main({ env = process.env, cwd = TOP, fetchImpl = fetch, out = console.log } = {}) {
-  let p;
-  try {
-    let message = '';
-    try { message = JSON.parse(fs.readFileSync(env.GITHUB_EVENT_PATH, 'utf8'))?.head_commit?.message ?? ''; } catch { /* no event: none */ }
-    const full = fullAsked(env.GITHUB_EVENT_NAME, message);
-    if (full) p = { ...planVerify({ full }), extra: true };
-    else {
-      const passed = await passedShas({ api: env.GITHUB_API_URL || 'https://api.github.com', repo: env.GITHUB_REPOSITORY, token: env.GITHUB_TOKEN }, fetchImpl);
-      // (a re-run is asked for: HEAD itself is not its own base)
-      const shas = git(['rev-list', `--max-count=${DEPTH}`, 'HEAD'], cwd).split('\n').filter(Boolean).slice(Number(env.GITHUB_RUN_ATTEMPT) > 1 ? 1 : 0);
-      const base = shas.find((s) => passed.has(s)) ?? null;
-      const files = base ? git(['diff', '--name-only', '--no-renames', base, 'HEAD'], cwd).split('\n').filter(Boolean) : [];
-      p = planVerify({ base, files, external: files.some((f) => f.startsWith('panel/')) ? externalPanel(cwd) : new Set(),
-        present: (n) => fs.existsSync(path.join(cwd, 'bds', 'addons', n, 'bp', 'manifest.json')) });
-    }
-  } catch (e) {
-    p = planVerify({ full: true, reason: `計画を作れない（${String(e.message).replace(/\s+/g, ' ').slice(0, 200)}）: すべての試験` });
+/** a run whose artifacts may be believed (pure): this repository's own verify.yml, run by a push, by hand or nightly — never a
+ *  pull request (it can change the workflow) and never another repository's code */
+export const trusted = (run) => !!run && TRUSTED.has(run.event) && /^\.github\/workflows\/verify\.yml(@|$)/.test(String(run.path ?? ''))
+  && run.repository?.id != null && run.head_repository?.id === run.repository.id;
+
+/** the newest trusted, readable verify-state → { state, run: { id, number, sha, branch, at } } or null; GitHub refusing the
+ *  list throws (a refused or broken artifact: the next older one) */
+export async function loadState({ api, repo, token }, fetchImpl = fetch) {
+  const j = await getJson(fetchImpl, `${api}/repos/${repo}/actions/artifacts?name=verify-state&per_page=30`, token);
+  const arts = (j?.artifacts ?? []).filter((a) => a?.name === 'verify-state' && !a.expired && a.workflow_run?.id != null
+    && a.workflow_run.repository_id != null && a.workflow_run.head_repository_id === a.workflow_run.repository_id)
+    .sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')));
+  for (const a of arts.slice(0, 10)) {
+    try {
+      const run = await getJson(fetchImpl, `${api}/repos/${repo}/actions/runs/${a.workflow_run.id}`, token);
+      if (!trusted(run)) continue;
+      const file = zipTexts(await getBytes(fetchImpl, a.archive_download_url, token), '.json').find((x) => path.posix.basename(x.name) === 'verify-state.json');
+      const s = file ? JSON.parse(file.text) : null;
+      if (s?.v === STATE_VERSION && s.units && typeof s.units === 'object' && !Array.isArray(s.units)) {
+        return { state: s, run: { id: run.id, number: run.run_number, sha: run.head_sha, branch: run.head_branch, at: a.created_at } };
+      }
+    } catch { /* this one cannot be read: an older one */ }
   }
-  p.extra = p.extra === true;
-  // (a matrix of nothing is an error even for a job that will not run: a skipped job's list is never empty)
-  const lines = [`offline=${p.offline}`, `shards=${JSON.stringify(Array.from({ length: p.shards }, (_, k) => k + 1))}`, `nshards=${p.shards}`,
-    `tests=${p.tests.join(' ')}`, `browser=${p.browser}`, `bds=${p.bds}`, `bdsparts=${JSON.stringify(p.bdsParts.length ? p.bdsParts : ['none'])}`,
-    `addons=${p.addons === 'all' ? 'all' : p.addons.join(' ')}`, `extra=${p.extra}`];
+  return null;
+}
+
+/** JSON lines → the results in them, a broken line left out (pure) */
+export function parseResults(text) {
+  const rows = [];
+  for (const l of String(text).split('\n')) {
+    if (!l.trim()) continue;
+    try { const r = JSON.parse(l); if (r && typeof r.unit === 'string' && typeof r.ok === 'boolean') rows.push(r); } catch { /* a line cut short */ }
+  }
+  return rows;
+}
+
+/** this run's results: its artifacts named verify-results-*, every .jsonl in them */
+export async function runResults({ api, repo, token, runId }, fetchImpl = fetch) {
+  const j = await getJson(fetchImpl, `${api}/repos/${repo}/actions/runs/${runId}/artifacts?per_page=100`, token);
+  const rows = [];
+  for (const a of (j?.artifacts ?? []).filter((x) => String(x?.name ?? '').startsWith('verify-results-') && !x.expired)) {
+    for (const f of zipTexts(await getBytes(fetchImpl, a.archive_download_url, token), '.jsonl')) rows.push(...parseResults(f.text));
+  }
+  return rows;
+}
+
+/** the state after a run (pure): a unit that passed with what it read known → its entry; one that failed, or whose reads are not
+ *  known → gone (it runs next time); the rest as they were, but none older than keepDays */
+export function mergeState(prev, results, { now = Date.now(), keepDays = KEEP_DAYS } = {}) {
+  const at = new Date(now).toISOString(), units = {};
+  const before = prev?.v === STATE_VERSION && prev.units && typeof prev.units === 'object' ? prev.units : {};
+  for (const [u, e] of Object.entries(before)) if (e && typeof e === 'object' && now - Date.parse(e.at ?? '') <= keepDays * 864e5) units[u] = e;
+  for (const r of results ?? []) {
+    if (!r || typeof r.unit !== 'string') continue;
+    if (r.ok === true && r.deps && typeof r.deps === 'object' && !Array.isArray(r.deps)) units[r.unit] = { deps: r.deps, ms: r.ms, sha: r.sha, at, env: r.env };
+    else delete units[r.unit];
+  }
+  return { v: STATE_VERSION, at, units };
+}
+
+function readEvent(file) { try { return JSON.parse(fs.readFileSync(file, 'utf8')) ?? {}; } catch { return {}; } }
+
+/** --merge: the new state into --out (the state job) */
+async function merge({ gh, env, fetchImpl, out, file }) {
+  if (!file) { out('使い方: node common/verify-plan.mjs --merge --out <file>'); process.exitCode = 2; return null; }
+  let prev = null, rows = [];
+  try { prev = await loadState(gh, fetchImpl); } catch (e) { out(`W 前の記録を読めない（${msg(e)}）: 新しい記録は書かない（前のものが残る）`); return null; }
+  try { rows = await runResults({ ...gh, runId: env.GITHUB_RUN_ID }, fetchImpl); } catch (e) { out(`W この実行の結果を読めない（${msg(e)}）: 新しい記録は書かない（前のものが残る）`); return null; }
+  const next = mergeState(prev?.state ?? null, rows);
+  fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(next));
+  const ok = rows.filter((r) => r.ok === true && r.deps).length, bad = rows.filter((r) => r.ok !== true).length, unknown = rows.length - ok - bad;
+  const line = `記録: 前の ${prev ? `#${prev.run.number ?? prev.run.id}（${Object.keys(prev.state.units).length} 個）` : '記録なし'} + この実行の結果 ${rows.length} 個（通った ${ok}・落ちた ${bad}${unknown ? `・読んだものが分からない ${unknown}` : ''}）→ ${Object.keys(next.units).length} 個`;
+  out(line);
+  if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `### verify の記録\n${line}\n`);
+  return next;
+}
+
+/** the plan for the checkout's HEAD (and $GITHUB_OUTPUT, $GITHUB_STEP_SUMMARY written when set); --merge: the state job */
+export async function main({ env = process.env, cwd = TOP, fetchImpl = fetch, out = console.log, argv = process.argv.slice(2) } = {}) {
+  const gh = { api: env.GITHUB_API_URL || 'https://api.github.com', repo: env.GITHUB_REPOSITORY, token: env.GITHUB_TOKEN };
+  if (argv.includes('--merge')) { const i = argv.indexOf('--out'); return merge({ gh, env, fetchImpl, out, file: i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : null }); }
+  const ask = askedOf(env.GITHUB_EVENT_NAME ?? '', readEvent(env.GITHUB_EVENT_PATH), env.GITHUB_REF_NAME ?? '');
+  const units = listUnits(cwd);
+  let p, from = null;
+  try {
+    const loaded = ask.full ? null : await loadState(gh, fetchImpl);
+    from = loaded?.run ?? null;
+    p = planVerify({ units, state: loaded?.state ?? null, values: loaded ? valuesNow(loaded.state, cwd) : {}, full: ask.full, bdsAllowed: ask.bds, staleDays: ask.staleDays });
+  } catch (e) {
+    from = null;
+    p = planVerify({ units, state: null, bdsAllowed: ask.bds, reason: `計画を作れない（${msg(e)}）: すべて` });
+  }
+  const lines = outputs(p), text = summary(p, from);
   for (const l of lines) out(l);
-  out(p.why);
+  for (const l of text) out(l);
   if (env.GITHUB_OUTPUT) fs.appendFileSync(env.GITHUB_OUTPUT, lines.join('\n') + '\n');
-  if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `### verify の計画\n${p.why}\n\nすべて（macOS・Endstone・LeviLamina も）流すには: Actions の verify を手で（Run workflow）か、commit の題（1 行目）に \`[full ci]\`\n`);
+  if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `### verify の計画\n${text.join('\n')}\n`);
   return p;
 }
 

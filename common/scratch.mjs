@@ -13,13 +13,14 @@
 //   scratch gaps [--backlog]          where the sandbox and the real BDS disagreed; --backlog files them in auto/BACKLOG.md
 //   scratch probe "<code>" [--rule "<what it shows>" --skill <name>]   the same TypeScript in the sandbox (ts try) and the
 //                                     live world (ts, after `up`): AGREE / DIFFER; agreeing + --rule → a candidate rule
-//   scratch selftest [--real]         the reference solution passes every lesson and the empty template fails (sandbox; --real
-//                                     the real BDS too): the lessons themselves are proven before anyone practises on them
+//   scratch selftest [--real] [--jobs n]   the reference solution passes every lesson and the empty template fails (sandbox;
+//                                     --real the real BDS too): the lessons themselves are proven before anyone practises on them.
+//                                     --jobs n: n lessons at once, each on its own copies of the two units (the lines in order)
 // State (this machine's experience, never shipped): bds/.lab/scratch.jsonl (checks), scratch-gaps.jsonl, probes.jsonl.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const TOP = process.env.LAB_SCRATCH_ROOT || path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -53,6 +54,19 @@ function stateHash(dir) {
 function runLab(args, env = {}, timeout = 1800000) {
   const r = spawnSync(process.execPath, [path.join(TOP, 'lab.mjs'), ...args], { cwd: TOP, encoding: 'utf8', maxBuffer: 256e6, timeout, env: { ...process.env, LAB_NOTRACE: '1', FORCE_COLOR: '0', ...env } });
   return { code: r.status, text: ((r.stdout ?? '') + (r.stderr ?? '')).trim() };
+}
+// the same without waiting for it (selftest --jobs: several lessons at once); a run past its time is stopped (code null)
+function runLabAsync(args, env = {}, timeout = 1800000) {
+  return new Promise((res) => {
+    let text = '', done = false;
+    const c = spawn(process.execPath, [path.join(TOP, 'lab.mjs'), ...args], { cwd: TOP, env: { ...process.env, LAB_NOTRACE: '1', FORCE_COLOR: '0', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const add = (d) => { text += d; if (text.length > 256e6) text = text.slice(-128e6); };
+    c.stdout.on('data', add); c.stderr.on('data', add);
+    const kill = setTimeout(() => { try { c.kill('SIGKILL'); } catch { /* gone */ } }, timeout);
+    const end = (code) => { if (done) return; done = true; clearTimeout(kill); res({ code, text: text.trim() }); };
+    c.on('error', (e) => { text += `\n${e.message}`; end(null); });
+    c.on('close', (code) => end(code));
+  });
 }
 /** status of every lesson from the log: { id: { sim, real, attempts, firstReal } } */
 export function progress(rows = readRows(LOG())) {
@@ -120,23 +134,38 @@ function parseReal(text) {
   const m = /^(PASS|FAIL) (\d+)\/(\d+)/m.exec(text);
   return { secs, verdict: m ? m[1] : 'FAIL', passed: m ? Number(m[2]) : 0, total: m ? Number(m[3]) : 0 };
 }
-export function runHidden(l, unit, real, out = () => {}) {
+// a lesson's hidden tests as this call's own file (several at once in one process: selftest --jobs), and how each run is read
+let hiddenN = 0;
+function hiddenFile(l) {
   fs.mkdirSync(STATE(), { recursive: true });
-  const f = path.join(STATE(), `scratch-hidden-${process.pid}.txt`);
+  const f = path.join(STATE(), `scratch-hidden-${process.pid}-${++hiddenN}.txt`);
   fs.writeFileSync(f, hiddenText(l));
+  return f;
+}
+const REAL_ENV = { LAB_SECTIONS: '1', LAB_NO_LASTFAIL: '1' };
+const simRead = (r) => { const p = parseSim(r.text); return p ? { ...p, text: r.text } : { verdict: 'ERROR', secs: [], text: r.text }; };
+// (a clean lesson that passed: its check must print no E/W line either)
+function checkRead(p, c) {
+  const w = c.text.split('\n').filter((x) => /^[EW] /.test(x));
+  if (c.code !== 0 || w.length) { p.verdict = 'FAIL'; p.secs.push({ title: 'check: no E/W lines', status: 'FAIL', why: w.slice(0, 3) }); }
+  return p;
+}
+export function runHidden(l, unit, real, out = () => {}) {
+  const f = hiddenFile(l);
   try {
-    if (!real) {
-      const r = runLab(['sim', '-a', unit, '--tests', f, '--json'], {}, 600000);
-      const p = parseSim(r.text);
-      if (!p) return { verdict: 'ERROR', secs: [], text: r.text };
-      return { ...p, text: r.text };
-    }
-    const r = runLab([l.lab, 'test', f, '-a', unit], { LAB_SECTIONS: '1', LAB_NO_LASTFAIL: '1' });
-    const p = parseReal(r.text);
-    if (l.clean && p.verdict === 'PASS') {
-      const c = runLab([l.lab, 'check', '-a', unit]), w = c.text.split('\n').filter((x) => /^[EW] /.test(x));
-      if (c.code !== 0 || w.length) { p.verdict = 'FAIL'; p.secs.push({ title: 'check: no E/W lines', status: 'FAIL', why: w.slice(0, 3) }); }
-    }
+    if (!real) return simRead(runLab(['sim', '-a', unit, '--tests', f, '--json'], {}, 600000));
+    const r = runLab([l.lab, 'test', f, '-a', unit], REAL_ENV), p = parseReal(r.text);
+    if (l.clean && p.verdict === 'PASS') checkRead(p, runLab([l.lab, 'check', '-a', unit]));
+    return { ...p, text: r.text };
+  } finally { fs.rmSync(f, { force: true }); }
+}
+/** runHidden without waiting (selftest --jobs) */
+export async function runHiddenAsync(l, unit, real) {
+  const f = hiddenFile(l);
+  try {
+    if (!real) return simRead(await runLabAsync(['sim', '-a', unit, '--tests', f, '--json'], {}, 600000));
+    const r = await runLabAsync([l.lab, 'test', f, '-a', unit], REAL_ENV), p = parseReal(r.text);
+    if (l.clean && p.verdict === 'PASS') checkRead(p, await runLabAsync([l.lab, 'check', '-a', unit]));
     return { ...p, text: r.text };
   } finally { fs.rmSync(f, { force: true }); }
 }
@@ -238,11 +267,22 @@ async function probe(args, out) {
 
 // ---------- selftest: the lessons are sound before anyone practises on them ----------
 async function selftest(args, out) {
-  const real = args.includes('--real'), only = pos(args);
+  const real = args.includes('--real'), only = pos(args, ['-a', '--level', '--rule', '--skill', '--jobs']), jobs = Math.max(1, Math.floor(Number(val(args, '--jobs', 1))) || 1);
   const { SOLUTION, SOLUTION_ADD, SOLUTION_JSON } = await import(pathToFileURL(path.join(TOP, 'bds', 'bench', 'solution.mjs')).href);
   const cur = path.join(TOP, 'bds', '.lab', 'addon'), cur0 = fs.existsSync(cur) ? fs.readFileSync(cur, 'utf8') : null;
   const ref = 'zz_scratch_ref', empty = 'zz_scratch_empty', ad = (u) => path.join(TOP, 'bds', 'addons', u);
   const ls = lessons().filter((l) => l.lab === 'bds' && (!only.length || only.includes(l.id)));
+  // the reference must pass where it can be judged (a sandbox SKIP/UNSURE says the sandbox cannot tell); the empty one must not
+  // → { good, lines } of one lesson
+  const judge = (l, rs, es, rr, er) => {
+    const good = rs.verdict !== 'FAIL' && es.verdict !== 'PASS' && (!real || (rr.verdict === 'PASS' && er.verdict !== 'PASS')), lines = [];
+    lines.push(`${good ? '✔' : '✘'} ${l.id.padEnd(10)} ${rs.verdict.padEnd(6)}${real ? ' / ' + rr.verdict.padEnd(4) : ''}          ${es.verdict.padEnd(6)}${real ? ' / ' + er.verdict : ''}`);
+    if (rs.verdict === 'FAIL') rs.secs.filter((s) => s.status === 'FAIL').forEach((s) => lines.push(`    sandbox ✘ ${s.title}: ${cut(s.why.join(' | '), 200)}`));
+    if (real && rr.verdict !== 'PASS') { rr.secs.filter((s) => s.status === 'FAIL').forEach((s) => lines.push(`    BDS ✘ ${s.title}: ${cut(s.why.join(' | '), 200)}`)); if (!rr.secs.length) lines.push('    ' + cut(rr.text.split('\n').filter((x) => /^(E |ERR|FAIL|✘)/.test(x)).slice(0, 4).join(' | '), 300)); }
+    return { good, lines };
+  };
+  // (--jobs: each slot its own copies of the two units, made once the two are ready)
+  const slots = [];
   let ok = true;
   try {
     for (const u of [ref, empty]) fs.rmSync(ad(u), { recursive: true, force: true });
@@ -251,18 +291,35 @@ async function selftest(args, out) {
     for (const [f, body] of Object.entries(SOLUTION)) { if (body === null) continue; fs.mkdirSync(path.dirname(path.join(ad(ref), f)), { recursive: true }); fs.writeFileSync(path.join(ad(ref), f), body); }
     for (const [f, fn] of Object.entries(SOLUTION_JSON)) { const p = path.join(ad(ref), f), j = JSON.parse(fs.readFileSync(p, 'utf8')); fn(j); fs.writeFileSync(p, JSON.stringify(j, null, 2)); }
     out(`lesson      reference (sandbox${real ? ' / BDS' : ''})   empty template (sandbox${real ? ' / BDS' : ''})`);
-    for (const l of ls) {
-      const rs = runHidden(l, ref, false), es = runHidden(l, empty, false);
-      const rr = real ? runHidden(l, ref, true) : null, er = real ? runHidden(l, empty, true) : null;
-      // the reference must pass where it can be judged (a sandbox SKIP/UNSURE says the sandbox cannot tell); the empty one must not
-      const good = rs.verdict !== 'FAIL' && es.verdict !== 'PASS' && (!real || (rr.verdict === 'PASS' && er.verdict !== 'PASS'));
-      if (!good) ok = false;
-      out(`${good ? '✔' : '✘'} ${l.id.padEnd(10)} ${rs.verdict.padEnd(6)}${real ? ' / ' + rr.verdict.padEnd(4) : ''}          ${es.verdict.padEnd(6)}${real ? ' / ' + er.verdict : ''}`);
-      if (rs.verdict === 'FAIL') rs.secs.filter((s) => s.status === 'FAIL').forEach((s) => out(`    sandbox ✘ ${s.title}: ${cut(s.why.join(' | '), 200)}`));
-      if (real && rr.verdict !== 'PASS') { rr.secs.filter((s) => s.status === 'FAIL').forEach((s) => out(`    BDS ✘ ${s.title}: ${cut(s.why.join(' | '), 200)}`)); if (!rr.secs.length) out('    ' + cut(rr.text.split('\n').filter((x) => /^(E |ERR|FAIL|✘)/.test(x)).slice(0, 4).join(' | '), 300)); }
+    const show = (j) => { if (!j.good) ok = false; for (const x of j.lines) out(x); };
+    if (jobs === 1) {
+      for (const l of ls) {
+        const rs = runHidden(l, ref, false), es = runHidden(l, empty, false);
+        const rr = real ? runHidden(l, ref, true) : null, er = real ? runHidden(l, empty, true) : null;
+        show(judge(l, rs, es, rr, er));
+      }
+    } else {
+      // n lessons at once, each slot on its own copies (a lab run builds into its unit: two runs of one unit would collide); the
+      // lines still in the lessons' order, each as soon as the ones before it are out
+      for (let k = 0; k < Math.min(jobs, ls.length); k++) {
+        const s = { ref: `${ref}_${k}`, empty: `${empty}_${k}` };
+        slots.push(s);
+        for (const [from, to] of [[ref, s.ref], [empty, s.empty]]) { fs.rmSync(ad(to), { recursive: true, force: true }); fs.cpSync(ad(from), ad(to), { recursive: true }); }
+      }
+      const done = new Array(ls.length);
+      let next = 0, shown = 0;
+      await Promise.all(slots.map(async (s) => {
+        while (next < ls.length) {
+          const i = next++, l = ls[i];
+          const rs = await runHiddenAsync(l, s.ref, false), es = await runHiddenAsync(l, s.empty, false);
+          const rr = real ? await runHiddenAsync(l, s.ref, true) : null, er = real ? await runHiddenAsync(l, s.empty, true) : null;
+          done[i] = judge(l, rs, es, rr, er);
+          while (shown < ls.length && done[shown]) show(done[shown++]);
+        }
+      }));
     }
   } finally {
-    if (!process.env.LAB_SCRATCH_KEEP) for (const u of [ref, empty]) fs.rmSync(ad(u), { recursive: true, force: true });
+    if (!process.env.LAB_SCRATCH_KEEP) for (const u of [ref, empty, ...slots.flatMap((s) => [s.ref, s.empty])]) fs.rmSync(ad(u), { recursive: true, force: true });
     if (cur0 === null) fs.rmSync(cur, { force: true }); else fs.writeFileSync(cur, cur0);
   }
   out(`${ok ? 'PASS' : 'FAIL'} scratch selftest: ${ls.length} lesson(s), the reference ${real ? 'in the sandbox and on the real BDS' : 'in the sandbox'}, the empty template must fail`);
@@ -285,6 +342,6 @@ export async function scratchCmd(args, out = console.log) {
   if (sub === 'gaps') return gaps(rest, out);
   if (sub === 'probe') return probe(rest, out);
   if (sub === 'selftest') return selftest(rest, out);
-  out('usage: node lab.mjs scratch [list] | next [--level n] | show <id> | check <id> [--real] [-a <unit>] | stats | gaps [--backlog] | probe "<code>" [--rule "<rule>" --skill <name>] | selftest [--real] [<id> ...]');
+  out('usage: node lab.mjs scratch [list] | next [--level n] | show <id> | check <id> [--real] [-a <unit>] | stats | gaps [--backlog] | probe "<code>" [--rule "<rule>" --skill <name>] | selftest [--real] [--jobs n] [<id> ...]');
   return false;
 }

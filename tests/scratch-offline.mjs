@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Building from nothing (common/scratch.mjs, skill bds-from-scratch): the lessons are sound (every one has a level, an area,
 // skills that exist, a request and hidden tests; the reference solution passes each in the sandbox and the empty template
-// fails), `next`/`show` never print the hidden tests, `check` runs them on a unit and records the attempt, `stats` and `gaps`
+// fails — several lessons at once with --jobs, the same lines as one at a time), `next`/`show` never print the hidden tests, `check` runs them on a unit and records the attempt, `stats` and `gaps`
 // read the records, `probe` refuses to call a sandbox answer evidence without the live world, and the sandbox prints a
 // player's chat the way the real client does (`@B chat <A> text`: the gap the lessons found). No server, no AI; the lab's real
 // scratch records are never written (LAB_SCRATCH_STATE), nor its backlog (LAB_AUTO_ROOT).
@@ -37,9 +37,16 @@ r = lab(['scratch', 'show', 'calc']);
 ok(r.code === 0 && r.t.includes(calc.prompt) && !calc.test.filter((x) => /^(=|~|!)/.test(x)).some((x) => r.t.includes(x)), 'scratch show: the request without a single hidden expectation', r.t);
 r = lab(['scratch', 'check', 'nosuch']); ok(r.code !== 0 && /no lesson "nosuch"/.test(r.t), 'scratch check <unknown>: refused', r.t);
 
-// the lessons are sound: the reference passes each in the sandbox, the empty template fails each
-r = lab(['scratch', 'selftest']);
-ok(r.code === 0 && /^PASS scratch selftest: \d+ lesson/m.test(r.t) && !fs.existsSync(path.join(TOP, 'bds', 'addons', 'zz_scratch_ref')), 'scratch selftest (sandbox): every lesson solvable by the reference, failing on the empty template; temp units removed', r.t);
+// the lessons are sound: the reference passes each in the sandbox, the empty template fails each (three lessons at once)
+const zz = () => fs.readdirSync(path.join(TOP, 'bds', 'addons')).filter((u) => u.startsWith('zz_scratch_'));
+r = lab(['scratch', 'selftest', '--jobs', '3']);
+ok(r.code === 0 && /^PASS scratch selftest: \d+ lesson/m.test(r.t) && !zz().length, 'scratch selftest --jobs 3 (sandbox): every lesson solvable by the reference, failing on the empty template; temp units and their copies removed', r.t + zz().join(' '));
+// one at a time (the default) prints the very same lines, in the lessons' order whatever order they were named in
+{
+  const table = (t) => t.split('\n').filter((l) => /^[✔✘] /.test(l)).join('\n');
+  const one = lab(['scratch', 'selftest', 'sum', 'calc']), two = lab(['scratch', 'selftest', '--jobs', '2', 'calc', 'sum']);
+  ok(one.code === 0 && two.code === 0 && table(one.t) === table(two.t) && table(one.t).split('\n').length === 2 && !zz().length, 'scratch selftest: one at a time and --jobs 2 print the same lines in the same order', `${one.t}\n---\n${two.t}`);
+}
 
 // check on a unit: one lesson built from nothing (here: by the test), recorded; broken → FAIL, recorded
 {

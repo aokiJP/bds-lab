@@ -31,17 +31,26 @@
   パネルとして持つ・予約が読めないとき）を直してから統合。
 - CI: verify の「test and pack every addon」で落ちたアドオンを注釈（`::error title=addon <名前>`）に、最後の 30 行と一緒に出す
   （ログを開けないときも、どのアドオンのどの行かが分かる）。
-- CI: verify は変わったものに要る分だけ（はじめのジョブ plan → `common/verify-plan.mjs`）。前に verify が通ったコミットから
-  変わったファイルで決める: 同じ中身は 2 度試験しない（PR の先頭で通れば、そのマージは何も流さない）・本物の BDS（約 35 分）は
-  それが使うファイルが変わったときだけ・パネルだけの変更はパネルの試験だけ（約 20 分の全オフライン試験の代わりに数分）・自動操縦の
-  台帳と CHANGES.md だけなら何も流さない。どう決めたかは実行のまとめに。手で始めるか commit の題（1 行目）に `[full ci]` で
-  すべて（macOS・Endstone・LeviLamina も）— 本文に名前が出るだけでは始まらない（macOS の 1 分は 10 分に数える）。新しい
-  push に取り消された実行の分も、前に通ったところから数えるので抜けない。試験は `tests/verify-plan-offline.mjs`。
-- CI: verify の待ち時間を短く、ランナーの分は増やさずに。本物の BDS は 4 つ（bench・scratch・dev・addons）を別々のランナーで
-  同時に（合わせた分は順に流したときと同じ約 33 分のまま、待ちは約 33 → いちばん長い dev の約 14 分）、アドオンのファイルだけが
-  変わったときはそのアドオンの試験だけ（約 1〜2 分）。オフラインの試験は 1 台のまま（その台のコアで横に並べる）: 4 台に分けると
-  待ちは約 5 分短くなるが、分は 16〜19 分から合わせて 27 分に増えた（2026-10-10 に測った）。台数は `common/verify-plan.mjs` の
-  SHARDS（`auto gate --all --shard i/n`。上げるなら先に `common/run-tests.mjs` TIME に各試験の時間を）。
+- CI: **verify は読んだファイルの中身が変わった試験だけ**（`common/verify-plan.mjs`）。試験・手順・本物の BDS の部分・アドオンを
+  1 つずつ「単位」にし、通ったときに実際に読んだファイルを記録する（`common/deps.mjs` と記録係 `common/deps-hook.mjs`: 試験の
+  すべての node に入り、import・fs の読み・フォルダの一覧・子プロセスを書き留める。中身の呼び方は `common/verify-state.mjs`）。
+  次の push では、記録したファイルの中身（git の blob id）が今と違う単位・新しい単位・前に落ちた単位だけを流す。同じ中身は 2 度
+  試験しない（マージ・戻し・パネルだけの変更も、それを読む試験だけ）。記録は成果物 `verify-state`（最後の state ジョブが、通った
+  ものを前の記録に重ねて書く。落ちた・取り消された実行でも通った分は残る）。PR の実行の成果物は決して読まない（workflow を書き
+  換えられる）。オフラインのジョブが動くときは、前に 15 秒未満だった試験も一緒に（記録に残らない読み方への安い保険）。
+- CI: **本物の BDS は PR の最後に 1 回**: commit の題（1 行目）に `[bds]` か、Actions で verify を手で（Run workflow）。既定の枝への
+  push と毎晩（日本時間 3:23）も。ほかの push では、待っている単位と流し方を実行のまとめに出す。毎晩は 1 週間流れていない単位も
+  流す（どの単位も週に 1 回は流れる）。手で full か題に `[full ci]` ですべて（macOS・Endstone・LeviLamina も。本文に名前が出る
+  だけでは始まらない）。
+- CI: **同じ試験を速く**: オフラインの試験は長い順に、ラボのフォルダを共有する「1 本ずつ」の 9 本（app-offline 約 7 分ほか）も、
+  それぞれ自分の写し（git worktree + まだ commit していない変更）で他と同時に（`common/run-tests.mjs`。写しは落ちても止められ
+  ても消す。git でなければ今までどおり）。全部を流すとき約 17 分 → 写しの分だけ短く。本物の BDS は 5 つ（bench・scratch・dev・
+  play・addons）を別々のランナーで、アドオンと課（`scratch selftest --jobs 3`）は 3 つずつ同時に。play-bds を dev から分けたので、
+  app/ だけの変更は約 1 分の play だけ。オフラインの試験を 4 台に分けるのはやめた（待ちは約 5 分短いが、分は 16〜19 分から合わせて
+  27 分に増えた。2026-10-10 に測った）。
+- 先週（10/3〜10/9）の verify は 2,085 分（本物の BDS 1,192・オフライン 767・落ちた実行 907・取り消された実行 330）。
+  `auto gate --tests "<a b>"`・`--record`・`--results <file>`、`scratch selftest --jobs n` を足した。試験: `tests/verify-plan-offline.mjs`
+  （10 本）・`tests/deps-offline.mjs`（9）・`tests/run-tests-offline.mjs`（7）・`tests/verify-state-offline.mjs`（4）。
 - CI: notify は知らせない実行にランナーを起こさない（`app/lib/runmsg.mjs` の shouldNotify と同じ決まりをジョブの条件に。
   押した実行の成功の大半がこれ。条件は試験で 168 通り突き合わせる）。
 
