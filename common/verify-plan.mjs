@@ -84,8 +84,8 @@ export function select(state, units, values, { env = envKey(), now = Date.now(),
 // The offline tests on one runner, or on two when together they are long: OFFLINE_SPLIT_S of their own seconds (what each took
 // last time, from the memory — a test in parts its slowest part's time each part —, else run-tests' TIME, else a minute) is about
 // 100 s on one runner's 6 at a time. Each runner gets its own list, the longest test first to the runner that would end first (its
-// time over 6 at a time, never under its slowest part); runner 1 also runs the steps (ESLint, GitHub flows, about 20 s after)
-export const OFFLINE_SPLIT_S = 600, OFFLINE_JOBS = 6, STEPS_S = 20;
+// time over 6 at a time, never under its slowest part); runner 1 also runs the steps beside its tests (ESLint, the GitHub flows, the real browser: about 10 s of its time)
+export const OFFLINE_SPLIT_S = 600, OFFLINE_JOBS = 6, STEPS_S = 10;
 export function offlineSplit(tests, state, { time = TIME, parts = PARTS, n = null } = {}) {
   const had = state?.units && typeof state.units === 'object' ? state.units : {};
   const k = (t) => (parts?.[t]?.length > 1 ? parts[t].length : 1);
