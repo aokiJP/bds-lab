@@ -112,8 +112,26 @@ function load(req) {
   // `new Transport(o)`: RakNet, or NetherNet when this join asked for it (a constructor may return another object)
   function Transport(o) { return NEXT.transport === 'nethernet' ? (NEXT.conn = new NetherNetClient({ host: o.host, port: o.port, url: NEXT.url, ca: NEXT.ca, RTC: NEXT.rtc, identity: NEXT.identity, pins: NEXT.pins, expectKey: NEXT.expectKey, log: NEXT.log, name: NEXT.name })) : (NEXT.rak = new Adapter(o)); }
   req.cache[rakPath] = { id: rakPath, filename: rakPath, loaded: true, exports: () => ({ RakClient: Transport, RakServer: class {}, RakTimeout: Error }) };
+  memoProtocol(req);
   return req('bedrock-protocol');
 }
+// one compiled packet code per version for every client of this process: bedrock-protocol compiles the whole protocol for each
+// client twice, its serializer and its parser (0.12-0.3 s each); every join paid it again. Its compiled code holds one variable
+// (ShieldItemID, the same for every client of a server). Before client.js is loaded: it takes these two functions as it loads
+const MEMO = new Map();   // version → { proto, Parser }
+function memoProtocol(req) {
+  let S, Serializer;
+  try { S = req('bedrock-protocol/src/transforms/serializer'); ({ Serializer } = require('node:module').createRequire(req.resolve('bedrock-protocol/src/transforms/serializer'))('protodef')); } catch { return; }   // (another bedrock-protocol: as it is)
+  if (S.__labMemo || !Serializer) return;
+  const parse = S.createDeserializer;
+  const got = (v) => { let m = MEMO.get(v); if (!m) { const p = parse(v); m = { proto: p.proto, Parser: p.constructor }; MEMO.set(v, m); } return m; };
+  S.createDeserializer = (v) => { const m = got(v); return new m.Parser(m.proto, 'mcpe_packet'); };
+  S.createSerializer = (v) => new Serializer(got(v).proto, 'mcpe_packet');
+  S.__labMemo = true;
+}
+// the first join's own work done ahead (while the server boots): bedrock-protocol loaded with the lab's transport, this version's
+// table fixed (patchProtocol) and its packet code compiled
+function warm(req, version) { load(req); patchProtocol(req, version); memoProtocol(req); MEMO.has(version) || req('bedrock-protocol/src/transforms/serializer').createDeserializer(version); }
 
 // minecraft-data's table for this version decodes a few packets wrong (checked byte by byte against BDS 1.26.51);
 // fixed in place before the first client is created, so `saw` shows what the server really sent
@@ -243,7 +261,7 @@ function loginData(o) {
 // lan: { nc, config, guard, endpoint, transport, account, observe, allowChat } — transport=lan joins through nethernet-connect
 // (common/nethernet-connect): only peers on this machine / the same LAN / the user's own Tailscale devices, a local world by the
 // local world's own method (UDP 7551), a server by its own (NetherNet HTTP / RakNet); account = a signed-in Xbox account (else offline)
-async function createRealPlayer({ req, host = '127.0.0.1', port, name, version, emit, blockAt, itemTags, packId, packNames = {}, opts = {}, timeoutMs = 60000, transport = 'raknet', rtc = null, nn = {}, lan = null }) {
+async function createRealPlayer({ req, host = '127.0.0.1', port, name, version, emit, blockAt, itemTags, packId, packNames = {}, opts = {}, timeoutMs = 60000, transport = 'raknet', rtc = null, nn = {}, lan = null, cmdBehind = false }) {
   const bp = load(req);
   // transport=raknet|nethernet (default: what the server runs). NetherNet only: identity=verify|strict|warn|off (the server's
   // a=identity: verify = trust on first use like the game, strict = a key not pinned yet is refused), key=<pin> (the server
@@ -1535,12 +1553,20 @@ async function createRealPlayer({ req, host = '127.0.0.1', port, name, version, 
       }
       case 'cmd': {
         const uuid = crypto.randomUUID(), cmd = a.join(' ');
-        const p = await new Promise((resolve) => {
-          const t = setTimeout(() => { pendingCmd.delete(uuid); resolve(null); }, Number(process.env.LAB_CMD_WAIT_MS) || 1500);   // (a server under Wine answers slower)
-          pendingCmd.set(uuid, (x) => { clearTimeout(t); resolve(x); });
-          client.queue('command_request', { command: cmd.startsWith('/') ? cmd : '/' + cmd, origin: { type: 'player', uuid, request_id: '', player_entity_id: 0n }, internal: false, version: 'latest' });
+        const ask = (command, id) => client.queue('command_request', { command, origin: { type: 'player', uuid: id, request_id: '', player_entity_id: 0n }, internal: false, version: 'latest' });
+        // cmdBehind: a /list right behind it, its answer never shown. The server runs one player's commands in order, so that
+        // answer says this one has run: a custom command that answers nothing (the kit's reply is a message a tick later) costs
+        // a tick, not the whole wait. Without it (or with no answer to it either) the wait as before
+        const behind = cmdBehind ? crypto.randomUUID() : null;
+        let p = null;
+        await new Promise((resolve) => {
+          const t = setTimeout(() => { pendingCmd.delete(uuid); if (behind) pendingCmd.delete(behind); resolve(); }, Number(process.env.LAB_CMD_WAIT_MS) || 1500);   // (a server under Wine answers slower)
+          pendingCmd.set(uuid, (x) => { p = x; if (!behind) { clearTimeout(t); resolve(); } });
+          if (behind) pendingCmd.set(behind, () => { pendingCmd.delete(uuid); clearTimeout(t); resolve(); });
+          ask(cmd.startsWith('/') ? cmd : '/' + cmd, uuid);
+          if (behind) ask('/list', behind);
         });
-        if (!p) return;
+        if (!p) return behind ? ticks(2) : undefined;
         // %key = a translation key (vanilla commands); custom commands reply with plain text, shown as is
         for (const o of p.output ?? []) say(`cmd${o.success ? '' : ' failed'}: ${/^[\w-]+(\.[\w-]+)+$/.test(o.message_id) ? '%' : ''}${o.message_id}${o.parameters?.length ? ` [${o.parameters.join(', ')}]` : ''}`);
         return ticks(2);
@@ -2477,4 +2503,4 @@ async function createRealPlayer({ req, host = '127.0.0.1', port, name, version, 
   return bot;
 }
 
-module.exports = { createRealPlayer, describeForm, ACTIONS };
+module.exports = { createRealPlayer, describeForm, ACTIONS, warm };

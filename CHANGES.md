@@ -52,6 +52,28 @@
 - 先週（10/3〜10/9）の verify は 2,085 分（本物の BDS 1,192・オフライン 767・落ちた実行 907・取り消された実行 330）。
   `auto gate --tests "<a b>"`・`--record`・`--results <file>`、`scratch selftest --jobs n` を足した。試験: `tests/verify-plan-offline.mjs`
   （10 本）・`tests/deps-offline.mjs`（9）・`tests/run-tests-offline.mjs`（7）・`tests/verify-state-offline.mjs`（4）。
+- **本物の BDS の試験を速く（仮想世界には置き換えない: 同じサーバー・同じクライアント・同じ試験）**:
+  - 試験の待ちをゲーム内の時間で: 行ごとの待ち（300 ms）・`wait ms`・`perf ms` を、サーバーの tick（ms/50 個）で数える。lab は
+    `scriptevent lab:sync <n> <tick 数>` を送り、helper がその tick 数あとに印を出す（`Engine.pause`）。1x では前と同じ長さ、
+    遅れたサーバーでは長く、`LAB_SPEED=k` では k 分の 1。CI の本物の BDS は **4 倍速**（libfaketime をキャッシュから）。
+    早回しでは、スクリプトの watchdog の限度と `perf` の時間を速さで割って実時間に戻す（TS REPL のコンパイル 2.5 秒が x4 で
+    10 秒の hang に見えていた）。watchdog の設定は毎回書く（前の実行の x4 や LAB_WATCHDOG_MS がサーバーに残っていた）。
+  - `@A cmd` の 1.5 秒: 返事のない独自コマンド（キットの返事は 1 tick 後のメッセージ）を、返事の来ない 1.5 秒待っていた。
+    すぐ後ろに `/list` を送り、その返事でコマンドが終わったと分かる（同じプレイヤーのコマンドは順に動く。`/list` の返事は
+    見せない。BDS だけ: Endstone・LeviLamina のプラグインはコマンドを見るので前のまま。`LAB_CMD_BEHIND=0` で前のまま）。
+  - ビルド: npm に 5 つのパッケージの版の一覧を毎回聞いていた（約 0.6 秒）→ そのマニフェストが指す SDK を 12 時間覚える
+    （`LAB_SDK_MEMO=0`）。通った型検査は、同じ中身（tsconfig・src/・パッケージ）なら TypeScript を読み込みもしない
+    （`LAB_TYPES_MEMO=0`）。2 回目の `check` 約 2 秒 → 0.4 秒。
+  - 参加: 本物のクライアントのコードの読み込みと、この版のパケットのコードのコンパイルを、サーバーの起動の間に済ませる。
+    bedrock-protocol はクライアントごとにプロトコル全体を 2 回コンパイルしていた（0.12〜0.3 秒ずつ）→ 版ごとに 1 回。
+  - 同時に: bench の selftest の 3 回（空の雛形・解答・エラーを入れた解答）を 3 つのユニットで同時に。`mutate` と `harden` の
+    変異を、ユニットの写し（`<名前>__mut<n>`）で 3 つずつ同時に（`LAB_MUTATE_JOBS`、既定はコア数−1・最大 3。ユニットには触らない）。
+  - 手元（2 コア）で測った: アドオン 12 個 310 → 146 秒（4 倍速、2 回とも全部通過。前の CI の合計は 351 秒）、fishcup 72 → 22 秒、
+    bench selftest 504（CI）→ 163 秒、dev-bds 777（CI）→ 400 秒、coins 20.9 → 9.3 秒。10 倍・20 倍では 1 つずつ落ちた（再起動
+    直後のネザー、5 秒の冷却）ので 4 倍に。
+- CI: オフラインの試験も短く: `app-offline` を 4 つ（`APP_TEST_SHARD`）、`offline.mjs` をラボごと（bds・end・ll と docker）の
+  部分に分けて同時に（`run-tests.mjs` の PARTS: 結果は部分を合わせて 1 行、読んだファイルも合わせる）。Linux では 6 つずつ。
+  `rd-overlap` の 2 本は、偽の端末が 80 回（約 100 秒）待ってから起きていた → 24 回（BDS が先に起きる不具合は数回で見える）。
 - CI: notify は知らせない実行にランナーを起こさない（`app/lib/runmsg.mjs` の shouldNotify と同じ決まりをジョブの条件に。
   押した実行の成功の大半がこれ。条件は試験で 168 通り突き合わせる）。
 

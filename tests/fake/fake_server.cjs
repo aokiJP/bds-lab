@@ -81,7 +81,8 @@ function handle(line) {
     if (jsReady && rest[0] === 'lab:js') log('INFO', 'Scripting', 'LAB_JS_DONE');
     // the lab's end-of-command marker: the real helper answers it as soon as the command before it ran (without it the lab waited
     // 8 s once per session, then fell back to plain waits)
-    if (mode === 'bds' && rest[0] === 'lab:sync') log('INFO', 'Scripting', `LAB_SYNC ${rest[1] ?? ''}`.trim());
+    // (with a tick count, that many 50 ms later, like the helper's runTimeout)
+    if (mode === 'bds' && rest[0] === 'lab:sync') { const say = () => log('INFO', 'Scripting', `LAB_SYNC ${rest[1] ?? ''}`.trim()); if (Number(rest[2]) > 0) setTimeout(say, Number(rest[2]) * 50); else say(); }
     return;
   }
   if (mode === 'll' && w === 'll') {

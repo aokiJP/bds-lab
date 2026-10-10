@@ -103,6 +103,8 @@ jobs:
           TESTS: ${{ needs.plan.outputs.tests }}
           # (the vendored nethernet-connect present: its test must run; absent: it says SKIP, and the warning below says why)
           LAB_REQUIRE_LAN: ${{ hashFiles('common/nethernet-connect/dist/src/index.js') != '' && '1' || '0' }}
+          # 6 at a time on Linux's 4 cores: most of a test is waiting, and app-offline and offline.mjs now run as parts
+          LAB_GATE_JOBS: ${{ runner.os == 'Linux' && '6' || '' }}
         run: |
           if [ "$RUNNER_OS" = Linux ]; then node lab.mjs auto gate --tests "$TESTS" --record --results "$RUNNER_TEMP/results/offline.jsonl"
           else node lab.mjs auto gate --tests "$TESTS"; fi
@@ -135,6 +137,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults: { run: { working-directory: bds } }
+    # the same unmodified server with its clock 4 times as fast (libfaketime): the lab counts its pauses and `wait`s in the
+    # server's ticks, so a test takes about half the time or less and means the same (bds/docs/SPEC.md 早回し)
+    env: { LAB_SPEED: '4' }
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -143,6 +148,19 @@ jobs:
         with:
           path: bds/.lab
           key: bds-${{ runner.os }}-${{ hashFiles('bds/vendor/bds-version.txt', 'common/data/bds-versions.json') }}
+      # libfaketime (multithreaded) for LAB_SPEED, from apt once and kept
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/bdslab-faketime
+          key: faketime-${{ runner.os }}-${{ runner.arch }}-0.9.10
+      - name: libfaketime
+        run: |
+          d="$HOME/.cache/bdslab-faketime"; f="$d/libfaketimeMT.so.1"
+          if [ ! -f "$f" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends faketime > /dev/null
+            mkdir -p "$d" && cp /usr/lib/x86_64-linux-gnu/faketime/libfaketimeMT.so.1 "$f"
+          fi
+          echo "LAB_FAKETIME_LIB=$f" >> "$GITHUB_ENV"
       - run: node lab.mjs bds
       # (the lab's starting point, before anything is recorded: bds/lab.mjs above does not make it, the top lab.mjs does)
       - run: node ../lab.mjs help > /dev/null

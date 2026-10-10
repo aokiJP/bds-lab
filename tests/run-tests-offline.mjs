@@ -81,14 +81,36 @@ await t('SERIAL tests side by side, each in a copy of its own with the changes n
 await t('a result line as each test ends (there before onDone); they start the longest first: the caller\'s times, else TIME, else a minute', async () => {
   const log = newLog(), results = path.join(TMP, 'results-1.jsonl'), seen = [];
   const list = ['sim', 'zz', 'offline', 'app'].map(testOf);
-  await R.runTests(list, { cwd: LAB, jobs: 1, results, env: { ...process.env, LOG: log }, onDone: (r) => { const rows = fs.readFileSync(results, 'utf8').trim().split('\n').map((l) => JSON.parse(l)); seen.push([rows.length, rows.at(-1).unit === r.t]); } });
+  await R.runTests(list, { cwd: LAB, jobs: 1, results, parts: {}, env: { ...process.env, LOG: log }, onDone: (r) => { const rows = fs.readFileSync(results, 'utf8').trim().split('\n').map((l) => JSON.parse(l)); seen.push([rows.length, rows.at(-1).unit === r.t]); } });
   eq(read(log, 'order.txt').trim().split('\n'), ['app', 'offline', 'zz', 'sim'], 'TIME: app 445 s, offline 194 s, zz unknown (60 s), sim 16 s');
   eq(seen, [[1, true], [2, true], [3, true], [4, true]], 'a line each time one ended');
   const rows = fs.readFileSync(results, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   eq(rows.map((x) => [x.unit, x.ok, x.deps, Number.isInteger(x.ms)]), ['app', 'offline', 'zz', 'sim'].map((n) => [testOf(n), true, null, true]), 'without a wrap: deps null');
   const log2 = newLog();
-  await R.runTests(list, { cwd: LAB, jobs: 1, times: { [testOf('sim')]: 9e6, [testOf('zz')]: 1 }, env: { ...process.env, LOG: log2 } });
+  await R.runTests(list, { cwd: LAB, jobs: 1, parts: {}, times: { [testOf('sim')]: 9e6, [testOf('zz')]: 1 }, env: { ...process.env, LOG: log2 } });
   eq(read(log2, 'order.txt').trim().split('\n'), ['sim', 'app', 'offline', 'zz'], 'the caller\'s times first');
+  eq([worktrees(), left()], [1, []], 'no copy stays');
+});
+
+await t('parts: a test in parts runs as processes side by side (their args / env; a SERIAL one each in a copy of its own); one result: ok only when every part is, the longest part\'s time, the parts\' reads together (null if one is unknown); the real list splits app-offline and offline.mjs', async () => {
+  const log = newLog(), results = path.join(TMP, 'results-parts.jsonl');
+  const parts = { [testOf('app')]: [{ env: { PART: '1' } }, { env: { PART: '2' } }], [testOf('b')]: [{ args: ['x'] }, { args: ['y'] }] };
+  let n = 0;
+  const wrap = { prepare(unit) { const k = ++n; return { env: {}, finish: () => ({ deps: unit === testOf('b') && k % 2 ? null : { [`r${k}.txt`]: 'v' } }) }; } };
+  const res = await R.runTests([testOf('app'), testOf('b'), testOf('a')], { cwd: LAB, jobs: 4, parts, wrap, results, env: { ...process.env, LOG: log, RENDEZVOUS: 'a' } });
+  eq(res.map((r) => [r.t, r.ok]), [[testOf('app'), true], [testOf('b'), true], [testOf('a'), true]], JSON.stringify(res.map((r) => r.lines)));
+  const app = res[0];
+  ok(app.lines.filter((l) => /^── tests\/app-offline\.mjs part \d\/2 \(PART=\d\) ok/.test(l)).length === 2 && app.lines.filter((l) => l === 'ok app wrap=null').length === 2, app.lines.join('\n'));
+  ok(res[1].lines.some((l) => /part 1\/2 \(x\)/.test(l)) && res[1].lines.some((l) => /part 2\/2 \(y\)/.test(l)), res[1].lines.join('\n'));
+  const rows = fs.readFileSync(results, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  eq(rows.map((x) => x.unit).sort(), [testOf('a'), testOf('app'), testOf('b')].sort(), 'one line a test');
+  const appRow = rows.find((x) => x.unit === testOf('app'));
+  eq(Object.keys(appRow.deps ?? {}).length, 2, 'the parts\' reads together');
+  eq(rows.find((x) => x.unit === testOf('b')).deps, null, 'a part\'s reads unknown: unknown');
+  ok(Number.isInteger(appRow.ms) && appRow.ms === res[0].ms && appRow.ms < 20000, `the longest part's time: ${appRow.ms}`);
+  const failing = await R.runTests([testOf('b')], { cwd: LAB, jobs: 2, parts: { [testOf('b')]: [{ env: { FAIL: 'none' } }, { env: { FAIL: 'b' } }] }, env: { ...process.env, LOG: newLog() } });
+  eq([failing[0].ok, failing[0].code], [false, 1], 'one part failing fails the test');
+  ok(R.PARTS['tests/app-offline.mjs'].length >= 2 && R.PARTS['tests/offline.mjs'].some((p) => p.args.includes('docker') && p.args.includes('ll')), 'the real list: app-offline in shards, offline.mjs by lab (ll with docker)');
   eq([worktrees(), left()], [1, []], 'no copy stays');
 });
 

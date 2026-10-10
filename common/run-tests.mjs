@@ -29,6 +29,25 @@ export const TIME = {
   'tests/login-offline.mjs': 25, 'tests/cli-offline.mjs': 23, 'tests/rd-boot-offline.mjs': 20, 'tests/sim-offline.mjs': 16, 'tests/auto-offline.mjs': 13, 'tests/lint-offline.mjs': 13,
 };
 const UNKNOWN = 60;
+// tests that run as parts side by side: each part a process of its own (its args, its env; a SERIAL test each part in a copy of
+// its own). The test's result is its parts' together: ok when every part is, its time the longest part's, what it read what its
+// parts read (a part's reads unknown: unknown). The parts together run every check the whole file runs (offline.mjs: the docker
+// section reuses what the ll one made, so they stay one part)
+export const PARTS = {
+  'tests/app-offline.mjs': [1, 2, 3, 4].map((i) => ({ env: { APP_TEST_SHARD: `${i}/4` } })),
+  'tests/offline.mjs': [{ args: ['bds'] }, { args: ['end'] }, { args: ['ll', 'docker'] }],
+};
+const partName = (p) => [...(p.args ?? []), ...Object.entries(p.env ?? {}).map(([k, v]) => `${k}=${v}`)].join(' ');
+// the parts' results as one: { t, ok, code, ms, lines } and finish values ({ deps }: a union, null if any part's is null or two disagree)
+export function joinParts(t, rs, extras) {
+  const r = { t, ok: rs.every((x) => x.ok), code: rs.find((x) => x.code !== 0)?.code ?? 0, ms: Math.max(0, ...rs.map((x) => x.ms)), lines: rs.flatMap((x, i) => [`── ${t} part ${i + 1}/${rs.length} (${x.part}) ${x.ok ? 'ok' : 'FAIL'} ${(x.ms / 1000).toFixed(0)} s`, ...x.lines]) };
+  let deps = {};
+  for (const e of extras) {
+    if (!e?.deps || !deps) { deps = null; continue; }
+    for (const [k, v] of Object.entries(e.deps)) { if (k in deps && deps[k] !== v) { deps = null; break; } deps[k] = v; }
+  }
+  return { r, extra: { ...Object.assign({}, ...extras.map((e) => e ?? {})), deps } };
+}
 
 /** shard i of n (1-based) of the list (pure): the tests split so the shards end about together — each test to the shard it
  *  makes shortest, the longest first; side by side tests count as their time over the jobs (never under the longest of them),
@@ -115,10 +134,10 @@ function guardCopies() {
   return () => { process.off('exit', clean); for (const [s, f] of Object.entries(sig)) process.off(s, f); };
 }
 
-function one(t, cwd, env, timeout) {
+function one(t, cwd, env, timeout, args = []) {
   return new Promise((res) => {
     const limit = Math.max(timeout, LONG[t] ?? 0), t0 = Date.now(); let text = '', done = false;
-    const c = spawn(process.execPath, [t], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const c = spawn(process.execPath, [t, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     kids.add(c);
     const add = (d) => { text += d; if (text.length > 64e6) text = text.slice(-32e6); };
     c.stdout.on('data', add); c.stderr.on('data', add);
@@ -134,43 +153,55 @@ function one(t, cwd, env, timeout) {
 // tree (side by side with the rest), else after the others one by one. wrap: a module (its path) or an object with
 // prepare(unit, { root, env }) → { env, finish({ ok, ms }) }: the test runs with that env added, and finish's value goes into
 // results — a file, one JSON line { unit, ok, ms, ...finish() } appended as each test ends (a run stopped keeps what ended)
-export function runTests(list, { cwd, env = process.env, jobs = defaultJobs(), timeout = 900000, onDone = () => {}, times = {}, wrap, results, isolate = true } = {}) {
+export function runTests(list, { cwd, env = process.env, jobs = defaultJobs(), timeout = 900000, onDone = () => {}, times = {}, wrap, results, isolate = true, parts = PARTS } = {}) {
   const est = (t) => times?.[t] ?? (TIME[t] ?? UNKNOWN) * 1000;
-  const order = [...new Set(list)].sort((a, b) => est(b) - est(a)), out = new Map();
+  // one job per test, or per part of a test in `parts` (each part about its share of the test's time), the longest first
+  const jobsOf = (t) => (parts?.[t]?.length > 1 ? parts[t].map((p, k) => ({ t, p, k, n: parts[t].length, est: est(t) / parts[t].length })) : [{ t, p: null, k: 0, n: 1, est: est(t) }]);
+  const order = [...new Set(list)].flatMap(jobsOf).sort((a, b) => b.est - a.est), out = new Map(), got = new Map();
   return (async () => {
     const w = typeof wrap === 'string' ? await import(pathToFileURL(path.resolve(wrap)).href) : wrap ?? null;
     if (results) fs.mkdirSync(path.dirname(path.resolve(results)), { recursive: true });
     const here = path.resolve(cwd ?? process.cwd());
-    const top = isolate && order.some((t) => SERIAL.has(t)) ? workTree(here) : null;
-    const queue = order.filter((t) => top || !SERIAL.has(t)), later = order.filter((t) => !top && SERIAL.has(t));
+    const top = isolate && order.some((j) => SERIAL.has(j.t)) ? workTree(here) : null;
+    const queue = order.filter((j) => top || !SERIAL.has(j.t)), later = order.filter((j) => !top && SERIAL.has(j.t));
     let warned = false;
-    const run = async (t, at = cwd) => {
+    const run = async (j, at = cwd) => {
+      const { t, p: part } = j;
       let p = null;
       try { p = w ? await w.prepare(t, { root: at ?? here, env }) : null; } catch { p = null; }
-      const r = await one(t, at, p?.env ? { ...env, ...p.env } : env, timeout);
+      const r = await one(t, at, { ...env, ...(part?.env ?? {}), ...(p?.env ?? {}) }, timeout, part?.args ?? []);
       let extra = { deps: null };
       try { if (p) extra = await p.finish({ ok: r.ok, ms: r.ms }); } catch { extra = { deps: null }; }
-      if (results) {
-        try { fs.appendFileSync(results, JSON.stringify({ unit: t, ok: r.ok, ms: r.ms, ...extra }) + '\n'); } catch (e) { if (!warned) { warned = true; console.error(`W run-tests: 結果を ${results} に書けない: ${e.message}`); } }
+      // a part: kept until the test's last part ends, then the parts as one
+      let res = r;
+      if (j.n > 1) {
+        const g = got.get(t) ?? got.set(t, []).get(t);
+        g[j.k] = { r: { ...r, part: partName(part) }, extra };
+        if (g.filter(Boolean).length < j.n) return r;
+        ({ r: res, extra } = joinParts(t, g.map((x) => x.r), g.map((x) => x.extra)));
       }
-      onDone(r);
-      return r;
+      if (results) {
+        try { fs.appendFileSync(results, JSON.stringify({ unit: t, ok: res.ok, ms: res.ms, ...extra }) + '\n'); } catch (e) { if (!warned) { warned = true; console.error(`W run-tests: 結果を ${results} に書けない: ${e.message}`); } }
+      }
+      out.set(t, res);
+      onDone(res);
+      return res;
     };
     const unguard = top ? guardCopies() : () => {};
     try {
       let i = 0;
       const worker = async () => {
         while (i < queue.length) {
-          const t = queue[i++];
-          if (!(top && SERIAL.has(t))) { out.set(t, await run(t)); continue; }
+          const j = queue[i++];
+          if (!(top && SERIAL.has(j.t))) { await run(j); continue; }
           const copy = makeCopy(top);
-          if (!copy || path.isAbsolute(t) || !fs.existsSync(path.join(copy.dir, t))) { if (copy) dropCopy(copy); later.push(t); continue; }
+          if (!copy || path.isAbsolute(j.t) || !fs.existsSync(path.join(copy.dir, j.t))) { if (copy) dropCopy(copy); later.push(j); continue; }
           copies.add(copy);
-          try { out.set(t, await run(t, copy.dir)); } finally { copies.delete(copy); dropCopy(copy); }
+          try { await run(j, copy.dir); } finally { copies.delete(copy); dropCopy(copy); }
         }
       };
       await Promise.all(Array.from({ length: Math.max(1, Math.min(jobs, queue.length)) }, worker));
-      for (const t of later) out.set(t, await run(t));
+      for (const j of later) await run(j);
     } finally { unguard(); }
     return list.map((t) => out.get(t));
   })();

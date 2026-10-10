@@ -49,7 +49,17 @@ export function npmVersion(doc, want, bv) {
 }
 
 // shared SDK: @minecraft/* types at the manifest's versions + Mojang libs + env types. Keyed by the exact set.
+// Which exact set a manifest means (npm's newest build for this BDS) is remembered for SDK_MEMO_MS: every build used to fetch
+// the five packages' whole version lists from npm first (about 0.6 s, offline it failed); LAB_SDK_MEMO=0 asks npm every time
+const SDK_MEMO_MS = 12 * 3600_000;
 export async function sdk({ cache, bv, deps, npmDoc }) {
+  const memo = path.join(cache, 'sdk', 'resolved.json');
+  const want = JSON.stringify([bv, deps.filter((d) => d.module_name?.startsWith('@minecraft/')).map((d) => `${d.module_name}@${d.version}`).sort(), LIBS, ENV_TYPES]);
+  const read = () => { try { return JSON.parse(fs.readFileSync(memo, 'utf8')); } catch { return {}; } };
+  if (process.env.LAB_SDK_MEMO !== '0') {
+    const m = read()[want];
+    if (m && Date.now() - m.at < SDK_MEMO_MS && exists(path.join(cache, 'sdk', String(m.key), 'ok'))) return path.join(cache, 'sdk', m.key);
+  }
   const specs = [];
   for (const d of deps) {
     if (!d.module_name?.startsWith('@minecraft/')) continue;
@@ -71,6 +81,10 @@ export async function sdk({ cache, bv, deps, npmDoc }) {
     npmI(dir, specs);
     fs.writeFileSync(path.join(dir, 'ok'), specs.join('\n') + '\n');
   }
+  try {   // (several lab processes at once: written whole, then renamed)
+    const all = read(); all[want] = { key, at: Date.now() };
+    const tmp = `${memo}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(all)); fs.renameSync(tmp, memo);
+  } catch { /* only a memo */ }
   return dir;
 }
 
@@ -97,7 +111,25 @@ export function writeTsconfig(addon, sdkDir, js) {
 }
 
 // type check: TS errors are E (the build fails), JS (checkJs, not strict) are W
+// A check that found nothing is not run again on the same sources (tsconfig, src/ or bp/scripts, the unit's package files):
+// loading TypeScript alone is most of a build's second (a test then a pack; the lab's own runs of a unit that did not change)
+function typeStamp(addon, js) {
+  const h = crypto.createHash('sha1').update(js ? 'js\n' : 'ts\n');
+  const add = (f) => { try { h.update(path.relative(addon, f) + '\0').update(fs.readFileSync(f)).update('\0'); } catch { h.update(f + '\0-\0'); } };
+  for (const f of ['tsconfig.json', 'package.json', 'package-lock.json']) add(path.join(addon, f));
+  const walk = (d) => { let es = []; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch { return; } for (const e of es.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) { const p = path.join(d, e.name); if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p); } else if (/\.([cm]?[jt]s|json)$/.test(e.name)) add(p); } };
+  walk(path.join(addon, js ? path.join('bp', 'scripts') : 'src'));
+  return h.digest('hex');
+}
 export function typecheck({ tl, addon, cache, js, max = 12 }) {
+  const okFile = path.join(cache, 'tsinfo', crypto.createHash('sha1').update(addon).digest('hex').slice(0, 10) + (js ? '.js' : '') + '.clean');
+  const stamp = process.env.LAB_TYPES_MEMO === '0' ? null : typeStamp(addon, js);
+  try { if (stamp && fs.readFileSync(okFile, 'utf8') === stamp) return []; } catch { /* not checked yet */ }
+  const res = typecheckNow({ tl, addon, cache, js, max });
+  try { if (stamp && !res.length) { fs.mkdirSync(path.dirname(okFile), { recursive: true }); fs.writeFileSync(okFile, stamp); } else fs.rmSync(okFile, { force: true }); } catch { /* only a memo */ }
+  return res;
+}
+function typecheckNow({ tl, addon, cache, js, max = 12 }) {
   const ts = tl.ts;
   const cfgFile = path.join(addon, 'tsconfig.json');
   const cfg = ts.getParsedCommandLineOfConfigFile(cfgFile, {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => {} });
