@@ -128,38 +128,96 @@ function copyUnit(k, dir, name) {
   };
 }
 export const whatOf = (s) => (s.kind === 'call' ? `\`${s.was.slice(0, 70)}\` left out` : `\`${s.was}\` → \`${s.to.trim()}\``);
+// a run's SECTION lines (LAB_SECTIONS=1), in the order they ran: [{ title, ok }]; OUTSIDE: what failed in no section
+const secRows = (lines) => lines.map((l) => /^SECTION (PASS|FAIL) (.*)$/.exec(l)).filter(Boolean).map((m) => ({ title: m[2], ok: m[1] === 'PASS' }));
+const outside = (lines) => lines.some((l) => l.startsWith('SECTION OUTSIDE :: '));
+/** the failing sections when they are all new ones (`fresh`: titles) and the last ones that ran (nothing failed outside a section):
+ *  then the sections before them ran exactly as they would without them (one world, in order); else null */
+export function tailFails(lines, fresh) {
+  const rows = secRows(lines), bad = rows.filter((r) => !r.ok);
+  if (!bad.length || outside(lines) || bad.some((r) => !fresh.has(r.title))) return null;
+  return rows.slice(rows.length - bad.length).every((r) => !r.ok) ? bad.map((r) => r.title) : null;
+}
+/** the coverage when `title` began (SECTION COV <title> :: COV ...; test --cov with LAB_SECTIONS=1): '' if not printed */
+export function sectionCov(lines, title) {
+  const p = `SECTION COV ${title} :: `;
+  return lines.find((l) => l.startsWith(p))?.slice(p.length) ?? '';
+}
+/** a bug's run (LAB_SECTIONS=1) with the sections `dropped` left out: caught when it fails in a section kept, outside any
+ *  section, or with no SECTION line to tell */
+export function caughtBy(r, dropped) {
+  if (r.ok) return false;
+  const rows = secRows(r.lines), gone = new Set(dropped);
+  return !rows.length || outside(r.lines) || rows.some((x) => !x.ok && !gone.has(x.title));
+}
 /** coverage, then small bugs one at a time (n spread over the code, or exactly `only`: the same bugs again, e.g. after new tests).
  *  { ok (the tests pass as they are), cov, sites, tried, caught, lived: [{ s, what }], skipped }. The unit is put back exactly.
  *  baseEnv: the coverage run's environment besides (LAB_SECTIONS=1: its SECTION lines, for a caller that also needs to know
- *  which sections fail — harden) */
-export async function measure(k, u, { n = 6, only = null, out = () => {}, onBase = null, baseEnv = {} } = {}) {
+ *  which sections fail — harden). With `only` the bugs are known first: they run beside the coverage run (each in a copy),
+ *  their results dropped if it fails — unless `tail(base)` names the failing sections that are the last ones (harden: new
+ *  sections kept out): then those count as left out (res.dropped; the coverage as their first one began; a bug caught only
+ *  there survives) */
+export async function measure(k, u, { n = 6, only = null, out = () => {}, onBase = null, baseEnv = {}, tail = null } = {}) {
   const dir = CP.unitDir(k, u), { files } = unitFiles(dir);
   const res = { ok: false, cov: '', sites: [], tried: 0, caught: 0, lived: [], skipped: 0, files };
   if (!files.length) return { ...res, none: true };
   const held = CP.hold(k, u);
   try {
-    const base = runTests(k, u, ['--cov'], baseEnv);
-    res.base = base; res.ok = base.ok;
-    if (!base.ok) return res;
-    // COV 85% of code lines ran | src/main.ts 40/47 never ran: 12-15,30 | ...
-    const cov = base.lines.find((l) => l.startsWith('COV ')) ?? '', skip = new Set();
-    for (const m of cov.matchAll(/\| (\S+) \d+\/\d+ never ran: ([\d,-]+)/g)) for (const r of m[2].split(',')) { const [a, b = a] = r.split('-').map(Number); for (let x = a; x <= b; x++) skip.add(`${m[1]}:${x}`); }
-    res.cov = cov;
-    if (onBase) await onBase(cov);
     const backup = new Map(files);
-    res.sites = sites(files, only ? new Set() : skip);
-    const chosen = only ? only.filter((s) => backup.get(s.file)?.split('\n')[s.line - 1] === s.code) : pick(res.sites, Math.min(n, res.sites.length));   // (a line that changed since: not that bug any more)
-    const jobs = Math.min(mutateJobs(k), chosen.length);
-    out(`  ${chosen.length} bug(s), one test run each${jobs > 1 ? `, ${jobs} at a time` : ''}${k === 'll' ? ' (LeviLamina under Wine: about 2 min each; run it in the background)' : ''}`);
-    // (the unit's own last result stays the base run's, not a bug's)
-    const rf = path.join(CP.TOP, k, '.lab', 'report.json'), report = fs.existsSync(rf) ? fs.readFileSync(rf) : null;
-    const tally = (i, s, r) => {
+    // COV 85% of code lines ran | src/main.ts 40/47 never ran: 12-15,30 | ...
+    const takeBase = async (base) => {
+      res.base = base; res.ok = base.ok;
+      let cov = base.lines.find((l) => l.startsWith('COV ')) ?? '';
+      if (!base.ok && tail) { const d = tail(base), c = d?.length ? sectionCov(base.lines, d[0]) : ''; if (c) { res.ok = true; res.dropped = d; cov = c; } }
+      if (!res.ok) return null;
+      const skip = new Set();
+      for (const m of cov.matchAll(/\| (\S+) \d+\/\d+ never ran: ([\d,-]+)/g)) for (const r of m[2].split(',')) { const [a, b = a] = r.split('-').map(Number); for (let x = a; x <= b; x++) skip.add(`${m[1]}:${x}`); }
+      res.cov = cov;
+      if (onBase) await onBase(cov);
+      return skip;
+    };
+    const tally = (i, s, r, total) => {
       const what = whatOf(s);
       if (!r.ran) { res.skipped++; out(`  - ${s.file}:${s.line} ${what}: does not build, skipped`); return; }
       res.tried++;
-      if (r.ok) res.lived.push({ s, what }); else res.caught++;
-      out(`  ${i}/${chosen.length} ${r.ok ? 'survived' : 'caught  '} ${s.file}:${s.line} ${what}`);
+      const caught = res.dropped ? caughtBy(r, res.dropped) : !r.ok;
+      if (caught) res.caught++; else res.lived.push({ s, what });
+      out(`  ${i}/${total} ${caught ? 'caught  ' : 'survived'} ${s.file}:${s.line} ${what}`);
     };
+    // (the unit's own last result stays the base run's, not a bug's)
+    const rf = path.join(CP.TOP, k, '.lab', 'report.json');
+    if (only) {
+      // the bugs are known: the coverage run (the unit itself) and the bugs (each in a copy, from a copy taken before anything
+      // runs, with a server of its own) at once, `jobs` bugs at a time beside it; said in order once the coverage run is in
+      res.sites = sites(files, new Set());
+      const chosen = only.filter((s) => backup.get(s.file)?.split('\n')[s.line - 1] === s.code && backup.has(s.file));   // (a line that changed since: not that bug any more)
+      const jobs = Math.min(mutateJobs(k), chosen.length);
+      out(`  ${chosen.length} bug(s), one test run each${jobs ? `, beside the coverage run${jobs > 1 ? `, ${jobs} at a time` : ''}` : ''}${k === 'll' ? ' (LeviLamina under Wine: about 2 min each; run it in the background)' : ''}`);
+      const pristine = chosen.length ? copyUnit(k, dir, `${u}__mut0`) : null, got = new Array(chosen.length), env = tail ? { LAB_SECTIONS: '1' } : {};
+      let next = 0, stop = false;
+      try {
+        const baseP = runTestsAsync(k, u, ['--cov'], baseEnv).then(async (b) => { const skip = await takeBase(b); if (!skip) stop = true; return skip; });
+        await Promise.all([baseP, ...Array.from({ length: jobs }, async () => {
+          for (let i; !stop && (i = next++) < chosen.length;) {
+            const s = chosen[i], c = copyUnit(k, pristine.dir, `${u}__mut${i + 1}`);
+            try { fs.writeFileSync(path.join(c.dir, s.file), apply(backup.get(s.file), s)); got[i] = await runTestsAsync(k, path.basename(c.dir), [], env); } finally { c.drop(); }
+          }
+        })]);
+      } finally { pristine?.drop(); }
+      const own = path.join(CP.TOP, k, '.lab', 'reports', u + '.json');
+      if (fs.existsSync(own)) try { fs.writeFileSync(rf, fs.readFileSync(own)); } catch { /* best-effort */ }
+      if (!res.ok) return res;
+      chosen.forEach((s, i) => { if (got[i]) tally(i + 1, s, got[i], chosen.length); });
+      res.chosen = chosen;
+      return res;
+    }
+    const skip = await takeBase(runTests(k, u, ['--cov'], baseEnv));
+    if (!skip) return res;
+    res.sites = sites(files, skip);
+    const chosen = pick(res.sites, Math.min(n, res.sites.length));
+    const jobs = Math.min(mutateJobs(k), chosen.length);
+    out(`  ${chosen.length} bug(s), one test run each${jobs > 1 ? `, ${jobs} at a time` : ''}${k === 'll' ? ' (LeviLamina under Wine: about 2 min each; run it in the background)' : ''}`);
+    const report = fs.existsSync(rf) ? fs.readFileSync(rf) : null;
     if (jobs > 1) {
       // each bug in a copy of the unit with a server of its own, `jobs` at a time (the unit itself is not touched); said in order
       const got = new Array(chosen.length);
@@ -172,7 +230,7 @@ export async function measure(k, u, { n = 6, only = null, out = () => {}, onBase
           try { fs.writeFileSync(path.join(c.dir, s.file), apply(backup.get(s.file), s)); got[i] = await runTestsAsync(k, path.basename(c.dir)); } finally { c.drop(); }
         }
       }));
-      chosen.forEach((s, i) => { if (got[i]) tally(i + 1, s, got[i]); });
+      chosen.forEach((s, i) => { if (got[i]) tally(i + 1, s, got[i], chosen.length); });
     } else {
       let i = 0;
       for (const s of chosen) {
@@ -181,7 +239,7 @@ export async function measure(k, u, { n = 6, only = null, out = () => {}, onBase
         fs.writeFileSync(path.join(dir, s.file), apply(backup.get(s.file), s));
         const r = runTests(k, u);
         fs.writeFileSync(path.join(dir, s.file), backup.get(s.file));
-        tally(i, s, r);
+        tally(i, s, r, chosen.length);
       }
     }
     if (report) try { fs.writeFileSync(rf, report); } catch { /* best-effort */ }

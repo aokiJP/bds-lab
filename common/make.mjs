@@ -245,19 +245,23 @@ export async function harden(L, { name, n = 6, via, model, turns = 40, budget = 
   const text = (x) => al.slice(x.start, x.end + 1).join('\n'), write = (xs) => fs.writeFileSync(tf, before.trimEnd() + '\n' + xs.map((x) => '\n' + text(x) + '\n').join(''));
   write(fresh);
   // the new sections must pass on the code as it is: the ones that fail are kept out (again until the rest pass). The run that
-  // measures the same bugs and the coverage again (below) is that check too — its SECTION lines; its bugs run only once it
-  // passes: one server run less than a check of its own before it
+  // measures the same bugs and the coverage again (below) is that check too — its SECTION lines; its bugs run beside it. When
+  // the failing ones are the last sections, the rest ran as they would without them: no run again (the coverage as the first of
+  // them began; a bug only they catch survives); else the rest run again
   let kept = fresh, m1 = null;
   const suspect = [];
   for (let i = 0; i < 3 && kept.length; i++) {
-    m1 = await M.measure(k, name, { only: lived.map((x) => x.s), out: L.out, baseEnv: { LAB_SECTIONS: '1' } });
+    const titles = new Set(kept.map((x) => x.title));
+    m1 = await M.measure(k, name, { only: lived.map((x) => x.s), out: L.out, baseEnv: { LAB_SECTIONS: '1' }, tail: (b) => M.tailFails(b.lines, titles) });
     const t = m1.base ?? { lines: [] };
     const bad = new Set(t.lines.filter((l) => l.startsWith('SECTION FAIL ')).map((l) => l.slice(13))), whyOf = (title) => t.lines.find((l) => l.startsWith(`SECTION WHY ${title} :: `))?.slice(`SECTION WHY ${title} :: `.length).replace(/ @@ /, ' during ') ?? 'fails';
     const now = kept.filter((x) => bad.has(x.title));
     if (!now.length) break;
-    m1 = null;
+    const done = !!m1.dropped;   // (the last sections only: m1 is the run without them)
+    m1 = done ? m1 : null;
     suspect.push(...now.map((x) => ({ ...x, why: whyOf(x.title) })));
     kept = kept.filter((x) => !bad.has(x.title)); write(kept);
+    if (done) { if (!kept.length) m1 = null; break; }
   }
   for (const x of suspect) { L.out(`SUSPECT "## ${x.title}": fails on the code as it is (${cut(x.why, 140)}): a bug in the code or a wrong test; kept out of tests.txt:`); text(x).split('\n').slice(0, 10).forEach((l) => L.out('  | ' + l)); }
   for (const l of answer.split('\n').filter((y) => /^\s*BUG\b/.test(y)).slice(0, 8)) L.out(`BUG? ${l.trim().replace(/^BUG:?\s*/, '')} (the AI says the code does not do what TASK.md asks)`);
