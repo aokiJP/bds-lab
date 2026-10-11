@@ -7,16 +7,22 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { npmFailed, npmNote } from './build.mjs';
 
 const WIN = process.platform === 'win32';
 const exists = (f) => fs.existsSync(f);
 const walk = (d, pred, acc = []) => { if (exists(d)) for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p, pred, acc); else if (pred(p)) acc.push(p); } return acc; };
 const clip = (s, n = 160) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 3) + '...' : s; };
+// (a failed install is not tried again for a while: common/build.mjs npmFailed, the same memo)
 function npmI(dir, specs) {
+  const key = specs.join(' '), was = npmFailed(dir, key);
+  if (was) throw new Error(was);
   fs.mkdirSync(dir, { recursive: true });
   if (!exists(path.join(dir, 'package.json'))) fs.writeFileSync(path.join(dir, 'package.json'), '{"private":true}\n');
   const r = spawnSync(WIN ? 'npm.cmd' : 'npm', ['i', ...specs, '--no-audit', '--no-fund', '--loglevel=error'], { cwd: dir, encoding: 'utf8', shell: WIN });
-  if (r.status !== 0) throw new Error(`npm i ${specs.join(' ')} failed: ${(r.stderr || r.stdout).slice(-400)}`);
+  const msg = r.status === 0 ? null : `npm i ${specs.join(' ')} failed: ${(r.stderr || r.stdout).slice(-400)}`;
+  npmNote(dir, key, msg);
+  if (msg) throw new Error(msg);
 }
 
 // ---------- doc ----------

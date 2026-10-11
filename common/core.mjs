@@ -548,6 +548,9 @@ async function realDeps({ loud = false } = {}) {
   const dir = path.join(CACHE, 'node');
   const mod = path.join(dir, 'node_modules', 'bedrock-protocol');
   if (!exists(mod) && REAL_DEPS_FAIL) die(REAL_DEPS_FAIL);
+  // (an install that failed a moment ago, in another lab process too, is not tried again yet: B.npmFailed)
+  const was = !exists(mod) && B.npmFailed(dir, 'bedrock-protocol@latest');
+  if (was) die((REAL_DEPS_FAIL = was));
   if (!exists(mod)) {
     fs.mkdirSync(dir, { recursive: true });
     // prismarine-auth pulls a GitHub-hosted package that newer npm refuses (EALLOWGIT): override it with a placeholder, then authStub()
@@ -557,6 +560,7 @@ async function realDeps({ loud = false } = {}) {
     fs.writeFileSync(path.join(ph, 'index.js'), 'module.exports = {};');
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ private: true, overrides: { 'prismarine-auth': 'file:' + ph.replace(/\\/g, '/') } }));
     const r = spawnSync(WIN ? 'npm.cmd' : 'npm', ['i', 'bedrock-protocol@latest', '--ignore-scripts', '--no-audit', '--no-fund', '--loglevel=error'], { cwd: dir, encoding: 'utf8', shell: WIN, env: { ...process.env, npm_config_allow_git: 'all' } });
+    B.npmNote(dir, 'bedrock-protocol@latest', r.status === 0 ? null : 'npm install bedrock-protocol failed:\n' + (r.stderr || r.stdout).slice(-800));
     if (r.status !== 0) die((REAL_DEPS_FAIL = 'npm install bedrock-protocol failed:\n' + (r.stderr || r.stdout).slice(-800)));
     // keep only the minecraft-data this BDS needs (~430MB -> a few MB)
     try {

@@ -18,11 +18,31 @@ export const LIBS = ['@minecraft/math', '@minecraft/vanilla-data', '@minecraft/g
 const TOOLS = { esbuild: '^0.28.0', typescript: '~6.0.3' };
 const ENV_TYPES = '@bedrock-apis/env-types@1.1.0-rc';
 
+// an install that failed (offline, a blocked registry) is not tried again for LAB_NPM_RETRY_MS (10 min; 0 = every time): each
+// command used to run npm again only to say the same failure (env-offline's checks: some 40 npm runs). The failure is kept beside
+// the folder (<dir>.npm-failed), so a folder removed before its install does not forget it
+const npmRetryMs = () => Number(process.env.LAB_NPM_RETRY_MS ?? 600_000);
+/** the same install's failure still fresh → its message, else null */
+export function npmFailed(dir, key) {
+  try {
+    const f = JSON.parse(fs.readFileSync(`${dir}.npm-failed`, 'utf8')), ago = Date.now() - f.at;
+    if (f.key === key && ago >= 0 && ago < npmRetryMs()) return `${f.msg}\n(the same npm install failed ${Math.round(ago / 1000)} s ago: tried again ${Math.round(npmRetryMs() / 60000)} min after it, or now with LAB_NPM_RETRY_MS=0)`;
+  } catch { /* none, or unreadable: try */ }
+  return null;
+}
+/** an install's outcome: msg = its failure (kept), null = it worked (forgotten) */
+export function npmNote(dir, key, msg) {
+  try { if (msg === null) fs.rmSync(`${dir}.npm-failed`, { force: true }); else { fs.mkdirSync(path.dirname(dir), { recursive: true }); fs.writeFileSync(`${dir}.npm-failed`, JSON.stringify({ key, at: Date.now(), msg })); } } catch { /* only a memo */ }
+}
 function npmI(dir, specs, extra = []) {
+  const key = [...specs, ...extra].join(' '), was = npmFailed(dir, key);
+  if (was) throw new Error(was);
   fs.mkdirSync(dir, { recursive: true });
   if (!exists(path.join(dir, 'package.json'))) fs.writeFileSync(path.join(dir, 'package.json'), '{"private":true}\n');
   const r = spawnSync(WIN ? 'npm.cmd' : 'npm', ['i', ...specs, '--no-audit', '--no-fund', '--loglevel=error', '--legacy-peer-deps', ...extra], { cwd: dir, encoding: 'utf8', shell: WIN });
-  if (r.status !== 0) throw new Error(`npm i ${specs.join(' ')} failed:\n${(r.stderr || r.stdout).slice(-600)}`);
+  const msg = r.status === 0 ? null : `npm i ${specs.join(' ')} failed:\n${(r.stderr || r.stdout).slice(-600)}`;
+  npmNote(dir, key, msg);
+  if (msg) throw new Error(msg);
 }
 
 // esbuild + typescript, installed once into the cache
