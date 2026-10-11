@@ -60,7 +60,7 @@ const stranger = { serial: 'XYZ999', model: 'Other', android: '13', sdk: 33, abi
 function world(name, devices, { host = HOST_WIFI, env = {} } = {}) {
   const state = path.join(tmp, `${name}.json`), lab = path.join(tmp, `${name}-lab`);
   fs.writeFileSync(state, JSON.stringify({ phase: 'home' }));
-  const e = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_DEVICES_DIR: lab, APP_HOST_IFACES: JSON.stringify(host), FAKE_DEVICES: JSON.stringify(devices), APP_DEVICE_WAIT_MS: '300', APP_RUN_LOCK: path.join(tmp, `${name}.run.lock`), ...env };
+  const e = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_DEVICES_DIR: lab, APP_HOST_IFACES: JSON.stringify(host), FAKE_DEVICES: JSON.stringify(devices), APP_DEVICE_WAIT_MS: '300', APP_RUN_LOCK: path.join(tmp, `${name}.run.lock`), APP_RUNS_DIR: path.join(tmp, `${name}-out`, 'app', 'runs'), ...env };
   delete e.GITHUB_ACTIONS; delete e.LAB_ASK_FILE; delete e.APP_DEVICE;
   const cli = (args, { input, extra = {} } = {}) => { const r = spawnSync(process.execPath, [path.join(TOP, 'lab.mjs'), 'app', ...args], { cwd: TOP, encoding: 'utf8', timeout: 90_000, env: { ...e, ...extra }, input }); return { status: r.status, text: (r.stdout ?? '') + (r.stderr ?? '') }; };
   const S = () => JSON.parse(fs.readFileSync(state, 'utf8'));
@@ -361,7 +361,7 @@ const RUN_ENV = { APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), APP_TIME_SCALE: '0
 const made = [];
 function runOn(w, args = [], extra = {}) {
   const r = w.cli(['run', '-a', 'jsonui_demo', '--device', 'phone', ...args], { extra: { ...RUN_ENV, ...extra } });
-  const runDir = /→ (app\/runs\/\S+)/.exec(r.text)?.[1];
+  const runDir = /→ (\S*app\/runs\/\S+)/.exec(r.text)?.[1];
   if (runDir) made.push(path.join(TOP, runDir));
   return { ...r, runDir: runDir && path.join(TOP, runDir) };
 }
@@ -369,7 +369,7 @@ await t('run --device (no root, USB, the same Wi-Fi): PASS; no APK, no root, no 
   const w = world('run', [phone(), stranger]);
   ok(w.cli(['device', 'add', 'phone', '--serial', 'R58M123ABC']).status === 0, 'added');
   const r = runOn(w);
-  ok(r.status === 0 && /PASS app\/runs\/.*report\.md/.test(r.text), r.text);
+  ok(r.status === 0 && /PASS \S*app\/runs\/.*report\.md/.test(r.text), r.text);
   const S = w.S(), mine = (S.dev ?? []).filter((c) => c.startsWith('R58M123ABC '));
   ok(!S.calls.some((c) => /^install|pm disable-user|^push .*lab-(pad|relay)|^root$/.test(c)) && !mine.some((c) => / root$| tcpip /.test(c)), `nothing installed, stopped, pushed or rooted:\n${S.calls.filter((c) => /install|disable|push|root/.test(c)).join('\n')}`);
   ok(!(S.dev ?? []).some((c) => /^XYZ999 /.test(c)), 'the other device untouched');
@@ -434,7 +434,7 @@ await t('a run killed outright leaves the values before: list warns, restore put
   for (let k = 0; k < 300 && !/画面を点けたまま/.test(text); k++) await new Promise((res) => setTimeout(res, 100));
   c.kill('SIGKILL');
   await new Promise((res) => c.on('exit', res));
-  { const d = /→ (app\/runs\/\S+)/.exec(text)?.[1]; if (d) made.push(path.join(TOP, d)); }
+  { const d = /→ (\S*app\/runs\/\S+)/.exec(text)?.[1]; if (d) made.push(path.join(TOP, d)); }
   ok(/画面を点けたまま/.test(text), text);
   ok(Dev.pendingRestore(w.lab, 'phone') && w.S().devSettings.R58M123ABC.stay_on_while_plugged_in === '7', 'held, not put back');
   let r = w.cli(['device', 'list']);
@@ -464,7 +464,7 @@ await t('run --device: the content log as it was before the run is an earlier se
   const clog = path.join(tmp, 'stale-ContentLog.txt');
   fs.writeFileSync(clog, '[2026-10-01 09:00:00:000 ERROR] [UI] old_screen.json | from yesterday\n');
   const r = runOn(w, [], { FAKE_CONTENT_LOG: clog });
-  ok(r.status === 0 && /PASS app\/runs\//.test(r.text), r.text.slice(-2500));
+  ok(r.status === 0 && /PASS \S*app\/runs\//.test(r.text), r.text.slice(-2500));
   ok(!/from yesterday/.test(fs.readFileSync(path.join(r.runDir, 'report.md'), 'utf8')), 'not in the report');
 });
 await t('run --device (AOSP su: only `su 0 <command>`): the form found when added is the one used', () => {

@@ -111,7 +111,7 @@ function appEnv(name, extra = {}) {
   fs.writeFileSync(state, JSON.stringify({ phase: 'home' }));
   fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', 'x86_64'), { recursive: true });
   const env = { ...process.env, FAKE_APP_STATE: state, FAKE_EMU_POWER: '1', APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk,
-    APP_STABLE_MS: '100', APP_ADBKEY_DIR: path.join(tmp, `adbkey-${name}`), APP_RUN_LOCK: path.join(tmp, `${name}.run.lock`), REDROID_LOCK: path.join(tmp, `${name}.device.lock`), APP_RELAY_BIN: RELAY_STUB, APP_PAD_BIN: PAD_STUB, APP_PAD_WAIT_MS: '50', APP_TIME_SCALE: '0.05', APP_TESSERACT: path.join(tmp, 'no-tesseract'), ...extra };
+    APP_STABLE_MS: '100', APP_ADBKEY_DIR: path.join(tmp, `adbkey-${name}`), APP_RUN_LOCK: path.join(tmp, `${name}.run.lock`), APP_RUNS_DIR: path.join(tmp, `${name}-out`, 'app', 'runs'), REDROID_LOCK: path.join(tmp, `${name}.device.lock`), APP_RELAY_BIN: RELAY_STUB, APP_PAD_BIN: PAD_STUB, APP_PAD_WAIT_MS: '50', APP_TIME_SCALE: '0.05', APP_TESSERACT: path.join(tmp, 'no-tesseract'), ...extra };
   for (const k of Object.keys(env)) if (/^GOOGLE_|^MS_|^GITHUB_/.test(k) || k === 'APP_DEVICE') delete env[k];
   return { env, state, S: () => JSON.parse(fs.readFileSync(state, 'utf8')) };
 }
@@ -123,7 +123,7 @@ function start(bin, args, env) {
 async function until(what, f, ms = 60_000) { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (f()) return; await sleep(100); } throw new Error(`${what}: ${ms / 1000} 秒で来ません`); }
 const bdsUp = (S) => (S.bds ?? []).some((l) => /^up\b/.test(l));
 const runs = [];
-const runDirOf = (text) => { const m = /→ (app\/runs\/\S+)/.exec(text); return m ? path.join(TOP, m[1]) : null; };
+const runDirOf = (text) => { const m = /→ (\S*app\/runs\/\S+)/.exec(text); return m ? path.join(TOP, m[1]) : null; };
 
 tp('app run: the BDS up while the device is not, the device untouched until its word; then the run on it → PASS', async () => {
   const apk = path.join(tmp, 'apk-a'); lastPull(apk);
@@ -234,7 +234,7 @@ async function debugRun(name, { args = [], extra = {}, apkVersion = String(VC), 
   const timer = setTimeout(() => c.kill('SIGKILL'), 240_000);
   const r = { status: await new Promise((res) => c.on('exit', (code) => res(code))) };
   clearTimeout(timer);
-  for (const m of text.matchAll(/→ (app\/runs\/\S+)/g)) runs.push(path.join(TOP, m[1]));
+  for (const m of text.matchAll(/→ (\S*app\/runs\/\S+)/g)) runs.push(path.join(TOP, m[1]));
   const calls = fs.existsSync(path.join(rd, 'calls')) ? fs.readFileSync(path.join(rd, 'calls'), 'utf8').trim().split('\n') : [];
   const before = fs.existsSync(path.join(rd, 'bds-before-boot')) ? fs.readFileSync(path.join(rd, 'bds-before-boot'), 'utf8').trim() : null;
   return { status: r.status, text, S: S(), calls, before, rd };
@@ -277,7 +277,7 @@ tp('debug: the device has another version than the APKs pulled last time → pul
   ok(r.calls.filter((c) => /^adb .*pull /.test(c)).every((c) => /\/apk\.new\//.test(c)), `pulled aside, apk/ left to the first run: ${r.calls.filter((c) => /pull/.test(c)).join(' | ')}`);
   eq(fs.readFileSync(path.join(r.rd, 'apk', '.version'), 'utf8').trim(), String(VC));
   ok(!fs.existsSync(path.join(r.rd, 'apk.new')), 'apk.new swapped in');
-  ok((r.text.match(/^(PASS|FAIL)(?= app\/runs)/mg) ?? []).join(',') === 'FAIL,PASS', 'the first run ends on the word, the second passes');
+  ok((r.text.match(/^(PASS|FAIL)(?= \S*app\/runs)/mg) ?? []).join(',') === 'FAIL,PASS', 'the first run ends on the word, the second passes');
 });
 
 // (the two runs whose BDS must wait for the device: it never comes up first, so the device boots when its looks run out — 40
@@ -295,7 +295,7 @@ tp('debug: APKs pulled before without .version → as with none: app run waits f
   ok(r.calls.filter((c) => /^adb .*pull /.test(c)).length === 2, 'base + split pulled again');
   eq(fs.readdirSync(path.join(r.rd, 'apk')).sort(), ['.version', 'base.apk', 'split_config.arm64_v8a.apk'], 'the old pull replaced');
   eq(fs.readFileSync(path.join(r.rd, 'apk', '.version'), 'utf8').trim(), String(VC));
-  ok((r.text.match(/^(PASS|FAIL)(?= app\/runs)/mg) ?? []).join(',') === 'PASS', 'one run, no "again"');
+  ok((r.text.match(/^(PASS|FAIL)(?= \S*app\/runs)/mg) ?? []).join(',') === 'PASS', 'one run, no "again"');
 });
 
 await Promise.all(pending);
