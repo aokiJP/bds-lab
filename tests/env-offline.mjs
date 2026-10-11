@@ -10,10 +10,12 @@ import { fileURLToPath } from 'node:url';
 
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const T = fs.mkdtempSync(path.join(os.tmpdir(), 'bdslab-env-'));
-const REPO = path.join(T, 'repo');
+const REPO = process.env.ENV_TEST_REPO || path.join(T, 'repo');   // (ENV_TEST_REPO: the copy part 2 made for part 3)
+if (!process.env.ENV_TEST_REPO) {
 for (const d of ['common', 'bds', 'end', 'll']) fs.cpSync(path.join(TOP, d), path.join(REPO, d), { recursive: true, filter: (s) => !/[\\/](\.lab|dist|runs|node_modules)$/.test(s) });
 for (const f of ['lab.mjs', 'lab.sh', 'AGENTS.md']) fs.copyFileSync(path.join(TOP, f), path.join(REPO, f));
 fs.chmodSync(path.join(REPO, 'lab.sh'), 0o755);
+}
 let bad = 0, good = 0;
 const check = (ok, what, detail = '') => { console.log(`${ok ? '✔' : '✘'} ${what}${ok || !detail ? '' : '\n    ' + String(detail).trim().split('\n').slice(-6).join('\n    ')}`); ok ? good++ : bad++; };
 const clean = { ...process.env }; for (const k of Object.keys(clean)) if (/proxy|CA_|CERT|NODE_USE_ENV_PROXY|LAB_NETENV/i.test(k)) delete clean[k];
@@ -21,9 +23,12 @@ const lab = (args, env = {}, timeout = 120000) => { const r = spawnSync(process.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ENV_TEST_PART=1|2: only sections 1–5 or only 6–8 (common/run-tests.mjs runs the file as these two parts side by side;
-// each part has its own copy of the lab, and no section of the second half reads what the first one left)
+// each part has its own copy of the lab, and no section of the second half reads what the first one left). Part 2 hands
+// sections 7–8 (the offline build and carry checks, ll, python, lab.sh) to a third copy of itself, ENV_TEST_PART=3, started
+// on a copy of the lab as section 6 left it (the unit `relay` made); it runs beside 6–6b and is printed at their end
 const PART = Number(process.env.ENV_TEST_PART) || 0, part = (n) => !PART || PART === n;
 let r;
+let third = null;
 if (part(1)) {
 // 1. HTTPS_PROXY reaches Node's fetch (every download goes through the proxy; it answers 403 + x-deny-reason like a sandbox's)
 const seen = [];
@@ -94,6 +99,12 @@ if (part(2)) {
   fs.writeFileSync(path.join(cache, 'beta.json'), JSON.stringify({ server: '2.8.0-beta', 'server-gametest': '1.0.0-beta' }));
   const env = { LAB_CACHE: cache, LAB_RUNTIME: 'native', LAB_NOTRACE: '1', LAB_TYPES: '0', NO_COLOR: '1', npm_config_registry: 'http://127.0.0.1:9/', npm_config_fetch_retries: '0', npm_config_fetch_timeout: '2000' };
   r = lab(['bds', 'new', 'relay', 'Relay', '--js'], env);
+  if (PART === 2) {
+    fs.cpSync(REPO, path.join(T, 'repo3'), { recursive: true });
+    const c = spawn(process.execPath, [fileURLToPath(import.meta.url)], { env: { ...process.env, ENV_TEST_PART: '3', ENV_TEST_REPO: path.join(T, 'repo3') }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let o = ''; c.stdout.on('data', (b) => { o += b; }); c.stderr.on('data', (b) => { o += b; });
+    third = new Promise((res) => c.on('close', (code) => res({ code, out: o })));
+  }
   fs.writeFileSync(path.join(REPO, 'bds', 'addons', 'relay', 'tests.txt'), '## says hello\nsay relay-hello\n~ relay-hello\n');
   const outDir = path.join(T, 'handoff');
   // vendored code keeps its dist/ (what `lan` runs); a lab's dist/ (built .mcaddon) does not travel
@@ -180,6 +191,15 @@ if (part(2)) {
   fs.writeFileSync(path.join(REPO, 'bds', 'README.md'), '# bds\n');
 }
 
+if (third) {   // (sections 7–8 ran in the third copy: its lines, counted)
+  const t3 = await third, lines = t3.out.split('\n').filter((l) => !/^(PASS|FAIL) \d+\/\d+$/.test(l));
+  console.log(lines.join('\n').trim());
+  const n = (re) => lines.filter((l) => re.test(l)).length;
+  good += n(/^✔ /); bad += n(/^✘ /);
+  if (t3.code !== 0 && !n(/^✘ /)) { bad++; console.log('✘ sections 7–8 (the third copy) exited with ' + t3.code); }
+}
+}
+if (part(3)) {
 // 7. offline build: TypeScript already on the machine turns src/ into bp/scripts without the network
 {
   const U = path.join(REPO, 'bds', 'addons', 'relay');
