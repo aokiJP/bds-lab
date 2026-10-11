@@ -108,7 +108,7 @@ function appEnv(name, extra = {}) {
   fs.writeFileSync(state, JSON.stringify({ phase: 'home' }));
   fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', 'x86_64'), { recursive: true });
   const env = { ...process.env, FAKE_APP_STATE: state, FAKE_EMU_POWER: '1', APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk,
-    APP_STABLE_MS: '100', APP_ADBKEY_DIR: path.join(tmp, 'adbkey'), APP_RELAY_BIN: RELAY_STUB, APP_PAD_BIN: PAD_STUB, APP_PAD_WAIT_MS: '50', APP_TIME_SCALE: '0.2', APP_TESSERACT: path.join(tmp, 'no-tesseract'), ...extra };
+    APP_STABLE_MS: '100', APP_ADBKEY_DIR: path.join(tmp, 'adbkey'), APP_RELAY_BIN: RELAY_STUB, APP_PAD_BIN: PAD_STUB, APP_PAD_WAIT_MS: '50', APP_TIME_SCALE: '0.05', APP_TESSERACT: path.join(tmp, 'no-tesseract'), ...extra };
   for (const k of Object.keys(env)) if (/^GOOGLE_|^MS_|^GITHUB_/.test(k) || k === 'APP_DEVICE') delete env[k];
   return { env, state, S: () => JSON.parse(fs.readFileSync(state, 'utf8')) };
 }

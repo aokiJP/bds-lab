@@ -43,8 +43,9 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'app-offline-'));
 // no OCR unless a test asks for the fake one: a tesseract installed on this machine would read the fake screens (garbage
 // words like "Wf") and steer the joins that the tests drive by the gamepad alone
 if (!process.env.APP_TESSERACT_REAL) process.env.APP_TESSERACT = path.join(tmp, 'no-tesseract');
-// the fake device answers at once: the lab's fixed pauses (made for a real emulator) a fifth as long — the suite in half the time
-process.env.APP_TIME_SCALE ??= '0.2';
+// the fake device answers at once: the lab's fixed pauses (made for a real emulator) a twentieth as long — a fifth made each part
+// 70–110 s, most of it these pauses (the login test keeps a fifth: its fake browser quits on a clock of its own)
+process.env.APP_TIME_SCALE ??= '0.05';
 fs.writeFileSync(path.join(tmp, 'joinonly.txt'), 'launch\njoin\nuntil joined 5000\nshot world\n');
 
 
@@ -827,6 +828,7 @@ await t('login: the browser signs in → the token is picked up, the browser clo
   const L = await imp('app/lib/login.mjs');
   const cache = path.join(tmp, 'login-cache'), argsFile = path.join(tmp, 'bargs.json');
   process.env.FAKE_LOGIN_AFTER = '3'; process.env.FAKE_BROWSER_ARGS = argsFile; process.env.DISPLAY ??= ':0';
+  const scale0 = process.env.APP_TIME_SCALE; process.env.APP_TIME_SCALE = '0.2';   // (the browser quits after a moment of its own: polls a fifth as long, as before)
   const tok = await L.autoOauthToken({ cacheDir: cache, browser: path.join(FAKE, 'browser.mjs'), timeoutMs: 20000 });
   eq(tok, 'oauth2_4/fake-login-token');
   eq(fs.readdirSync(cache).filter((n) => n.startsWith('login-')), []);
@@ -834,7 +836,7 @@ await t('login: the browser signs in → the token is picked up, the browser clo
   ok(a.includes('--remote-debugging-port=0') && a.includes(L.LOGIN_URL) && !a.some((x) => /enable-automation|headless/.test(x)), 'a normal window: ' + a.join(' '));
   process.env.FAKE_BROWSER_QUIT = '1';
   let e = null; try { await L.autoOauthToken({ cacheDir: cache, browser: path.join(FAKE, 'browser.mjs'), timeoutMs: 20000 }); } catch (x) { e = x; }
-  delete process.env.FAKE_BROWSER_QUIT; delete process.env.FAKE_LOGIN_AFTER; delete process.env.FAKE_BROWSER_ARGS;
+  delete process.env.FAKE_BROWSER_QUIT; delete process.env.FAKE_LOGIN_AFTER; delete process.env.FAKE_BROWSER_ARGS; process.env.APP_TIME_SCALE = scale0;
   ok(/閉じられました/.test(e?.message), 'closed early: ' + e?.message);
   eq(fs.readdirSync(cache).filter((n) => n.startsWith('login-')), []);
 });
@@ -1850,7 +1852,7 @@ await t('run: the device\'s own inputs — mouse (press, hover, wheel), a game c
 await t('app ui --sizes/--cutouts: every screen again on a 4:3 tablet and under a notch, the shape put back after each', () => {
   const state = path.join(tmp, 'ui-shapes.json'); fs.writeFileSync(state, JSON.stringify({ phase: 'home' }));
   const sdk = path.join(tmp, 'sdk-ui'); fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', HOST_ABI), { recursive: true });
-  const env = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, APP_APK_DIR: apkDir, APP_STABLE_MS: '100', APP_TITLE_CALM_MS: '100', APP_ADBKEY_DIR: path.join(tmp, 'adbkey-e2e'), APP_TESSERACT: path.join(FAKE, 'tesseract'), APP_UI_CUTOUTS: 'tall', FAKE_MAGENTA: '1', FAKE_OCR_RAWKEY: '1' };
+  const env = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, APP_APK_DIR: apkDir, APP_STABLE_MS: '100', APP_TITLE_CALM_MS: '100', APP_ADBKEY_DIR: path.join(tmp, 'adbkey-e2e'), APP_TESSERACT: path.join(FAKE, 'tesseract'), APP_UI_CUTOUTS: 'tall', FAKE_MAGENTA: '1', FAKE_OCR_RAWKEY: '1', APP_TIME_SCALE: '0.01' };
   delete env.GOOGLE_AAS_TOKEN; delete env.GOOGLE_EMAIL; delete env.GITHUB_ACTIONS; delete env.GITHUB_STEP_SUMMARY;
   const r = spawnSync(process.execPath, [path.join(TOP, 'lab.mjs'), 'app', 'ui', '-a', 'jsonui_demo', '--no-fetch', '--screens', 'chest', '--sizes', '1024x768'], { cwd: TOP, env, encoding: 'utf8', timeout: 600_000 });
   const text = r.stdout + r.stderr, runDir = path.join(TOP, 'app', /→ (app\/runs\/\S+)/.exec(text)?.[1]?.replace(/^app\//, '') ?? 'none');
@@ -1865,13 +1867,15 @@ await t('app ui --sizes/--cutouts: every screen again on a 4:3 tablet and under 
   ok(/画面 ui-chest の [\d.]+% が紫（マゼンタ）: テクスチャが見つからない/.test(rep) && !/画面 world の/.test(rep), 'a missing texture seen in the picture: ' + rep.slice(0, 3000));
   ok(/画面 ui-chest に、訳されていないキーらしい文字: item\.lab:ruby\.name/.test(rep) && !/画面 world に、訳されていない/.test(rep), 'a raw translation key read on a screen\'s picture: ' + rep.slice(0, 3000));
 });
+// (the ui tests: the app lab's pauses a hundredth as long, not a fifth — the catalog's waits are a real device's: half a minute
+// of a fake one's time)
 await t('app ui --all: every screen as a section on the device (keys, forms by js, blocks tapped, OCR buttons), the content log\'s errors fail it and are listed by screen', () => {
   const clog = path.join(tmp, 'ContentLog.txt');
   fs.writeFileSync(clog, '[2026-10-03 09:00:00:000 INFO] [Packs] loaded\n[2026-10-03 09:00:01:000 ERROR] [UI] server_form.json | demo_form | binding #nope not found\n');
   const run = (extra, args) => {
     const state = path.join(tmp, `ui-${args.length}.json`); fs.writeFileSync(state, JSON.stringify({ phase: 'home' }));
     const sdk = path.join(tmp, 'sdk-ui'); fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', HOST_ABI), { recursive: true });
-    const env = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, APP_APK_DIR: apkDir, APP_STABLE_MS: '100', APP_TITLE_CALM_MS: '100', APP_ADBKEY_DIR: path.join(tmp, 'adbkey-e2e'), APP_TESSERACT: path.join(FAKE, 'tesseract'), FAKE_CONTENT_LOG: clog, ...extra };
+    const env = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, APP_APK_DIR: apkDir, APP_STABLE_MS: '100', APP_TITLE_CALM_MS: '100', APP_ADBKEY_DIR: path.join(tmp, 'adbkey-e2e'), APP_TESSERACT: path.join(FAKE, 'tesseract'), FAKE_CONTENT_LOG: clog, APP_TIME_SCALE: '0.01', ...extra };
     delete env.GOOGLE_AAS_TOKEN; delete env.GOOGLE_EMAIL; delete env.GITHUB_ACTIONS; delete env.GITHUB_STEP_SUMMARY;
     const r = spawnSync(process.execPath, [path.join(TOP, 'lab.mjs'), 'app', 'ui', '-a', 'jsonui_demo', '--no-fetch', ...args], { cwd: TOP, env, encoding: 'utf8', timeout: 600_000 });
     const text = r.stdout + r.stderr, runDir = path.join(TOP, 'app', /→ (app\/runs\/\S+)/.exec(text)?.[1]?.replace(/^app\//, '') ?? 'none');

@@ -335,7 +335,7 @@ await t('screen / tap --device <name>: the person\'s device (the emulator otherw
 // ---- app run on a person's device ----
 const RELAY_STUB = path.join(tmp, 'lab-relay-stub'); fs.writeFileSync(RELAY_STUB, 'stub');
 const PAD_STUB = path.join(tmp, 'lab-pad-stub'); fs.writeFileSync(PAD_STUB, 'stub');
-const RUN_ENV = { APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), APP_TIME_SCALE: '0.2', APP_STABLE_MS: '100', APP_PAD_WAIT_MS: '50', APP_TESSERACT: path.join(tmp, 'no-tesseract'), APP_RELAY_BIN: RELAY_STUB, APP_PAD_BIN: PAD_STUB, APP_UNLOCK_MS: '3000' };
+const RUN_ENV = { APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), APP_TIME_SCALE: '0.05', APP_STABLE_MS: '100', APP_PAD_WAIT_MS: '50', APP_TESSERACT: path.join(tmp, 'no-tesseract'), APP_RELAY_BIN: RELAY_STUB, APP_PAD_BIN: PAD_STUB, APP_UNLOCK_MS: '3000' };
 const made = [];
 function runOn(w, args = [], extra = {}) {
   const r = w.cli(['run', '-a', 'jsonui_demo', '--device', 'phone', ...args], { extra: { ...RUN_ENV, ...extra } });
