@@ -7,21 +7,17 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync, spawn, execSync } from 'node:child_process';
+import { spawnSync, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FAKE = path.join(TOP, 'tests', 'fake');
-// OFFLINE_CHILD=<dir>: one section run for the parent below, in the parent's copy of the lab (the bds / end / ll sections share nothing but that copy)
-const CHILD = process.env.OFFLINE_CHILD;
-const T = CHILD || fs.mkdtempSync(path.join(os.tmpdir(), 'bdslab-offline-'));
+const T = fs.mkdtempSync(path.join(os.tmpdir(), 'bdslab-offline-'));
 const REPO = path.join(T, 'repo');
-if (!CHILD) {
 for (const d of ['common', 'bds', 'end', 'll']) fs.cpSync(path.join(TOP, d), path.join(REPO, d), { recursive: true, filter: (s) => !/[\\/](\.lab|dist|runs|node_modules)$/.test(s) });
 for (const f of ['lab.mjs', 'AGENTS.md']) fs.copyFileSync(path.join(TOP, f), path.join(REPO, f));
 for (const d of ['bds/addons', 'end/plugins', 'll/mods']) { fs.rmSync(path.join(REPO, d), { recursive: true, force: true }); fs.mkdirSync(path.join(REPO, d)); }
 fs.rmSync(path.join(REPO, 'bds', '.lab-current'), { force: true });
-}
 
 let bad = 0, good = 0;
 const check = (ok, what, detail = '') => { console.log(`${ok ? '✔' : '✘'} ${what}${ok || !detail ? '' : '\n    ' + String(detail).trim().split('\n').slice(-25).join('\n    ')}`); if (ok) good++; else bad++; };
@@ -59,25 +55,9 @@ function lab(flavor, args, extra = {}) {
 }
 const want = process.argv.slice(2);
 const on = (f) => !want.length || want.includes(f);
-// the three labs' sections run at once, each in its own process (output printed in order afterwards); docker follows, it needs what they leave
-const parts = ['bds', 'end', 'll'].filter(on);
-if (!CHILD && parts.length > 1) {
-  const runs = await Promise.all(parts.map((f) => new Promise((resolve) => {
-    let out = '';
-    const c = spawn(process.execPath, [fileURLToPath(import.meta.url), f], { env: { ...process.env, OFFLINE_CHILD: T } });
-    c.stdout.on('data', (d) => { out += d; }); c.stderr.on('data', (d) => { out += d; });
-    c.on('close', (code) => resolve({ f, out, code }));
-  })));
-  for (const x of runs) {
-    const m = /^(?:PASS|FAIL) (\d+)\/(\d+)$/m.exec(x.out);
-    if (m) { good += +m[1]; bad += +m[2] - +m[1]; } else { bad0++; console.log(`✘ ${x.f}: the section did not finish (exit ${x.code})`); }
-    console.log(x.out.replace(/\n?(?:PASS|FAIL) \d+\/\d+\n?$/, '\n').trimEnd());
-  }
-}
-const own = (f) => on(f) && !(!CHILD && parts.length > 1);
 
 // ------------------------------------------------------------------------------------------------ bds
-if (own('bds')) {
+if (on('bds')) {
   console.log('\n== bds (addons on plain BDS)');
   seed(CACHES.bds, { version: '1.26.51.1\n', exe: { name: 'bedrock_server', body: `#!/bin/sh\nexec "${process.execPath}" "${path.join(FAKE, 'fake_server.cjs')}" bds\n` } });
   let r = lab('bds', ['new', 'demo', 'Demo', '--js']);
@@ -94,7 +74,7 @@ if (own('bds')) {
 }
 
 // ------------------------------------------------------------------------------------------------ end
-if (own('end')) {
+if (on('end')) {
   console.log('\n== end (Endstone plugins)');
   const py = spawnSync('python3', ['-c', 'import sys;print(sys.executable)'], { encoding: 'utf8' }).stdout.trim();
   seed(CACHES.end, { version: '1.26.51.1\nendstone 0.11.11 (fake)\n', exe: { name: 'bedrock_server', body: '#!/bin/sh\nexit 1\n' } });
@@ -190,7 +170,7 @@ print('OK' if not bad and 'hello = endstone_hello:Hello' in ep and 'endstone_hel
 }
 
 // ------------------------------------------------------------------------------------------------ ll
-if (own('ll')) {
+if (on('ll')) {
   console.log('\n== ll (LeviLamina mods)');
   seed(CACHES.ll, { version: '1.26.51.1\nlevilamina 26.51.5 (fake)\n', exe: { name: 'bedrock_server_mod.exe', body: 'fake' } });
   const eng = path.join(CACHES.ll, 'bds', 'plugins', 'legacy-script-engine-quickjs');
@@ -299,5 +279,5 @@ if (on('docker')) {
 }
 
 console.log(`\n${bad ? 'FAIL' : 'PASS'} ${good}/${good + bad}`);
-if (CHILD) { /* the parent removes it */ } else if (!process.env.KEEP) fs.rmSync(T, { recursive: true, force: true }); else console.log('kept ' + T);
+if (!process.env.KEEP) fs.rmSync(T, { recursive: true, force: true }); else console.log('kept ' + T);
 process.exit(bad ? 1 : 0);

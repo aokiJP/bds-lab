@@ -545,6 +545,7 @@ try {
   ok(r.code === 1 && /usage: node lab\.mjs colony show <post>/.test(r.t), 'colony show with no post number: its usage, exit 1', r.t);
   }
 } finally {
+  await siteDone.catch(() => {}); // the board checks finish (or fail) before the server and T go away
   hsrv.close(); srv.close();
   for (const u of [...units(), 'borrowed_m_hand', 'borrowed_m_slip']) fs.rmSync(path.join(UNITS, u), { recursive: true, force: true });
   if (cur0 === null) fs.rmSync(curFile, { force: true }); else fs.writeFileSync(curFile, cur0);

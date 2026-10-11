@@ -16,7 +16,12 @@ fs.mkdirSync(BIN);
 for (const a of ['claude', 'codex', 'gemini']) { fs.writeFileSync(path.join(BIN, a), `#!/bin/sh\necho "${a} $*" >> "${SPEND}"\nexit 3\n`); fs.chmodSync(path.join(BIN, a), 0o755); }
 const kind0 = (() => { try { return fs.readFileSync(path.join(TOP, '.lab-kind'), 'utf8'); } catch { return null; } })();
 // (async: the independent checks below run at once; the ones that share bds/.lab/addon or .lab-kind stay in order)
-const lab = (args, e = {}, cwd = TOP, timeout = 60000) => new Promise((resolve) => {
+// (at most 6 lab.mjs processes at once, so the timings below do not shake on a CI with 4 cores; the clock starts when a slot is taken)
+const SLOTS = 6; let busy = 0; const waiting = [];
+const slot = () => new Promise((go) => { if (busy < SLOTS) { busy++; go(); } else waiting.push(go); });
+const unslot = () => { const n = waiting.shift(); if (n) n(); else busy--; };
+const lab = async (args, e = {}, cwd = TOP, timeout = 60000) => { await slot(); try { return await labRun(args, e, cwd, timeout); } finally { unslot(); } };
+const labRun = (args, e, cwd, timeout) => new Promise((resolve) => {
   const t0 = Date.now(); let out = '', err = '', timedOut = false;
   const c = spawn(process.execPath, [path.join(cwd, 'lab.mjs'), ...args], { cwd, env: { ...process.env, PATH: BIN + path.delimiter + process.env.PATH, ANTHROPIC_API_KEY: '', OPENAI_API_KEY: '', LAB_DOTENV: 'off', LAB_NOTIFY: 'off', ...e } });
   const tm = setTimeout(() => { timedOut = true; c.kill('SIGKILL'); }, timeout);
