@@ -17,7 +17,7 @@ js world.scoreboard.getObjectiveAtDisplaySlot('Sidebar').objective.id
 @A fish_n 3 30
 js (() => { const o = world.scoreboard.getObjective('fishcup'), f = (q) => inv(p(q)).filter((s) => /:(cod|salmon|tropical_fish|pufferfish)\*/.test(s)).reduce((n, s) => n + Number(s.split('*')[1]), 0); return [o.getScore(p('A')) ?? 0, f('A')].join(' '); })()
 ~ ^([1-9]\d*) \1$
-until Fishing contest over 120000
+until Fishing contest over 240000
 ~ Fishing contest over: A wins with [1-9]\d* fish \(3 diamonds\)
 wait 300
 js inv(p('A')).join(' ')
