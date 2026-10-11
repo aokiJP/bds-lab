@@ -6,7 +6,7 @@ import { h, act, link } from './dom.mjs';
 import * as U from '../lib/units.mjs';
 import * as R from '../lib/releases.mjs';
 import { fmtBytes } from '../lib/model.mjs';
-import { newUnitCard, importCard, editorView, startUnit, startAttrs } from './workspace.mjs';
+import { newUnitCard, importCard, editorView, startUnit, startAttrs, wayOut } from './workspace.mjs';
 
 /** the 「アドオン」 tab. ctx: ui/workspace.mjs's (api, lab: { slug, repo, workflows? }, gate(action), guarded(action, detail,
  *  fn, done), go(tab), dispatch(workflow, inputs): GitHub's call alone — the guard is this tab's) and:
@@ -26,14 +26,16 @@ export function unitsTab(body, ctx) {
   // (a card's form opened and brought into view: the words shown when there is no unit yet point at them)
   const open = (card) => { const d = card.querySelector?.('details'); if (d) d.open = true; card.scrollIntoView?.({ block: 'start' }); };
   const q = h('input', { type: 'search', placeholder: '探す（名前・題・説明）', 'aria-label': 'アドオンを探す' });
-  const count = h('span', { class: 'muted grow' }), list = h('div', {}, h('p', { class: 'muted' }, '読んでいます…'));
+  const count = h('span', { class: 'muted grow' }), skippedNote = h('div', {}), releasesNote = h('div', {}), list = h('div', {}, h('p', { class: 'muted' }, '読んでいます…'));
   let units = [], latest = {};
   const card = (u) => {
     const last = latest[u.ref], bds = u.kind === 'bds', a = last?.asset;
     return h('div', { class: 'card', 'data-unit': u.ref },
       h('h2', {}, u.title, bds ? null : h('span', { class: 'chip' }, U.KIND_WORDS[u.kind] ?? u.kind), u.version ? h('span', { class: 'chip' }, `v${u.version}`) : null,
-        h('span', { class: u.tests ? 'chip' : 'chip bad' }, u.tests === null ? 'tests.txt なし' : `試験 ${u.tests}`)),
+        u.unread?.includes('tests.txt') ? h('span', { class: 'chip bad', title: 'tests.txt を読めませんでした: 「読み直す」を押してください' }, 'tests.txt 読めず')
+          : h('span', { class: u.tests ? 'chip' : 'chip bad', title: u.tests === null ? 'tests.txt がありません: 「AI で変える」で作らせるか、GitHub で足してください' : null }, u.tests === null ? 'tests.txt なし' : `試験 ${u.tests}`)),
       u.description ? h('p', {}, u.description) : null,
+      u.unread?.length ? h('p', { class: 'warn' }, `${u.unread.join('・')} を読めませんでした（題や説明が足りないかもしれません）: 上の「読み直す」を押してください`) : null,
       h('p', { class: 'muted' }, `${u.dir} · `, !last ? 'まだ配布はありません'
         : a ? [link(a.browser_download_url, `⬇ ${a.name}`), `（${fmtBytes(a.size ?? 0)}・${a.download_count ?? 0} 回）`] : link(last.release.html_url, `⬇ ${last.release.name || last.release.tag_name}`)),
       h('div', { class: 'row' },
@@ -55,7 +57,9 @@ export function unitsTab(body, ctx) {
   const draw = () => {
     const shown = U.filterUnits(units, q.value);
     count.replaceChildren(`${shown.length} 件${units.length >= U.UNIT_LIMIT ? `（最初の ${U.UNIT_LIMIT} 件）` : ''}`);
-    list.replaceChildren(...(!units.length ? [none()] : shown.length ? shown.map(card) : [h('p', { class: 'muted' }, '当てはまるアドオンがありません。')]));
+    list.replaceChildren(...(!units.length ? [none()] : shown.length ? shown.map(card) : [h('p', { class: 'muted' }, '当てはまるアドオンがありません。探す言葉を変えるか、', h('button', { onclick: () => { q.value = ''; draw(); } }, '探す欄を空にする'), ' を押してください。')]));
+    // (end/ and ll/ folders GitHub would not list: the list is shorter than the lab's — said, with the way to read again)
+    skippedNote.replaceChildren(...(units.skipped?.length ? [h('p', { class: 'warn' }, `${units.skipped.map((x) => x.dir).join('・')} を読めませんでした（その分は一覧にありません）: `, h('button', { onclick: () => load(true) }, '読み直す'))] : []));
   };
   q.addEventListener('input', draw);
   // (units unit.yml could not put on the default branch — it takes no direct push: protected — and left on a branch of their
@@ -68,11 +72,17 @@ export function unitsTab(body, ctx) {
       h('ul', { class: 'plain' }, names.map((b) => h('li', { class: 'row', 'data-waiting': b }, h('span', { class: 'grow' }, b),
         link(encodeURI(`https://github.com/${slug}/compare/${branch}...${b}?expand=1`), 'PR を作る'), link(encodeURI(`https://github.com/${slug}/tree/${b}`), 'GitHub')))))] : []));
   };
+  let relFail = null, refsFail = null;
   const load = (fresh = false) => act(async () => {
+    relFail = null; refsFail = null;
     // (not readable: why, where the list would be — and as a toast)
-    const [us, rs, refs] = await Promise.all([U.listUnits(ctx.api, slug, { fresh }).catch((e) => { list.replaceChildren(h('p', { class: 'bad' }, e.message)); throw e; }), R.listReleases(ctx.api, slug).catch(() => []),
-      ctx.api.call('GET', `/repos/${slug}/git/matching-refs/heads/lab-unit`).catch(() => [])]);
+    const [us, rs, refs] = await Promise.all([U.listUnits(ctx.api, slug, { fresh }).catch((e) => { list.replaceChildren(wayOut(e, ctx, () => load(true))); throw e; }),
+      // (releases or branches not readable: the list is still shown, but it says what it could not know — not "no release")
+      R.listReleases(ctx.api, slug).catch((e) => { relFail = e; return []; }),
+      ctx.api.call('GET', `/repos/${slug}/git/matching-refs/heads/lab-unit`).catch((e) => { refsFail = e; return []; })]);
     units = us; latest = R.latestByUnit(rs, us);
+    releasesNote.replaceChildren(...[relFail && ['配布の一覧を読めませんでした（「まだ配布はありません」と出ても、本当は無いとは限りません）', relFail], refsFail && ['PR を待っているユニットを読めませんでした（待っているものが出ていないかもしれません）', refsFail]]
+      .filter(Boolean).map(([say, e]) => h('div', {}, h('p', { class: 'warn' }, say), wayOut(e, ctx, () => load(true)))));
     drawWaiting(refs);
     draw();
     return units;
@@ -81,6 +91,6 @@ export function unitsTab(body, ctx) {
     h('div', { class: 'card', id: 'units' }, h('h2', {}, `アドオン（${slug}）`),
       h('p', { class: 'muted' }, '「試験」は tests.txt を本物のサーバーとプレイヤーで、「仕上げる」は試験・QA のあと .mcaddon を作ります（unit.yml・「進み具合」で見られます。.mcaddon は実行の成果物に）。'),
       h('div', { class: 'row' }, q, h('button', { onclick: () => load(true) }, '読み直す'), count)),
-    waiting, list);
+    waiting, releasesNote, skippedNote, list);
   return load();
 }

@@ -70,19 +70,23 @@ async function pool(items, n, fn) {
   return out;
 }
 async function readUnits(api, slug) {
-  const found = [];
+  const found = [], skipped = [];
   for (const k of KINDS) {
     if (found.length >= UNIT_LIMIT) break;
-    // (no such folder: a lab without that kind; end/ and ll/ are extra — what they cannot say leaves them out)
+    // (no such folder: a lab without that kind; end/ and ll/ are extra — what they cannot say leaves them out of the list,
+    // but not unsaid: `skipped` names them, for the tab to show with the way to read again)
     let list;
-    try { list = await api.call('GET', `/repos/${slug}/contents/${k.dir}`); } catch (e) { if (e.status === 404 || k.kind !== 'bds') continue; throw e; }
+    try { list = await api.call('GET', `/repos/${slug}/contents/${k.dir}`); } catch (e) { if (e.status === 404) continue; if (k.kind !== 'bds') { skipped.push({ dir: k.dir, message: String(e?.message ?? e) }); continue; } throw e; }
     for (const x of Array.isArray(list) ? list : []) if (x?.type === 'dir' && isUnitName(x.name) && found.length < UNIT_LIMIT) found.push({ k, name: x.name });
   }
-  return pool(found, 4, async ({ k, name }) => {
-    const at = (f) => api.file(slug, `${k.dir}/${name}/${f}`).then((x) => x?.text ?? null, () => null);
+  const units = await pool(found, 4, async ({ k, name }) => {
+    // (a file that is not there is null — as it should be; one that could not be read is null too, but named in `unread`)
+    const unread = [];
+    const at = (f) => api.file(slug, `${k.dir}/${name}/${f}`).then((x) => x?.text ?? null, () => { unread.push(f); return null; });
     const [manifest, task, tests] = await Promise.all([k.manifest ? at(k.manifest) : null, at('TASK.md'), at('tests.txt')]);
-    return unitSummary({ kind: k.kind, name, manifest, task, tests });
+    return Object.assign(unitSummary({ kind: k.kind, name, manifest, task, tests }), unread.length ? { unread } : {});
   });
+  return Object.assign(units, { skipped });
 }
 // (per GitHub client — a new sign-in is a new client, so another account never sees what this one read — and per lab)
 const CACHE = new WeakMap();
