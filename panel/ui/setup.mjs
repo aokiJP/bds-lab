@@ -5,7 +5,7 @@
 // against the state this tab sent, removed from the address at once, and — only when this lab, this person and the policy
 // may keep it — turned into the App's keys and sealed into the lab's secrets (storeApp: nothing kept, nothing shown). A
 // secret typed into a fix's field is sealed and sent, and the field emptied (the browser is not asked to remember it).
-import { h, toast, act, link } from './dom.mjs';
+import { h, toast, act, link, failView } from './dom.mjs';
 import * as S from '../lib/setup.mjs';
 import * as P from '../lib/policy.mjs';
 
@@ -23,7 +23,13 @@ export function setupTab(body, ctx) {
     h('p', { class: 'muted' }, admin ? 'サインインと許可の準備を、上から順に確かめます。⚠️ の行のボタンで、このパネルから直せます（秘密はこのブラウザで封じてから GitHub へ。値は残しません）。'
       : '見るだけです: 直すのはラボの管理者です（GitHub が管理者にだけ許します）。貸し手に渡すリンクは誰でも使えます。'),
     back, list));
-  const draw = () => act(async () => { const cs = await S.checks(ctx); list.replaceChildren(...cs.map((c) => row(ctx, c))); return cs; });
+  // (a check that could not be made at all: the words of why and the way on, with 「もう一度」 — never the waiting line for good)
+  const draw = async () => {
+    try { const cs = await S.checks(ctx); list.replaceChildren(...cs.map((c) => row(ctx, c))); return cs; } catch (e) {
+      list.replaceChildren(h('li', {}, failView(e, draw), h('div', { class: 'muted' }, 'ラボを読めませんでした: つながりを確かめて「もう一度」。続くときは、権限の足りたトークンで入り直します。'), link(S.tokenUrl(ctx.lab.slug.split('/')[0]), '権限が全部入ったトークンを作る（GitHub へ）')));
+      return undefined;
+    }
+  };
   return comeBack(ctx, back).then(draw);
 }
 
@@ -44,7 +50,8 @@ function row(ctx, c) {
 }
 function fixOf(ctx, c) {
   const f = c.fix;
-  if (!f) return null;
+  // (no fix of its own: another row comes first — a link that takes there; not a button: the buttons are the fixes)
+  if (!f) return c.next && c.ok !== true ? h('div', { class: 'row' }, h('a', { class: 'btn', href: '#setup', role: 'button', onclick: (ev) => { ev?.preventDefault?.(); globalThis.document.querySelector?.(`[data-check="${c.next.goto}"]`)?.scrollIntoView?.(); } }, c.next.label)) : null;
   if (f.link) return h('div', { class: 'row' }, link(f.link, f.label), h('button', { onclick: () => act(() => globalThis.navigator.clipboard.writeText(f.link), 'リンクをコピーしました') }, 'コピー'));
   const no = notAllowed(ctx, f);
   if (no) return c.ok === true ? null : h('div', { class: 'muted' }, `（${no}）`);
@@ -54,7 +61,8 @@ function fixOf(ctx, c) {
   const step = h('div', { class: 'muted' });
   const btn = h('button', { class: c.ok === true ? null : 'primary', onclick: async () => {
     const values = Object.fromEntries(fields.map(([i, el]) => [i.name, el.value.trim()]));
-    if (fields.some(([, el]) => !el.value.trim())) return toast('空の欄があります', true);
+    const empty = fields.find(([, el]) => !el.value.trim());
+    if (empty) return toast(`空の欄があります: 「${empty[0].label}」を入れてください`, true);
     btn.disabled = true;
     const msg = await act(() => f.run(values, { onStep: (t) => step.replaceChildren(t) }));
     // (what was typed leaves the page: sealed and sent, or refused)
@@ -111,7 +119,7 @@ async function comeBack(ctx, box) {
   }
   box.replaceChildren(h('p', { class: 'muted' }, 'GitHub から App の鍵を受け取り、ラボの秘密に封じています…'));
   const r = await act(async () => S.storeApp(ctx.api, ctx.lab.slug, await ctx.api.appFromManifest(ret.code)));
-  if (!r) return box.replaceChildren(h('p', { class: 'bad' }, 'App を入れられませんでした（上の知らせ）'));
+  if (!r) return box.replaceChildren(h('p', { class: 'bad' }, 'App を入れられませんでした（上の知らせに理由があります）。GitHub に App ができているかもしれません: 下のリンクで見て、あれば鍵を作り直して「秘密」に入れるか、消してもう一度「App を作る」から。'), link(S.appsUrl(ret.owner, ret.isOrg), 'App の設定（GitHub へ）'));
   box.replaceChildren(h('p', { class: 'ok' }, `✅ App ${r.slug} を作り、秘密 ${r.secrets.join('・')} と変数 ${r.variables.join('・')} を入れました。次は「App を入れる」です。`), r.url ? link(r.url, 'App のページ（GitHub）') : null);
   ctx.record?.('setup.app', { app: r.slug });
   ctx.reload?.();

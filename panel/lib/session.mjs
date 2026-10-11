@@ -14,7 +14,7 @@ const unb64url = (s) => Uint8Array.from(atob(String(s).replace(/-/g, '+').replac
 /** what a sign-in's short word means for the person (pure) */
 export function explainAuth(code) {
   const say = {
-    denied: 'GitHub でのサインインが取り消されました',
+    denied: 'GitHub でのサインインが取り消されました。もう一度「GitHub でサインイン」から（「許可する」を押すと入れます）',
     cookie: 'サインインを始めたブラウザ（タブ）とは別のところに戻りました。もう一度「GitHub でサインイン」から',
     expired: 'サインインに時間がかかりすぎました（10 分まで）。もう一度',
     nonce: 'このパネルが始めていないサインインの受け渡しは使いません。もう一度「GitHub でサインイン」から',
@@ -24,12 +24,12 @@ export function explainAuth(code) {
     code: 'GitHub がサインインを受け付けませんでした。もう一度',
     exchange: 'GitHub がサインインを受け付けませんでした。もう一度',
     refresh: 'サインインの期限が切れました。もう一度サインインしてください',
-    github: 'GitHub につながりません。しばらくしてから',
-    unreachable: 'サインインのサービスにつながりません（アドレスと、パネルの CSP の connect-src を確かめてください）',
-    config: 'サインインのサービスの設定が足りません（管理する人に: GITHUB_CLIENT_ID・GITHUB_CLIENT_SECRET・STATE_SECRET・PANEL_ORIGINS）',
-    origin: 'このパネルのアドレスは、サインインのサービスに許されていません（PANEL_ORIGINS）',
-    return: 'このパネルのアドレスは、サインインのサービスに許されていません（PANEL_ORIGINS）',
-    body: 'サインインのサービスが頼みを受け付けませんでした',
+    github: 'GitHub につながりません。少し待ってから、もう一度「GitHub でサインイン」を押してください',
+    unreachable: 'サインインのサービスにつながりません（アドレスと、パネルの CSP の connect-src を確かめてください）。いそぐときは「トークンで入る」から入れます',
+    config: 'サインインのサービスの設定が足りません（管理する人に: GITHUB_CLIENT_ID・GITHUB_CLIENT_SECRET・STATE_SECRET・PANEL_ORIGINS）。それまでは「トークンで入る」から入れます',
+    origin: 'このパネルのアドレスは、サインインのサービスに許されていません（管理する人に PANEL_ORIGINS を直してもらってください）。それまでは「トークンで入る」から入れます',
+    return: 'このパネルのアドレスは、サインインのサービスに許されていません（管理する人に PANEL_ORIGINS を直してもらってください）。それまでは「トークンで入る」から入れます',
+    body: 'サインインのサービスが頼みを受け付けませんでした。もう一度。続くときは「トークンで入る」から入れます',
   };
   return say[code] ?? `サインインできませんでした（${String(code ?? '').replace(/[^a-z_]/g, '').slice(0, 32) || '?'}）`;
 }
