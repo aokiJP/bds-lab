@@ -10,14 +10,14 @@ wait 500
 @B select fishing_rod
 enchant A lure 3
 enchant B lure 3
-@A cmd /lab:fish 40
-~ Fishing contest started: 40 seconds
+@A cmd /lab:fish 90
+~ Fishing contest started: 90 seconds
 js world.scoreboard.getObjectiveAtDisplaySlot('Sidebar').objective.id
 = fishcup
 @A fish_n 3 30
 js (() => { const o = world.scoreboard.getObjective('fishcup'), f = (q) => inv(p(q)).filter((s) => /:(cod|salmon|tropical_fish|pufferfish)\*/.test(s)).reduce((n, s) => n + Number(s.split('*')[1]), 0); return [o.getScore(p('A')) ?? 0, f('A')].join(' '); })()
 ~ ^([1-9]\d*) \1$
-until Fishing contest over 60000
+until Fishing contest over 120000
 ~ Fishing contest over: A wins with [1-9]\d* fish \(3 diamonds\)
 wait 300
 js inv(p('A')).join(' ')
