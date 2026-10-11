@@ -3,7 +3,8 @@
 # (FAKE_ADB_PORT: tests/fake/app/adb-server.mjs, a thread of the test's own process), the call is answered there: a node process
 # per call cost some 50 ms of CPU, and a quarter of app-offline makes 1300 calls. Without one, or for a call that reads its
 # standard input (pair, sqlite3, a file written with cat >, typed text) or runs on (logcat): adb.mjs in a process of its own.
-# To the server: the folder, the argument count, the arguments and the environment, each ending in a NUL, then one more NUL.
+# To the server: the folder, the argument count, the arguments and the environment (only what adb.mjs reads: FAKE_*, APP_*,
+# ANDROID_*, HOME — `compgen -e` of all of it was a fork per call), each ending in a NUL, then one more NUL.
 # From it: the exit code, stderr and "=" stdout, on a line each (bytes other than printable ASCII as \0ooo, for printf %b); the
 # stdout line "raw" instead: stdout comes as it is after the lines (a picture)
 here=${0%/*}
@@ -15,7 +16,7 @@ esac
 { exec 3<> "/dev/tcp/127.0.0.1/$FAKE_ADB_PORT"; } 2> /dev/null || alone "$@"
 {
   printf '%s\0' "$PWD" "$#" "$@"
-  for n in $(compgen -e); do printf '%s=%s\0' "$n" "${!n}"; done
+  for n in ${!FAKE_*} ${!APP_*} ${!ANDROID_*} HOME; do printf '%s=%s\0' "$n" "${!n}"; done
   printf '\0'
 } >&3
 if ! { IFS= read -r code && IFS= read -r err && IFS= read -r out; } <&3; then
