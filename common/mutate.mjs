@@ -129,14 +129,16 @@ function copyUnit(k, dir, name) {
 }
 export const whatOf = (s) => (s.kind === 'call' ? `\`${s.was.slice(0, 70)}\` left out` : `\`${s.was}\` → \`${s.to.trim()}\``);
 /** coverage, then small bugs one at a time (n spread over the code, or exactly `only`: the same bugs again, e.g. after new tests).
- *  { ok (the tests pass as they are), cov, sites, tried, caught, lived: [{ s, what }], skipped }. The unit is put back exactly. */
-export async function measure(k, u, { n = 6, only = null, out = () => {}, onBase = null } = {}) {
+ *  { ok (the tests pass as they are), cov, sites, tried, caught, lived: [{ s, what }], skipped }. The unit is put back exactly.
+ *  baseEnv: the coverage run's environment besides (LAB_SECTIONS=1: its SECTION lines, for a caller that also needs to know
+ *  which sections fail — harden) */
+export async function measure(k, u, { n = 6, only = null, out = () => {}, onBase = null, baseEnv = {} } = {}) {
   const dir = CP.unitDir(k, u), { files } = unitFiles(dir);
   const res = { ok: false, cov: '', sites: [], tried: 0, caught: 0, lived: [], skipped: 0, files };
   if (!files.length) return { ...res, none: true };
   const held = CP.hold(k, u);
   try {
-    const base = runTests(k, u, ['--cov']);
+    const base = runTests(k, u, ['--cov'], baseEnv);
     res.base = base; res.ok = base.ok;
     if (!base.ok) return res;
     // COV 85% of code lines ran | src/main.ts 40/47 never ran: 12-15,30 | ...

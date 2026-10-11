@@ -23,6 +23,8 @@ const ok = (c, m) => { if (!c) throw new Error(m); };
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'device-offline-'));
 const FAKE = path.join(TOP, 'tests', 'fake', 'app');
 fs.chmodSync(path.join(FAKE, 'adb'), 0o755);
+// (the fake adb's calls answered in a thread of this process: tests/fake/app/adb-server.mjs)
+await (await imp('tests/fake/app/adb-server.mjs')).fakeAdbServer();
 
 // ---- the devices the fake adb plays ----
 const WLAN = '1: lo    inet 127.0.0.1/8 scope host lo\n3: wlan0    inet 192.168.1.23/24 brd 192.168.1.255 scope global wlan0';

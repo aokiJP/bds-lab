@@ -109,7 +109,9 @@ await t('the template: host.yml pinned to commits, contents: read, no pull_reque
 // ---- the commands, against the fake gh ----
 const GHD = path.join(tmp, 'github'), HOME = path.join(tmp, 'home'), STATE = path.join(tmp, 'state'), FAKE = path.join(TOP, 'tests', 'fake', 'host', 'gh');
 fs.mkdirSync(GHD, { recursive: true }); fs.mkdirSync(HOME, { recursive: true }); fs.chmodSync(FAKE, 0o755);
-fs.writeFileSync(path.join(HOME, '.gitconfig'), `[url "${GHD}/"]\n\tinsteadOf = https://github.com/\n[init]\n\tdefaultBranch = main\n[user]\n\tname = t\n\temail = t@t\n`);
+// (git here stores and sends without compressing: a push is the whole lab, and zlib and the delta search over it were most of
+// this file's CPU)
+fs.writeFileSync(path.join(HOME, '.gitconfig'), `[url "${GHD}/"]\n\tinsteadOf = https://github.com/\n[init]\n\tdefaultBranch = main\n[user]\n\tname = t\n\temail = t@t\n[core]\n\tcompression = 0\n[pack]\n\twindow = 0\n`);
 const ENV = { ...process.env, HOME, GIT_CONFIG_NOSYSTEM: '1', LAB_GH: FAKE, FAKEGH_DIR: GHD, LAB_HOST_STATE: STATE, LAB_HOST_POLL_MS: '30', NO_COLOR: '1' };
 for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GITHUB_ACTIONS', 'LAB_ASK_FILE']) delete ENV[k];
 const state = () => JSON.parse(fs.readFileSync(path.join(GHD, 'state.json'), 'utf8'));

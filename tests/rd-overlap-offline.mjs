@@ -15,6 +15,8 @@ const imp = (p) => import(pathToFileURL(path.join(TOP, p)).href);
 const RD = await imp('app/redroid/ready.mjs');
 const K = await imp('app/lib/apk.mjs');
 const { crc32 } = await imp('bedrock-binary/src/apk/zip.js');
+// (the fake adb's calls answered in a thread of this process: tests/fake/app/adb-server.mjs)
+await (await imp('tests/fake/app/adb-server.mjs')).fakeAdbServer();
 
 let pass = 0, fail = 0;
 const t = async (name, fn) => { try { await fn(); pass++; console.log(`ok   ${name}`); } catch (e) { fail++; console.log(`FAIL ${name}\n     ${String(e.message).split('\n').join('\n     ')}\n     ${e.stack?.split('\n')[1] ?? ''}`); } };
@@ -189,7 +191,7 @@ case "$1" in
   *) exit 0;;
 esac
 line="$*"
-# one look at sys.boot_completed: booted once the BDS is up (or after FAKE_BOOT_LOOKS looks, 80: about 100 s) → prints 1, else nothing
+# one look at sys.boot_completed: booted once the BDS is up (or after FAKE_BOOT_LOOKS looks, 80: about 16 s) → prints 1, else nothing
 boot_poll() {
   if [ -f "$FAKE_RD/booted" ]; then echo 1; return; fi
   n=$(cat "$FAKE_RD/polls" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$FAKE_RD/polls"
@@ -197,8 +199,10 @@ boot_poll() {
   touch "$FAKE_RD/booted"; printf on > "$FAKE_APP_STATE.power"; echo 1
 }
 case "$line" in
-  # (redroid.mjs up's own loop on the device: one look per call here, a short slice — up tries again at once)
-  *"echo booted"*) if [ "$(boot_poll)" = 1 ]; then echo booted; exit 0; fi; sleep 0.25; exit 1;;
+  # (redroid.mjs up's own loop on the device, as the device runs it: a look every 0.2 s until booted or its looks run out. One
+  # look per call made each look an early exit, and up waits a second after one: 24 looks took 30 s)
+  *"echo booted"*) lim=\${line##*-ge }; lim=\${lim%%[!0-9]*}; i=0
+    while [ "$(boot_poll)" != 1 ]; do i=$((i+1)); [ "$i" -ge "\${lim:-100}" ] && exit 1; sleep 0.2; done; echo booted; exit 0;;
   "getprop sys.boot_completed") boot_poll;;
   "id -u") echo 0;;
   "pidof com.mojang.minecraftpe") echo 4242;;
@@ -270,16 +274,16 @@ await t('debug: the device has another version than the APKs pulled last time �
   ok((r.text.match(/^(PASS|FAIL)(?= app\/runs)/mg) ?? []).join(',') === 'FAIL,PASS', 'the first run ends on the word, the second passes');
 });
 
-// (the two runs whose BDS must wait for the device: it never comes up first, so the device boots when its looks run out — 24
-// looks, about 30 s, not 80: a BDS started early (the bug these catch) is up within a few looks, as in the first debug test)
+// (the two runs whose BDS must wait for the device: it never comes up first, so the device boots when its looks run out — 40
+// looks, about 8 s, not 80: a BDS started early (the bug these catch) is up within a few looks, as in the first debug test)
 await t('debug: no APKs pulled yet → app run waits for the device first, pulled from it → PASS', () => {
-  const r = debugRun('first', { apkVersion: null, extra: { FAKE_BOOT_LOOKS: '24' } });
+  const r = debugRun('first', { apkVersion: null, extra: { FAKE_BOOT_LOOKS: '40' } });
   ok(r.status === 0 && /まだ無いので端末から取り出してから/.test(r.text) && /app run を redroid で: PASS/.test(r.text), `exit ${r.status}\n${r.text}`);
   eq(r.before, 'no', 'nothing to start the BDS with before the device');
 });
 
 await t('debug: APKs pulled before without .version → as with none: app run waits for the device, reads them only once pulled again → PASS', () => {
-  const r = debugRun('stale', { stale: true, extra: { FAKE_BOOT_LOOKS: '24' } });
+  const r = debugRun('stale', { stale: true, extra: { FAKE_BOOT_LOOKS: '40' } });
   ok(r.status === 0 && /前回のものは版が分からないので端末から取り出し直してから/.test(r.text) && /app run を redroid で: PASS/.test(r.text), `exit ${r.status}\n${r.text}`);
   eq(r.before, 'no', 'no BDS from the stale APKs before the device');
   ok(r.calls.filter((c) => /^adb .*pull /.test(c)).length === 2, 'base + split pulled again');

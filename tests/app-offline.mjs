@@ -18,6 +18,9 @@ const { QUIET_APPS } = await imp('app/lib/android.mjs');
 const WARM = await imp('app/lib/warm.mjs');
 const { crc32 } = await imp('bedrock-binary/src/apk/zip.js');
 const { pngEncode, pngDecode } = await imp('common/extra.mjs');
+// the fake adb's calls answered in a thread of this process (FAKE_ADB_PORT, in the environment of all it starts): a node
+// process per call was most of this file's time (tests/fake/app/adb-server.mjs)
+await (await imp('tests/fake/app/adb-server.mjs')).fakeAdbServer();
 
 let pass = 0, fail = 0;
 // APP_TEST_ONLY=<regex>: only the tests whose name matches (the rest are not run, not counted)
