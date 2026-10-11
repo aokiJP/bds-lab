@@ -1473,8 +1473,18 @@ class Engine {
     this.closeBots();
     await this.srv.stop();
     await this.bootUp();
-    for (const [name, args] of this.ok ? rejoin : []) { await this.exec(`@${name} join ${args.join(' ')}`.trim(), 100); LOG.push(`[0-0-0 0:0:0 BOT] @${name} rejoined`); }
+    if (this.ok) await this.rejoin(rejoin);
     return this.ok;
+  }
+  // the players back after a restart, side by side as people coming back would be (one after another, each its join's time:
+  // the bench's restart with a dozen players took 26 s); the first alone (a borrowed client's protocol is settled once), the
+  // "rejoined" lines in the players' order
+  async rejoin(list, { say = true } = {}) {
+    const one = ([name, args]) => this.exec(`@${name} join ${args.join(' ')}`.trim(), 100);
+    if (!list.length) return;
+    await one(list[0]);
+    await Promise.all(list.slice(1).map(one));
+    if (say) for (const [name] of list) LOG.push(`[0-0-0 0:0:0 BOT] @${name} rejoined`);
   }
   // run through the addon's eval helper (the same script context as the addon)
   async js(code) {
@@ -1519,6 +1529,7 @@ class Engine {
     if (w.startsWith('@') && w.length > 1) {
       // `@A& <action>`: started and not waited for (many players at once; `waitall [ms]` waits for them)
       const bg = w.endsWith('&') && w.length > 2, name = bg ? w.slice(1, -1) : w.slice(1), [action, ...a] = rest;
+      let took = 0;   // game ms the sped-up server's answer below took: part of the pause after the action
       try {
         if (action === 'join') {
           if (bots.has(name)) { LOG.push(`[0-0-0 0:0:0 BOT] @${name} already joined`); await this.pause(wait); return; }   // (e.g. after restart, which rejoins players): not an error
@@ -1591,7 +1602,10 @@ class Engine {
           this.joins.set(name, a);
           const o0 = LOG.length;
           srv.send('op ' + name);
-          await srv.wait(/Opped|op/i, 3000);
+          // (this player's answer — BDS "Opped: A", "Could not op: A"; a plugin's own wording too: players rejoining side by side
+          // each wait for their own)
+          const nre = `\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`;
+          await srv.wait(new RegExp(`op.*${nre}|${nre}.*op`, 'i'), 3000);
           // BDS 1.26.60+ answers "Could not op" when the player is an operator already (default-player-permission-level): not an error
           for (let i = LOG.length - 1; i >= o0; i--) if (new RegExp(`Could not op: ${name}\\s*$`).test(LOG[i])) LOG.splice(i, 1);
           await this.pause(300);
@@ -1610,11 +1624,13 @@ class Engine {
           else if (F.slowServer?.(L()) && this.sync !== false) { await b.act('__sync', []); const k = (this.syncN = (this.syncN ?? 0) + 1); srv.send(`scriptevent lab:sync ${k}`); await srv.wait(new RegExp(`LAB_SYNC ${k}\\s*$`), 20000); }
           // a sped-up server (LAB_SPEED): the pause after it is a k-th as long in real time, but this client is not sped up — on a
           // busy machine its packets can reach the server after the pause has run out. Its earlier packets handled first (the
-          // server answers this after them), then the pause in the server's ticks, as at 1x
-          else if (CLOCK_X > 1 && TICK_PAUSE) await b.act('__sync', []);
+          // server answers this after them); the game time that answer took is part of the pause, so the game time from the
+          // action to the next line stays the pause's, as at 1x, unless the answer took longer (a full pause after it: a cooldown
+          // counted in ticks saw a gap 16 ticks longer, and the bench's wandzap failed). LAB_ACT_SYNC=0: no answer waited for
+          else if (CLOCK_X > 1 && TICK_PAUSE && process.env.LAB_ACT_SYNC !== '0') { const s0 = Date.now(); await b.act('__sync', []); took = (Date.now() - s0) * CLOCK_X; }
         }
       } catch (e) { LOG.push(`[0-0-0 0:0:0 ERROR] @${name} ${action}: ${e.message}${this.borrowed && BORROW_GAP.test(e.message) ? ` (borrowed client: this action's packets changed in BDS ${bdsVersion()}; not the addon's fault, it waits for bedrock-protocol)` : ''}`); }
-      await this.pause(wait);
+      await this.pause(Math.max(0, wait - took));
     } else if (w === 'wait') await this.pause(Number(rest[0]) || 0);   // game time (pause): a k-th as long at LAB_SPEED=k
     else if (w === 'template' && rest[0] === 'save') {   // template save: this world (with every chunk generated so far) becomes the seed's template
       srv.send('save hold');
@@ -1652,7 +1668,17 @@ class Engine {
       let re; try { re = rx(rest.join(' ')); } catch (e) { LOG.push(`[0-0-0 0:0:0 ERROR] until: ${e.message}`); return; }
       const seen = () => LOG.slice(this.prevMark).some((l) => re.test(lineText(l)));
       const t0 = Date.now();
-      while (!seen() && Date.now() - t0 < ms && !srv.exited) await sleep(50);
+      // a sped-up server (LAB_SPEED): ms of its game time as well, the earlier of the two — what the line waits for is the
+      // server's doing then, and 10 s of real time was 40 s of its time at x4 (the bench's empty template spent 48 s on four
+      // `until form` that never came). Not while a player's action runs in the background (`@A& walk ...`): that client is
+      // not sped up, so its doing takes the real time it takes
+      let over = false;
+      if (CLOCK_X > 1 && TICK_PAUSE && this.sync && !this.bgActs?.size) {
+        const k = (this.syncN = (this.syncN ?? 0) + 1), d = Math.round(ms / 50);
+        srv.send(`scriptevent lab:sync ${k} ${d}`);
+        srv.wait(new RegExp(`LAB_SYNC ${k}\\s*$`), ms + 1000).then((r) => { if (r) over = true; });
+      }
+      while (!seen() && !over && Date.now() - t0 < ms && !srv.exited) await sleep(50);
       if (!seen()) LOG.push(`[0-0-0 0:0:0 ERROR] until: /${re.source}/ not seen in ${ms}ms`);
     } else if (w === 'speed') {
       // speed <x>: from now on this server's clock runs x times as fast (like Java's /tick rate 20x): the same world is restarted with
@@ -1666,7 +1692,7 @@ class Engine {
       await this.srv.stop();
       await this.bootUp();
       if (!this.ok) return false;
-      for (const [name, a] of rejoin) await this.exec(`@${name} join ${a.join(' ')}`.trim(), 100);
+      await this.rejoin(rejoin, { say: false });
       LOG.push(`[0-0-0 0:0:0 BOT] speed x${x}: ${20 * x} ticks a second (server restarted with the same world${rejoin.length ? `, ${rejoin.length} players rejoined` : ''})`);
       await this.pause(wait);
     } else if (w === 'packset') {
@@ -1679,7 +1705,7 @@ class Engine {
       this.packHash = await writePacks(this.world, this.settings, this.inst?.name?.startsWith('live'));
       await this.bootUp();
       if (!this.ok) return false;
-      for (const [name, a] of rejoin) { await this.exec(`@${name} join ${a.join(' ')}`.trim(), 100); LOG.push(`[0-0-0 0:0:0 BOT] @${name} rejoined`); }
+      await this.rejoin(rejoin);
       LOG.push(`[0-0-0 0:0:0 BOT] pack settings ${JSON.stringify(this.settings)} (world restarted)`);
       await this.pause(wait);
     } else if (w === 'view') {

@@ -168,7 +168,8 @@ try {
     const srv = http.createServer((q, s) => { let b = ''; q.on('data', (d) => { b += d; }); q.on('end', () => { seen.push(JSON.parse(b)); const st = steps[seen.length - 1] ?? 'done';
       s.writeHead(200, { 'content-type': 'application/json' }); s.end(JSON.stringify({ content: typeof st === 'string' ? [{ type: 'text', text: st }] : st.map((c, i) => ({ type: 'tool_use', id: `t${seen.length}_${i}`, name: c.name, input: c.input })), usage: { input_tokens: 100, output_tokens: 50 }, stop_reason: typeof st === 'string' ? 'end_turn' : 'tool_use' })); }); });
     await new Promise((z) => srv.listen(0, '127.0.0.1', z));
-    r = await lab(['harden', '4', '--via', 'anthropic'], { ANTHROPIC_API_KEY: 'k', ANTHROPIC_BASE_URL: `http://127.0.0.1:${srv.address().port}`, NO_PROXY: '127.0.0.1', no_proxy: '127.0.0.1' });
+    // (its 4 bugs at once, each on a server of its own: harden is this file's longest way, and 3 at a time made it two rounds)
+    r = await lab(['harden', '4', '--via', 'anthropic'], { ANTHROPIC_API_KEY: 'k', ANTHROPIC_BASE_URL: `http://127.0.0.1:${srv.address().port}`, NO_PROXY: '127.0.0.1', no_proxy: '127.0.0.1', LAB_MUTATE_JOBS: '4' });
     srv.close();
     const prompt = JSON.stringify(seen[0]?.messages?.[0] ?? '');
     ok(/Strengthen the tests of the Minecraft Bedrock addon in bds\/addons\/devbds/.test(prompt) && /never ran: \/lab:shop/.test(prompt), 'harden: the AI is told the places no test runs (and the bugs no test notices)', prompt.slice(0, 600));
