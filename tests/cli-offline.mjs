@@ -147,7 +147,10 @@ if (kind0 !== null) fs.writeFileSync(path.join(TOP, '.lab-kind'), kind0); else f
     ok(r.code !== 0 && /19990101-000000000-zzz/.test(r.t) && fs.readdirSync(CP).sort().join(' ') === n0, 'undo <unknown id>: refused, and no checkpoint taken for nothing', r.t);
     // flaky: every run fails before a section runs (a syntax error): FAIL, never "OK every section every time"
     fs.writeFileSync(path.join(U, 'bp', 'scripts', 'main.js'), 'import { world } from "@minecraft/server";\nthis is not javascript (\n');
-    r = lab(['flaky', '2', '-a', u], {}, TOP, 300000);
+    // (no server either: a cache without one and none to install — each run fails before a section all the same, at once: on a
+    // machine without a BDS it downloaded one, 100 MB, and ran it twice — CI's offline job)
+    const noBds = path.join(T, 'no-bds-cache');
+    r = lab(['flaky', '2', '-a', u], { LAB_CACHE: noBds, LAB_BDS_ZIP: path.join(noBds, 'none.zip') }, TOP, 300000);
     ok(r.code !== 0 && /^FAIL zz_cli_undo/m.test(r.t) && !/^OK zz_cli_undo/m.test(r.t), 'flaky when every run fails before any section: FAIL (it said OK)', r.t);
   } finally { fs.rmSync(U, { recursive: true, force: true }); fs.rmSync(CP, { recursive: true, force: true }); if (cur0 === null) fs.rmSync(cur, { force: true }); else fs.writeFileSync(cur, cur0); }
 }
