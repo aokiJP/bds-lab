@@ -405,6 +405,32 @@ const W = { sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
   }
 }
 
+// cmd: a /list right behind the command (cmdBehind, the BDS lab) says it has run — a custom command that answers nothing costs
+// a tick, not the whole wait; a vanilla one's answer is shown as before, the /list's never. Without it: the wait as before
+{
+  process.env.LAB_CMD_WAIT_MS = '600';
+  const out = [], b2 = await createRealPlayer({ req, port: 1, name: 'B', version: '1.26.50', emit: (l) => out.push(l), timeoutMs: 3000, cmdBehind: true });
+  const C2 = globalThis.__fakeClient;
+  // BDS side: /list answers; /time answers; a custom command (/lab:x) answers nothing, like the kit's
+  C2.on('queued', (n, p) => {
+    if (n !== 'command_request') return;
+    const say = (output) => setTimeout(() => C2.emit('command_output', { origin: p.origin, output }), 3);
+    if (p.command === '/list') say([{ success: true, message_id: 'commands.players.list', parameters: ['1', '100'] }]);
+    if (p.command.startsWith('/time')) say([{ success: true, message_id: 'commands.time.query.daytime', parameters: ['6000'] }]);
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  const cmds = () => C2.sent.filter(([n]) => n === 'command_request').map(([, p]) => p.command);
+  let t0 = Date.now(); await b2.act('cmd', ['/lab:x', '1']); const custom = Date.now() - t0;
+  check(custom < 400 && cmds().join() === '/lab:x 1,/list' && !out.some((l) => /players\.list/.test(l)), `cmd with a /list behind: a custom command's silence ends at the /list's answer (${custom} ms, not 600), the /list's answer never shown`, `${cmds()} | ${out.join(' | ')}`);
+  t0 = Date.now(); await b2.act('cmd', ['time', 'query', 'daytime']); const vanilla = Date.now() - t0;
+  check(vanilla < 400 && out.some((l) => l === '@B cmd: %commands.time.query.daytime [6000]') && !out.some((l) => /players\.list/.test(l)), `cmd with a /list behind: a vanilla command's answer is shown as before (${vanilla} ms)`, out.join(' | '));
+  b2.close();
+  // the first player (no cmdBehind): a command that answers nothing costs the whole wait, as before
+  t0 = Date.now(); await bot.act('cmd', ['/lab:x']); const plain = Date.now() - t0;
+  check(plain >= 550 && !sent('command_request').some((p) => p.command === '/list'), `cmd without it: the whole wait (${plain} ms), nothing sent behind`, JSON.stringify(sent('command_request').map((p) => p.command)));
+  delete process.env.LAB_CMD_WAIT_MS;
+}
+
 console.log(`\n${bad ? 'FAIL' : 'PASS'} ${good}/${good + bad}`);
 fs.rmSync(T, { recursive: true, force: true });
 process.exit(bad ? 1 : 0);

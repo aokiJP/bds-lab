@@ -20,6 +20,11 @@ const clean = { ...process.env }; for (const k of Object.keys(clean)) if (/proxy
 const lab = (args, env = {}, timeout = 120000) => { const r = spawnSync(process.execPath, [path.join(REPO, 'lab.mjs'), ...args], { cwd: REPO, encoding: 'utf8', timeout, env: { ...clean, ...env } }); return { code: r.status, text: (r.stdout ?? '') + (r.stderr ?? '') }; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ENV_TEST_PART=1|2: only sections 1–5 or only 6–8 (common/run-tests.mjs runs the file as these two parts side by side;
+// each part has its own copy of the lab, and no section of the second half reads what the first one left)
+const PART = Number(process.env.ENV_TEST_PART) || 0, part = (n) => !PART || PART === n;
+let r;
+if (part(1)) {
 // 1. HTTPS_PROXY reaches Node's fetch (every download goes through the proxy; it answers 403 + x-deny-reason like a sandbox's)
 const seen = [];
 const px = http.createServer((q, s) => { seen.push(q.url); s.writeHead(403, { 'x-deny-reason': 'host_not_allowed' }).end(); });
@@ -43,7 +48,7 @@ check(pr({ SSL_CERT_FILE: pem }).includes(`ENV ${pem} ${pem}`), 'SSL_CERT_FILE �
 check(pr({ SSL_CERT_FILE: pem, LAB_NETENV: 'off' }).includes('ENV undefined undefined'), 'LAB_NETENV=off leaves the environment alone');
 
 // 3. bg / wait / stop
-let r = lab(['bg', 'bds', 'help']);
+r = lab(['bg', 'bds', 'help']);
 check(/started: bds help/.test(r.text), 'bg starts a job', r.text);
 for (let i = 0; i < 20 && !/DONE exit/.test(r.text); i++) r = lab(['wait', '5']);
 check(/topics:/.test(r.text) && /DONE exit=0/.test(r.text), 'wait prints the output, then DONE exit=0', r.text);
@@ -61,7 +66,9 @@ r = lab(['stop']); const r2 = lab(['wait', '1']);
 check(/stopped: sleeper/.test(r.text) && /DONE exit=stopped/.test(r2.text), 'stop ends the job', r.text + r2.text);
 
 // 4. setup all reports each lab on one line (here: no BDS, no network → each fails with its reason)
-r = lab(['setup', 'all'], { LAB_BDS_ZIP: path.join(T, 'nope.zip'), LAB_LL_SERVER: path.join(T, 'nope') }, 300000);
+// (no network for real: on a machine with one, Endstone's pip install and LeviLamina's portable Wine downloaded a gigabyte, which
+// the cache export below then packed — a minute of CI's time)
+r = lab(['setup', 'all'], { LAB_BDS_ZIP: path.join(T, 'nope.zip'), LAB_LL_SERVER: path.join(T, 'nope'), LAB_WINE: path.join(T, 'no-wine'), PIP_NO_INDEX: '1', LAB_PYTHON_RELEASE: 'http://127.0.0.1:9/' }, 300000);
 check(/^bds: .+/m.test(r.text) && /^end: .+/m.test(r.text) && /^ll: .+/m.test(r.text) && /^(OK|FAIL)/m.test(r.text.trim().split('\n').at(-1)), 'setup all: one line per lab, then OK/FAIL', r.text);
 
 // 5. cache export → import
@@ -75,11 +82,14 @@ fs.rmSync(path.join(REPO, 'bds', '.lab'), { recursive: true, force: true });
 r = lab(['cache', 'import', tgz]);
 check(r.code === 0 && fs.readFileSync(path.join(REPO, 'bds', '.lab', 'bds', 'VERSION'), 'utf8') === '1.2.3' && /OK imported/.test(r.text), 'cache import restores it', r.text);
 
+}
+if (part(2)) {
 // 6. the chat relay: handoff (zip for the person, keeps the current unit) → verify (paste-ready block) on a (fake) server
 {
   const cache = path.join(T, 'cache-bds'), bds = path.join(cache, 'bds');
   fs.mkdirSync(bds, { recursive: true }); fs.writeFileSync(path.join(bds, 'VERSION'), '1.26.51.1\n'); fs.writeFileSync(path.join(bds, 'server.properties'), 'server-name=fake\n');
-  fs.writeFileSync(path.join(bds, 'bedrock_server'), `#!/bin/sh\nexec "${process.execPath}" "${path.join(TOP, 'tests', 'fake', 'fake_server.cjs')}" bds\n`); fs.chmodSync(path.join(bds, 'bedrock_server'), 0o755);
+  // (its game time 25 times as fast: verify's QA waits seconds of it — 24 s a verify at a server's 50 ms tick, 10 s at 2 ms)
+  fs.writeFileSync(path.join(bds, 'bedrock_server'), `#!/bin/sh\nexec env FAKE_TICK_MS=2 "${process.execPath}" "${path.join(TOP, 'tests', 'fake', 'fake_server.cjs')}" bds\n`); fs.chmodSync(path.join(bds, 'bedrock_server'), 0o755);
   fs.mkdirSync(path.join(cache, 'world'), { recursive: true }); fs.writeFileSync(path.join(cache, 'world', 'level.dat'), Buffer.alloc(16));
   fs.writeFileSync(path.join(cache, 'beta.json'), JSON.stringify({ server: '2.8.0-beta', 'server-gametest': '1.0.0-beta' }));
   const env = { LAB_CACHE: cache, LAB_RUNTIME: 'native', LAB_NOTRACE: '1', LAB_TYPES: '0', NO_COLOR: '1', npm_config_registry: 'http://127.0.0.1:9/', npm_config_fetch_retries: '0', npm_config_fetch_timeout: '2000' };
@@ -250,6 +260,7 @@ if (process.platform !== 'win32') {
   check(s.status === 0 && /topics:/.test(s.stdout), 'lab.sh runs the lab', s.stdout + s.stderr);
 }
 
+}
 fs.rmSync(T, { recursive: true, force: true });
 console.log(`\n${bad ? 'FAIL' : 'PASS'} ${good}/${good + bad}`);
 process.exit(bad ? 1 : 0);

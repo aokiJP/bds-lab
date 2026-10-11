@@ -244,21 +244,27 @@ export async function harden(L, { name, n = 6, via, model, turns = 40, budget = 
   if (restored.length) L.out(`harden: put back what it changed besides tests.txt: ${restored.slice(0, 6).join(' ')}`);
   const text = (x) => al.slice(x.start, x.end + 1).join('\n'), write = (xs) => fs.writeFileSync(tf, before.trimEnd() + '\n' + xs.map((x) => '\n' + text(x) + '\n').join(''));
   write(fresh);
-  // the new sections must pass on the code as it is: the ones that fail are kept out (again until the rest pass)
-  let kept = fresh;
+  // the new sections must pass on the code as it is: the ones that fail are kept out (again until the rest pass). The run that
+  // measures the same bugs and the coverage again (below) is that check too — its SECTION lines; its bugs run only once it
+  // passes: one server run less than a check of its own before it
+  let kept = fresh, m1 = null;
   const suspect = [];
   for (let i = 0; i < 3 && kept.length; i++) {
-    const t = M.runTests(k, name, [], { LAB_SECTIONS: '1' });
+    m1 = await M.measure(k, name, { only: lived.map((x) => x.s), out: L.out, baseEnv: { LAB_SECTIONS: '1' } });
+    const t = m1.base ?? { lines: [] };
     const bad = new Set(t.lines.filter((l) => l.startsWith('SECTION FAIL ')).map((l) => l.slice(13))), whyOf = (title) => t.lines.find((l) => l.startsWith(`SECTION WHY ${title} :: `))?.slice(`SECTION WHY ${title} :: `.length).replace(/ @@ /, ' during ') ?? 'fails';
     const now = kept.filter((x) => bad.has(x.title));
     if (!now.length) break;
+    m1 = null;
     suspect.push(...now.map((x) => ({ ...x, why: whyOf(x.title) })));
     kept = kept.filter((x) => !bad.has(x.title)); write(kept);
   }
   for (const x of suspect) { L.out(`SUSPECT "## ${x.title}": fails on the code as it is (${cut(x.why, 140)}): a bug in the code or a wrong test; kept out of tests.txt:`); text(x).split('\n').slice(0, 10).forEach((l) => L.out('  | ' + l)); }
   for (const l of answer.split('\n').filter((y) => /^\s*BUG\b/.test(y)).slice(0, 8)) L.out(`BUG? ${l.trim().replace(/^BUG:?\s*/, '')} (the AI says the code does not do what TASK.md asks)`);
-  // the same bugs and the coverage again, with the new sections
-  const m1 = kept.length ? await M.measure(k, name, { only: lived.map((x) => x.s), out: L.out }) : null, ok = !!m1?.ok;
+  // the same bugs and the coverage again, with the new sections (measured above; after three rounds of sections kept out, the
+  // rest once more)
+  if (kept.length && !m1) m1 = await M.measure(k, name, { only: lived.map((x) => x.s), out: L.out });
+  const ok = !!m1?.ok;
   const gaps1 = ok ? G.explain(dir, m1.cov) : gaps0, caught1 = ok ? m0.caught + m1.caught : m0.caught, still = ok ? m1.lived : lived;
   L.out(kept.length ? `harden ${name}: +${kept.length} section(s): ${kept.map((x) => `"## ${x.title}"`).join(', ')}` : `harden ${name}: no new section passed${answer ? ` (the AI said: ${cut(answer.trim().split('\n')[0], 160)})` : ''}`);
   if (lived.length) L.out(`  bugs caught: ${m0.caught}/${m0.tried} → ${caught1}/${m0.tried}${still.length ? ` (still unnoticed: ${still.slice(0, 3).map(({ s, what }) => `${s.file}:${s.line} ${what}`).join(', ')}${still.length > 3 ? ', …' : ''})` : ''}`);

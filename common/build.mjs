@@ -18,11 +18,31 @@ export const LIBS = ['@minecraft/math', '@minecraft/vanilla-data', '@minecraft/g
 const TOOLS = { esbuild: '^0.28.0', typescript: '~6.0.3' };
 const ENV_TYPES = '@bedrock-apis/env-types@1.1.0-rc';
 
+// an install that failed (offline, a blocked registry) is not tried again for LAB_NPM_RETRY_MS (10 min; 0 = every time): each
+// command used to run npm again only to say the same failure (env-offline's checks: some 40 npm runs). The failure is kept beside
+// the folder (<dir>.npm-failed), so a folder removed before its install does not forget it
+const npmRetryMs = () => Number(process.env.LAB_NPM_RETRY_MS ?? 600_000);
+/** the same install's failure still fresh → its message, else null */
+export function npmFailed(dir, key) {
+  try {
+    const f = JSON.parse(fs.readFileSync(`${dir}.npm-failed`, 'utf8')), ago = Date.now() - f.at;
+    if (f.key === key && ago >= 0 && ago < npmRetryMs()) return `${f.msg}\n(the same npm install failed ${Math.round(ago / 1000)} s ago: tried again ${Math.round(npmRetryMs() / 60000)} min after it, or now with LAB_NPM_RETRY_MS=0)`;
+  } catch { /* none, or unreadable: try */ }
+  return null;
+}
+/** an install's outcome: msg = its failure (kept), null = it worked (forgotten) */
+export function npmNote(dir, key, msg) {
+  try { if (msg === null) fs.rmSync(`${dir}.npm-failed`, { force: true }); else { fs.mkdirSync(path.dirname(dir), { recursive: true }); fs.writeFileSync(`${dir}.npm-failed`, JSON.stringify({ key, at: Date.now(), msg })); } } catch { /* only a memo */ }
+}
 function npmI(dir, specs, extra = []) {
+  const key = [...specs, ...extra].join(' '), was = npmFailed(dir, key);
+  if (was) throw new Error(was);
   fs.mkdirSync(dir, { recursive: true });
   if (!exists(path.join(dir, 'package.json'))) fs.writeFileSync(path.join(dir, 'package.json'), '{"private":true}\n');
   const r = spawnSync(WIN ? 'npm.cmd' : 'npm', ['i', ...specs, '--no-audit', '--no-fund', '--loglevel=error', '--legacy-peer-deps', ...extra], { cwd: dir, encoding: 'utf8', shell: WIN });
-  if (r.status !== 0) throw new Error(`npm i ${specs.join(' ')} failed:\n${(r.stderr || r.stdout).slice(-600)}`);
+  const msg = r.status === 0 ? null : `npm i ${specs.join(' ')} failed:\n${(r.stderr || r.stdout).slice(-600)}`;
+  npmNote(dir, key, msg);
+  if (msg) throw new Error(msg);
 }
 
 // esbuild + typescript, installed once into the cache
@@ -49,7 +69,17 @@ export function npmVersion(doc, want, bv) {
 }
 
 // shared SDK: @minecraft/* types at the manifest's versions + Mojang libs + env types. Keyed by the exact set.
+// Which exact set a manifest means (npm's newest build for this BDS) is remembered for SDK_MEMO_MS: every build used to fetch
+// the five packages' whole version lists from npm first (about 0.6 s, offline it failed); LAB_SDK_MEMO=0 asks npm every time
+const SDK_MEMO_MS = 12 * 3600_000;
 export async function sdk({ cache, bv, deps, npmDoc }) {
+  const memo = path.join(cache, 'sdk', 'resolved.json');
+  const want = JSON.stringify([bv, deps.filter((d) => d.module_name?.startsWith('@minecraft/')).map((d) => `${d.module_name}@${d.version}`).sort(), LIBS, ENV_TYPES]);
+  const read = () => { try { return JSON.parse(fs.readFileSync(memo, 'utf8')); } catch { return {}; } };
+  if (process.env.LAB_SDK_MEMO !== '0') {
+    const m = read()[want];
+    if (m && Date.now() - m.at < SDK_MEMO_MS && exists(path.join(cache, 'sdk', String(m.key), 'ok'))) return path.join(cache, 'sdk', m.key);
+  }
   const specs = [];
   for (const d of deps) {
     if (!d.module_name?.startsWith('@minecraft/')) continue;
@@ -71,6 +101,10 @@ export async function sdk({ cache, bv, deps, npmDoc }) {
     npmI(dir, specs);
     fs.writeFileSync(path.join(dir, 'ok'), specs.join('\n') + '\n');
   }
+  try {   // (several lab processes at once: written whole, then renamed)
+    const all = read(); all[want] = { key, at: Date.now() };
+    const tmp = `${memo}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(all)); fs.renameSync(tmp, memo);
+  } catch { /* only a memo */ }
   return dir;
 }
 
@@ -97,7 +131,31 @@ export function writeTsconfig(addon, sdkDir, js) {
 }
 
 // type check: TS errors are E (the build fails), JS (checkJs, not strict) are W
+// A check that found nothing is not run again on the same sources (tsconfig, src/ or bp/scripts, the unit's package files):
+// loading TypeScript alone is most of a build's second (a test then a pack; the lab's own runs of a unit that did not change)
+function typeStamp(addon, js) {
+  const h = crypto.createHash('sha1').update(js ? 'js\n' : 'ts\n');
+  const add = (f) => { const r = path.relative(addon, f); try { h.update(r + '\0').update(fs.readFileSync(f)).update('\0'); } catch { h.update(r + '\0-\0'); } };   // (relative, a missing file too: the same sources elsewhere are the same)
+  for (const f of ['tsconfig.json', 'package.json', 'package-lock.json']) add(path.join(addon, f));
+  const walk = (d) => { let es = []; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch { return; } for (const e of es.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) { const p = path.join(d, e.name); if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p); } else if (/\.([cm]?[jt]s|json)$/.test(e.name)) add(p); } };
+  walk(path.join(addon, js ? path.join('bp', 'scripts') : 'src'));
+  return h.digest('hex');
+}
+// (and what a check found, by the same content wherever it is: the brief's audit copies each unit to check it on stable and on
+// beta, and the same sources under another name — a post seen again, a copy — were checked again: colony-offline spent two
+// thirds of its CPU there)
 export function typecheck({ tl, addon, cache, js, max = 12 }) {
+  const okFile = path.join(cache, 'tsinfo', crypto.createHash('sha1').update(addon).digest('hex').slice(0, 10) + (js ? '.js' : '') + '.clean');
+  const stamp = process.env.LAB_TYPES_MEMO === '0' ? null : typeStamp(addon, js);
+  try { if (stamp && fs.readFileSync(okFile, 'utf8') === stamp) return []; } catch { /* not checked yet */ }
+  const found = stamp && path.join(cache, 'tsinfo', 'found', `${stamp}-${max}.json`);
+  try { if (found) { const r = JSON.parse(fs.readFileSync(found, 'utf8')); if (Array.isArray(r)) return r; } } catch { /* not checked yet */ }
+  const res = typecheckNow({ tl, addon, cache, js, max });
+  try { if (stamp && !res.length) { fs.mkdirSync(path.dirname(okFile), { recursive: true }); fs.writeFileSync(okFile, stamp); } else fs.rmSync(okFile, { force: true }); } catch { /* only a memo */ }
+  try { if (found) { fs.mkdirSync(path.dirname(found), { recursive: true }); const t = `${found}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify(res)); fs.renameSync(t, found); } } catch { /* only a memo */ }
+  return res;
+}
+function typecheckNow({ tl, addon, cache, js, max = 12 }) {
   const ts = tl.ts;
   const cfgFile = path.join(addon, 'tsconfig.json');
   const cfg = ts.getParsedCommandLineOfConfigFile(cfgFile, {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => {} });

@@ -23,6 +23,8 @@ const ok = (c, m) => { if (!c) throw new Error(m); };
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'device-offline-'));
 const FAKE = path.join(TOP, 'tests', 'fake', 'app');
 fs.chmodSync(path.join(FAKE, 'adb'), 0o755);
+// (the fake adb's calls answered in a thread of this process: tests/fake/app/adb-server.mjs)
+await (await imp('tests/fake/app/adb-server.mjs')).fakeAdbServer();
 
 // ---- the devices the fake adb plays ----
 const WLAN = '1: lo    inet 127.0.0.1/8 scope host lo\n3: wlan0    inet 192.168.1.23/24 brd 192.168.1.255 scope global wlan0';
@@ -333,7 +335,7 @@ await t('screen / tap --device <name>: the person\'s device (the emulator otherw
 // ---- app run on a person's device ----
 const RELAY_STUB = path.join(tmp, 'lab-relay-stub'); fs.writeFileSync(RELAY_STUB, 'stub');
 const PAD_STUB = path.join(tmp, 'lab-pad-stub'); fs.writeFileSync(PAD_STUB, 'stub');
-const RUN_ENV = { APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), APP_TIME_SCALE: '0.2', APP_STABLE_MS: '100', APP_PAD_WAIT_MS: '50', APP_TESSERACT: path.join(tmp, 'no-tesseract'), APP_RELAY_BIN: RELAY_STUB, APP_PAD_BIN: PAD_STUB, APP_UNLOCK_MS: '3000' };
+const RUN_ENV = { APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), APP_TIME_SCALE: '0.05', APP_STABLE_MS: '100', APP_PAD_WAIT_MS: '50', APP_TESSERACT: path.join(tmp, 'no-tesseract'), APP_RELAY_BIN: RELAY_STUB, APP_PAD_BIN: PAD_STUB, APP_UNLOCK_MS: '3000' };
 const made = [];
 function runOn(w, args = [], extra = {}) {
   const r = w.cli(['run', '-a', 'jsonui_demo', '--device', 'phone', ...args], { extra: { ...RUN_ENV, ...extra } });

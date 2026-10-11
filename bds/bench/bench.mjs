@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -37,6 +37,15 @@ function taskOf(id) {
 function lab(dir, args, env = {}, k = 'bds') {
   const r = spawnSync(process.execPath, [path.join(dir, k, 'lab.mjs'), ...args], { cwd: path.join(dir, k), encoding: 'utf8', env: { ...process.env, LAB_NOTRACE: '1', ...env }, timeout: 900000 });
   return { code: r.status, out: (r.stdout ?? '') + (r.stderr ?? '') };
+}
+// the same, not waited for (selftest's three runs on their own servers at once)
+function labAsync(dir, args, env = {}, k = 'bds') {
+  return new Promise((res) => {
+    const c = spawn(process.execPath, [path.join(dir, k, 'lab.mjs'), ...args], { cwd: path.join(dir, k), env: { ...process.env, LAB_NOTRACE: '1', ...env } });
+    let out = ''; c.stdout.on('data', (d) => { out += d; }); c.stderr.on('data', (d) => { out += d; });
+    const t = setTimeout(() => c.kill('SIGKILL'), 900000);
+    c.on('close', (code) => { clearTimeout(t); res({ code, out }); });
+  });
 }
 
 // the lab as a person hands it over: every file but caches, runs and units; the caches are linked (server, tools, types)
@@ -79,23 +88,31 @@ const UNITS = { bds: ['addons', 'bp/manifest.json'], end: ['plugins', 'pyproject
 const newestAddon = (dir, k = 'bds') => { const a = path.join(dir, k, UNITS[k][0]); return fs.existsSync(a) ? fs.readdirSync(a).filter((n) => fs.existsSync(path.join(a, n, UNITS[k][1]))).sort((x, y) => fs.statSync(path.join(a, y)).mtimeMs - fs.statSync(path.join(a, x)).mtimeMs)[0] : null; };
 
 // hidden verification: task tests (outside the workspace) on the addon the AI made + optional "no warnings" for content tasks
-function verify(dir, t) {
-  const k = t.lab ?? 'bds', name = newestAddon(dir, k), total = t.test.filter((l) => /^[=~!]/.test(l)).length;
-  if (!name) return { passed: 0, total, ok: false, clean: false, notes: ['no addon made'], out: '' };
-  const hidden = path.join(os.tmpdir(), `bdslab-hidden-${process.pid}-${Date.now()}.txt`);
+// (name: that unit, else the newest one; run: lab or labAsync)
+let hiddenN = 0;
+function verify(dir, t, name = null, run = lab) {
+  const k = t.lab ?? 'bds', total = t.test.filter((l) => /^[=~!]/.test(l)).length;
+  name ??= newestAddon(dir, k);
+  const done = (r, c) => {
+    const m = /(PASS|FAIL) (\d+)\/(\d+)/.exec(r.out);
+    const notes = r.out.split('\n').filter((l) => /^(✘|E |  want|  got)/.test(l));
+    let clean = true;
+    if (c) {
+      const w = c.out.split('\n').filter((l) => /^[EW] /.test(l));
+      clean = c.code === 0 && !w.length;
+      notes.push(...w.map((l) => 'check: ' + l));
+    }
+    return { passed: m ? Number(m[2]) : 0, total: m ? Number(m[3]) : total, ok: m?.[1] === 'PASS' && clean, clean, notes, out: r.out };
+  };
+  if (!name) { const none = { passed: 0, total, ok: false, clean: false, notes: ['no addon made'], out: '' }; return run === lab ? none : Promise.resolve(none); }
+  const hidden = path.join(os.tmpdir(), `bdslab-hidden-${process.pid}-${Date.now()}-${++hiddenN}.txt`);
   fs.writeFileSync(hidden, t.test.join('\n') + '\n');
-  const r = lab(dir, ['test', hidden, '-a', name], {}, k);
-  fs.rmSync(hidden, { force: true });
-  const m = /(PASS|FAIL) (\d+)\/(\d+)/.exec(r.out);
-  const notes = r.out.split('\n').filter((l) => /^(✘|E |  want|  got)/.test(l));
-  let clean = true;
-  if (t.clean) {
-    const c = lab(dir, ['check', '-a', name], {}, k);
-    const w = c.out.split('\n').filter((l) => /^[EW] /.test(l));
-    clean = c.code === 0 && !w.length;
-    notes.push(...w.map((l) => 'check: ' + l));
+  if (run === lab) {
+    const r = lab(dir, ['test', hidden, '-a', name], {}, k);
+    fs.rmSync(hidden, { force: true });
+    return done(r, t.clean ? lab(dir, ['check', '-a', name], {}, k) : null);
   }
-  return { passed: m ? Number(m[2]) : 0, total: m ? Number(m[3]) : total, ok: m?.[1] === 'PASS' && clean, clean, notes, out: r.out };
+  return run(dir, ['test', hidden, '-a', name], {}, k).then(async (r) => { fs.rmSync(hidden, { force: true }); return done(r, t.clean ? await run(dir, ['check', '-a', name], {}, k) : null); });
 }
 // ---------- transcripts ----------
 function lines(file) {
@@ -233,7 +250,9 @@ function rank(task) {
 // the reference solution (bds/bench/solution.mjs): every hidden test is solvable; the empty template and broken code must fail
 import { SOLUTION, SOLUTION_ADD, SOLUTION_JSON } from './solution.mjs';
 
-function selftest() {
+// The three runs on a real server (the empty template, the solution, the solution with a thrown error) are three units of their
+// own, run at once on three servers: about a third of the time of one after another
+async function selftest() {
   const dir = path.join(RUNS, '_selftest');
   const r0 = spawnSync(process.execPath, [path.join(ROOT, 'lab.mjs'), 'setup'], { cwd: ROOT, encoding: 'utf8' });
   if (r0.status !== 0) throw new Error('setup failed:\n' + r0.stdout + r0.stderr);
@@ -241,15 +260,15 @@ function selftest() {
   const t = taskOf('all');
   const none = verify(dir, t);
   lab(dir, ['new', 'bench', 'Bench Solution', '--js']);
-  const empty = verify(dir, t);
-  const ad = path.join(dir, 'bds', 'addons', 'bench');
-  for (const a of SOLUTION_ADD) { const r = lab(dir, a); if (r.code !== 0) console.log(r.out); }
+  const units = path.join(dir, 'bds', 'addons'), ad = path.join(units, 'bench');
+  fs.cpSync(ad, path.join(units, 'bench_empty'), { recursive: true });   // the template as `new` made it
+  for (const a of SOLUTION_ADD) { const r = lab(dir, [...a, '-a', 'bench']); if (r.code !== 0) console.log(r.out); }   // (several units now: named)
   for (const [f, body] of Object.entries(SOLUTION)) { if (body === null) continue; fs.mkdirSync(path.dirname(path.join(ad, f)), { recursive: true }); fs.writeFileSync(path.join(ad, f), body); }
   for (const [f, fn] of Object.entries(SOLUTION_JSON)) { const j = JSON.parse(fs.readFileSync(path.join(ad, f), 'utf8')); fn(j); fs.writeFileSync(path.join(ad, f), JSON.stringify(j, null, 2)); }
-  const good = verify(dir, t);
-  const pk = lab(dir, ['pack']);
-  fs.appendFileSync(path.join(ad, 'bp/scripts/main.js'), '\nsystem.run(() => { throw new Error("x"); });\n');
-  const broken = verify(dir, t);
+  fs.cpSync(ad, path.join(units, 'bench_broken'), { recursive: true });
+  fs.appendFileSync(path.join(units, 'bench_broken', 'bp/scripts/main.js'), '\nsystem.run(() => { throw new Error("x"); });\n');
+  // (the pack after the solution's own run: the same unit's build, not at the same time)
+  const [empty, [good, pk], broken] = await Promise.all([verify(dir, t, 'bench_empty', labAsync), verify(dir, t, 'bench', labAsync).then(async (g) => [g, await labAsync(dir, ['pack', '-a', 'bench'])]), verify(dir, t, 'bench_broken', labAsync)]);
   if (!process.env.KEEP) fs.rmSync(dir, { recursive: true, force: true });
   const ok = !none.ok && empty.passed <= t.guards.length && !empty.ok && good.ok && good.passed === good.total && !broken.ok && pk.code === 0;
   console.log(`no addon ${none.ok ? 'passed?!' : 'fails'} | template ${empty.passed}/${empty.total} (want ${t.guards.length ? `at most ${t.guards.length}: the guards` : 0}) | solution ${good.passed}/${good.total} clean=${good.clean} | pack=${pk.code === 0} | error detected=${!broken.ok}\n${ok ? 'SELFTEST OK' : 'SELFTEST FAIL\n' + good.notes.join('\n') + '\n' + good.out + pk.out}`);
@@ -262,7 +281,7 @@ try {
   else if (cmd === 'run') runTask(a[0], a.slice(1));
   else if (cmd === 'end') end(a[0], a.slice(1));
   else if (cmd === 'rank') rank(a[0]);
-  else if (cmd === 'selftest') selftest();
+  else if (cmd === 'selftest') await selftest();
   else if (cmd === 'friction') (await import('./friction.mjs')).friction(ROOT, a);
   else if (cmd === 'playtest') (await import('./playbench.mjs')).playbench(HERE, TOP, a);
   else console.log('usage: node bench/bench.mjs run <task|all> [--via claude] | start <agent> <task|all> | end <id> [--claude|--codex|--transcript f|--tokens N --steps N] | rank [task] | friction [n|all|<transcript.jsonl>...] | playtest [<case>] [--via claude] | selftest');

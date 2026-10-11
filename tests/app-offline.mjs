@@ -18,19 +18,34 @@ const { QUIET_APPS } = await imp('app/lib/android.mjs');
 const WARM = await imp('app/lib/warm.mjs');
 const { crc32 } = await imp('bedrock-binary/src/apk/zip.js');
 const { pngEncode, pngDecode } = await imp('common/extra.mjs');
+// the fake adb's calls answered in a thread of this process (FAKE_ADB_PORT, in the environment of all it starts): a node
+// process per call was most of this file's time (tests/fake/app/adb-server.mjs)
+await (await imp('tests/fake/app/adb-server.mjs')).fakeAdbServer();
 
 let pass = 0, fail = 0;
 // APP_TEST_ONLY=<regex>: only the tests whose name matches (the rest are not run, not counted)
 const only = process.env.APP_TEST_ONLY ? new RegExp(process.env.APP_TEST_ONLY) : null;
-const t = async (name, fn) => { if (only && !only.test(name)) return; try { await fn(); pass++; console.log(`ok   ${name}`); } catch (e) { fail++; console.log(`FAIL ${name}\n     ${String(e.message).split('\n').join('\n     ')}\n     ${e.stack?.split('\n')[1] ?? ''}`); } };
+// APP_TEST_SHARD=i/n: every n-th test from the i-th (common/run-tests.mjs runs the file as n such parts side by side). A test
+// that reads what an earlier one made names it as its group: it runs in that one's part ({ after: '<group>' }, the earlier one
+// { group: '<group>' }); every test still counts in the turn, so the others keep their parts
+const shard = /^(\d+)\/(\d+)$/.exec(process.env.APP_TEST_SHARD ?? ''), mine = (() => {
+  let k = 0; const groups = new Map();
+  return ({ group, after } = {}) => {
+    const turn = k++ % Number(shard?.[2] ?? 1), part = after ? groups.get(after) ?? turn : turn;
+    if (group) groups.set(group, part);
+    return !shard || part === Number(shard[1]) - 1;
+  };
+})();
+const t = async (name, fn, opts) => { if (!mine(opts) || (only && !only.test(name))) return; try { await fn(); pass++; console.log(`ok   ${name}`); } catch (e) { fail++; console.log(`FAIL ${name}\n     ${String(e.message).split('\n').join('\n     ')}\n     ${e.stack?.split('\n')[1] ?? ''}`); } };
 const eq = (a, b, m = '') => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${m} want ${JSON.stringify(b)} got ${JSON.stringify(a)}`); };
 const ok = (c, m) => { if (!c) throw new Error(m); };
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'app-offline-'));
 // no OCR unless a test asks for the fake one: a tesseract installed on this machine would read the fake screens (garbage
 // words like "Wf") and steer the joins that the tests drive by the gamepad alone
 if (!process.env.APP_TESSERACT_REAL) process.env.APP_TESSERACT = path.join(tmp, 'no-tesseract');
-// the fake device answers at once: the lab's fixed pauses (made for a real emulator) a fifth as long — the suite in half the time
-process.env.APP_TIME_SCALE ??= '0.2';
+// the fake device answers at once: the lab's fixed pauses (made for a real emulator) a twentieth as long — a fifth made each part
+// 70–110 s, most of it these pauses (the login test keeps a fifth: its fake browser quits on a clock of its own)
+process.env.APP_TIME_SCALE ??= '0.05';
 fs.writeFileSync(path.join(tmp, 'joinonly.txt'), 'launch\njoin\nuntil joined 5000\nshot world\n');
 
 
@@ -252,7 +267,7 @@ await t('run: jsonui_demo/app.txt end to end → PASS, screenshots, logs, report
   ok((r.state.settings ?? []).includes('global auto_sync 0'), 'account sync turned off so it does not starve the game: ' + (r.state.settings ?? []).join(', '));
   ok(/# app: PASS/.test(fs.readFileSync(path.join(tmp, 'pass-summary.md'), 'utf8')), 'job summary');
   eq(R.guard(r.runDir), []);
-});
+}, { group: 'pass-run' });
 fs.writeFileSync(path.join(tmp, 'short.txt'), 'launch\njoin\nuntil joined 3000\nshot never\n');
 // ---- the results through the GitHub API alone (app/lib/ghresults.mjs, app checks, app ci) ----
 const GR = await imp('app/lib/ghresults.mjs');
@@ -281,7 +296,7 @@ await t('checks: a run folder → check runs (default = result + errors only + s
   eq(wide.length, 3, wide.join('\n')); ok(wide.some((l) => /\tat a\.b/.test(l)) && !wide.some((l) => /noise|% user|info/.test(l)), wide.join('\n'));
   // masked
   ok(GR.checksPayload(runDir, { secrets: ['jsonui_demo'] })[0].summary.includes('<secret>'), 'secrets masked');
-});
+}, { after: 'pass-run' });
 await t('anonymize: tokens, e-mails, account name, device/android ids and home paths are scrubbed; errorLines keeps only results and errors', () => {
   const s = "me@example.com signed in; Account {name=me@example.com, type=com.google}; aas_et/" + 'Q'.repeat(30) + "; setCachedDeviceId(02fdecb97f764084881f5e1ded7f4fdb); android_id=1a2b3c4d5e6f7a8b; /home/alice/bds-lab/x; /Users/bob/y";
   const a = GR.anonymize(s, ['TOPSECRETvalue']);
@@ -320,7 +335,7 @@ await t('checks --print / ci: the workflow posts, `app ci` starts, waits and rea
   const rf = cli(['ci', 'fetch', '123', '--repo', 'o/r'], env);
   ok(rf.status === 0 && /^FAIL app\/runs\/gh-123/m.test(rf.text), rf.text);
   ok(cli(['ci', 'fetch', '--repo', 'o/r'], env).status === 1, 'fetch needs a run number');
-});
+}, { after: 'pass-run' });
 // (a private repository's comments, in the clear — these tests run in GitHub Actions too, where an unsaid visibility is public)
 const asPrivate = (fn) => async () => { const was = process.env.APP_REPO_VISIBILITY; process.env.APP_REPO_VISIBILITY = 'private'; try { await fn(); } finally { if (was === undefined) delete process.env.APP_REPO_VISIBILITY; else process.env.APP_REPO_VISIBILITY = was; } };
 await t('live: comments → commands for this run only, replies with the text and the screen (pure)', asPrivate(async () => {
@@ -813,6 +828,7 @@ await t('login: the browser signs in → the token is picked up, the browser clo
   const L = await imp('app/lib/login.mjs');
   const cache = path.join(tmp, 'login-cache'), argsFile = path.join(tmp, 'bargs.json');
   process.env.FAKE_LOGIN_AFTER = '3'; process.env.FAKE_BROWSER_ARGS = argsFile; process.env.DISPLAY ??= ':0';
+  const scale0 = process.env.APP_TIME_SCALE; process.env.APP_TIME_SCALE = '0.2';   // (the browser quits after a moment of its own: polls a fifth as long, as before)
   const tok = await L.autoOauthToken({ cacheDir: cache, browser: path.join(FAKE, 'browser.mjs'), timeoutMs: 20000 });
   eq(tok, 'oauth2_4/fake-login-token');
   eq(fs.readdirSync(cache).filter((n) => n.startsWith('login-')), []);
@@ -820,7 +836,7 @@ await t('login: the browser signs in → the token is picked up, the browser clo
   ok(a.includes('--remote-debugging-port=0') && a.includes(L.LOGIN_URL) && !a.some((x) => /enable-automation|headless/.test(x)), 'a normal window: ' + a.join(' '));
   process.env.FAKE_BROWSER_QUIT = '1';
   let e = null; try { await L.autoOauthToken({ cacheDir: cache, browser: path.join(FAKE, 'browser.mjs'), timeoutMs: 20000 }); } catch (x) { e = x; }
-  delete process.env.FAKE_BROWSER_QUIT; delete process.env.FAKE_LOGIN_AFTER; delete process.env.FAKE_BROWSER_ARGS;
+  delete process.env.FAKE_BROWSER_QUIT; delete process.env.FAKE_LOGIN_AFTER; delete process.env.FAKE_BROWSER_ARGS; process.env.APP_TIME_SCALE = scale0;
   ok(/閉じられました/.test(e?.message), 'closed early: ' + e?.message);
   eq(fs.readdirSync(cache).filter((n) => n.startsWith('login-')), []);
 });
@@ -1836,7 +1852,7 @@ await t('run: the device\'s own inputs — mouse (press, hover, wheel), a game c
 await t('app ui --sizes/--cutouts: every screen again on a 4:3 tablet and under a notch, the shape put back after each', () => {
   const state = path.join(tmp, 'ui-shapes.json'); fs.writeFileSync(state, JSON.stringify({ phase: 'home' }));
   const sdk = path.join(tmp, 'sdk-ui'); fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', HOST_ABI), { recursive: true });
-  const env = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, APP_APK_DIR: apkDir, APP_STABLE_MS: '100', APP_TITLE_CALM_MS: '100', APP_ADBKEY_DIR: path.join(tmp, 'adbkey-e2e'), APP_TESSERACT: path.join(FAKE, 'tesseract'), APP_UI_CUTOUTS: 'tall', FAKE_MAGENTA: '1', FAKE_OCR_RAWKEY: '1' };
+  const env = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, APP_APK_DIR: apkDir, APP_STABLE_MS: '100', APP_TITLE_CALM_MS: '100', APP_ADBKEY_DIR: path.join(tmp, 'adbkey-e2e'), APP_TESSERACT: path.join(FAKE, 'tesseract'), APP_UI_CUTOUTS: 'tall', FAKE_MAGENTA: '1', FAKE_OCR_RAWKEY: '1', APP_TIME_SCALE: '0.01' };
   delete env.GOOGLE_AAS_TOKEN; delete env.GOOGLE_EMAIL; delete env.GITHUB_ACTIONS; delete env.GITHUB_STEP_SUMMARY;
   const r = spawnSync(process.execPath, [path.join(TOP, 'lab.mjs'), 'app', 'ui', '-a', 'jsonui_demo', '--no-fetch', '--screens', 'chest', '--sizes', '1024x768'], { cwd: TOP, env, encoding: 'utf8', timeout: 600_000 });
   const text = r.stdout + r.stderr, runDir = path.join(TOP, 'app', /→ (app\/runs\/\S+)/.exec(text)?.[1]?.replace(/^app\//, '') ?? 'none');
@@ -1851,13 +1867,15 @@ await t('app ui --sizes/--cutouts: every screen again on a 4:3 tablet and under 
   ok(/画面 ui-chest の [\d.]+% が紫（マゼンタ）: テクスチャが見つからない/.test(rep) && !/画面 world の/.test(rep), 'a missing texture seen in the picture: ' + rep.slice(0, 3000));
   ok(/画面 ui-chest に、訳されていないキーらしい文字: item\.lab:ruby\.name/.test(rep) && !/画面 world に、訳されていない/.test(rep), 'a raw translation key read on a screen\'s picture: ' + rep.slice(0, 3000));
 });
+// (the ui tests: the app lab's pauses a hundredth as long, not a fifth — the catalog's waits are a real device's: half a minute
+// of a fake one's time)
 await t('app ui --all: every screen as a section on the device (keys, forms by js, blocks tapped, OCR buttons), the content log\'s errors fail it and are listed by screen', () => {
   const clog = path.join(tmp, 'ContentLog.txt');
   fs.writeFileSync(clog, '[2026-10-03 09:00:00:000 INFO] [Packs] loaded\n[2026-10-03 09:00:01:000 ERROR] [UI] server_form.json | demo_form | binding #nope not found\n');
   const run = (extra, args) => {
     const state = path.join(tmp, `ui-${args.length}.json`); fs.writeFileSync(state, JSON.stringify({ phase: 'home' }));
     const sdk = path.join(tmp, 'sdk-ui'); fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', HOST_ABI), { recursive: true });
-    const env = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, APP_APK_DIR: apkDir, APP_STABLE_MS: '100', APP_TITLE_CALM_MS: '100', APP_ADBKEY_DIR: path.join(tmp, 'adbkey-e2e'), APP_TESSERACT: path.join(FAKE, 'tesseract'), FAKE_CONTENT_LOG: clog, ...extra };
+    const env = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, APP_APK_DIR: apkDir, APP_STABLE_MS: '100', APP_TITLE_CALM_MS: '100', APP_ADBKEY_DIR: path.join(tmp, 'adbkey-e2e'), APP_TESSERACT: path.join(FAKE, 'tesseract'), FAKE_CONTENT_LOG: clog, APP_TIME_SCALE: '0.01', ...extra };
     delete env.GOOGLE_AAS_TOKEN; delete env.GOOGLE_EMAIL; delete env.GITHUB_ACTIONS; delete env.GITHUB_STEP_SUMMARY;
     const r = spawnSync(process.execPath, [path.join(TOP, 'lab.mjs'), 'app', 'ui', '-a', 'jsonui_demo', '--no-fetch', ...args], { cwd: TOP, env, encoding: 'utf8', timeout: 600_000 });
     const text = r.stdout + r.stderr, runDir = path.join(TOP, 'app', /→ (app\/runs\/\S+)/.exec(text)?.[1]?.replace(/^app\//, '') ?? 'none');

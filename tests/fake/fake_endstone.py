@@ -62,7 +62,11 @@ def load_plugins():
 def handle(line):
     w = line.split(" ", 2)
     if w[0] == "stop": log.info("Stopping server..."); os._exit(0)
-    elif w[0] == "scriptevent": S.plugin_manager.call(ScriptMessageEvent(w[1], w[2] if len(w) > 2 else "")); log.info("Script event %s has been sent" % w[1])
+    elif w[0] == "scriptevent":
+        S.plugin_manager.call(ScriptMessageEvent(w[1], w[2] if len(w) > 2 else "")); log.info("Script event %s has been sent" % w[1])
+        # the lab's end-of-command marker: the helper script in the real server's world answers it once the command before it ran
+        # (unanswered, each session waited 8 s for it, then fell back to plain waits)
+        if w[1] == "lab:sync": Logger("Scripting").info("LAB_SYNC %s" % (w[2].split(" ")[0] if len(w) > 2 else ""))
     elif w[0] == "reload":
         for pl in S.plugin_manager.plugins.values(): pl.on_disable()
         for m in [m for m in sys.modules if m.startswith("endstone_lab_helper")]: del sys.modules[m]

@@ -3,11 +3,12 @@
 // engine end to end.  node fake_server.cjs bds          BDS log format, runs in cwd
 //                     node fake_server.cjs ll <dir>     LeviLamina log format; loads plugins/*/manifest.json lse-* mods in a
 //                                                       JS context with a small LSE (mc, logger, ll) — enough for the lab helper
-// Console extras: fakejoin <name> (onJoin), fakecrash.
+// Console extras: fakejoin <name> (onJoin), fakecrash. FAKE_TICK_MS: a game tick's length (50, as a server's; a test whose lab
+// waits in game time — QA, `wait` — runs as many ticks in less time with less)
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const mode = process.argv[2] ?? 'bds';
+const mode = process.argv[2] ?? 'bds', TICK = Number(process.env.FAKE_TICK_MS) || 50;
 if (process.argv[3]) process.chdir(process.argv[3]);
 const pad = (n, w = 2) => String(n).padStart(w, '0');
 const now = () => { const d = new Date(); return [d, `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`, pad(d.getMilliseconds(), 3)]; };
@@ -81,7 +82,9 @@ function handle(line) {
     if (jsReady && rest[0] === 'lab:js') log('INFO', 'Scripting', 'LAB_JS_DONE');
     // the lab's end-of-command marker: the real helper answers it as soon as the command before it ran (without it the lab waited
     // 8 s once per session, then fell back to plain waits)
-    if (mode === 'bds' && rest[0] === 'lab:sync') log('INFO', 'Scripting', `LAB_SYNC ${rest[1] ?? ''}`.trim());
+    // (with a tick count, that many 50 ms later, like the helper's runTimeout. LeviLamina's world has the helper too: there it
+    // was not answered, and each session waited its 8 s)
+    if (rest[0] === 'lab:sync') { const say = () => log('INFO', 'Scripting', `LAB_SYNC ${rest[1] ?? ''}`.trim()); if (Number(rest[2]) > 0) setTimeout(say, Number(rest[2]) * TICK); else say(); }
     return;
   }
   if (mode === 'll' && w === 'll') {
@@ -102,4 +105,4 @@ fire('onServerStarted');
 setTimeout(() => log('INFO', 'Scripting', 'LAB_READY'), 300);   // the real one comes seconds later
 let buf = '';
 process.stdin.setEncoding('utf8').on('data', (d) => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { const l = buf.slice(0, i).replace(/\r$/, ''); buf = buf.slice(i + 1); if (l) handle(l); } });
-setInterval(() => fire('onTick'), 50);
+setInterval(() => fire('onTick'), TICK);

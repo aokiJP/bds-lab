@@ -14,6 +14,8 @@ const T = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-boost-'));
 let fails = 0;
 const ok = (c, m, d = '') => { console.log(`${c ? '✔' : '✘'} ${m}${c || !d ? '' : '\n  ' + String(d).split('\n').slice(-12).join('\n  ')}`); if (!c) fails++; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// until the loop has done it (a busy machine runs its first passes late; a fixed 800 ms failed beside other tests), at most 10 s
+const until = async (f, ms = 10000) => { for (const t0 = Date.now(); !f() && Date.now() - t0 < ms;) await sleep(50); };
 const PKG = 'com.mojang.minecraftpe';
 
 // ---- pure ----
@@ -75,14 +77,14 @@ delete process.env.FAKE_UID;
 
 const b = B.startBoost(adb, { env, dir, proc });
 ok(b && b.child, 'REDROID_BOOST=1 and root: the loop started on the device');
-await sleep(800);
+await until(() => niceOf(100, 100) === -10 && niceOf(100, 101) === -10 && niceOf(200, 200) === 10 && niceOf(200, 201) === 10);
 ok(niceOf(100, 100) === -10 && niceOf(100, 101) === -10, 'the game\'s threads at nice -10 (a thread name with spaces and parentheses read right)', `${niceOf(100, 100)} ${niceOf(100, 101)}`);
 ok(niceOf(200, 200) === 10 && niceOf(200, 201) === 10, 'gms.ui\'s threads at nice 10', `${niceOf(200, 200)} ${niceOf(200, 201)}`);
 ok([300, 310, 320, 330, 400].every((x) => niceOf(x, x) === 0), 'Play Store, Play services (gms, gms.persistent), GSF and the rest left alone');
 // a new thread of the game, the game's second process, and a thread that ends before the stop
 thread(100, 102, 0);
 proc0(500, `${PKG}:sub`, [[500, 2]]);
-await sleep(800);
+await until(() => niceOf(100, 102) === -10 && niceOf(500, 500) === -10);
 ok(niceOf(100, 102) === -10 && niceOf(500, 500) === -10, 'threads and processes that come later are taken too', `${niceOf(100, 102)} ${niceOf(500, 500)}`);
 // threads made after the raise inherit it (the game's -10, gms.ui's 10): their first nice is not the one to go back to
 thread(100, 103, -10); thread(200, 202, 10);
@@ -102,7 +104,7 @@ ok(['saved', 'stop', 'pid'].every((x) => !fs.existsSync(path.join(dir, `lab-boos
 const plan = B.boostPlan({ dir, proc, names: B.LOW, everyS: 0.2 });
 const loop = spawn('sh', ['-c', plan.start[1]], { stdio: 'ignore' });
 const loopEnd = new Promise((r) => loop.on('close', r));
-await sleep(800);
+await until(() => { try { return niceOf(100, 100) === -10 && niceOf(200, 201) === 10 && fs.readFileSync(path.join(dir, 'lab-boost.pid'), 'utf8').trim() === String(loop.pid); } catch { return false; } });
 ok(niceOf(100, 100) === -10 && niceOf(200, 201) === 10 && fs.readFileSync(path.join(dir, 'lab-boost.pid'), 'utf8').trim() === String(loop.pid), 'a device loop up again: its pid in lab-boost.pid', `${niceOf(100, 100)} ${niceOf(200, 201)}`);
 const child = spawn('sleep', ['60']);
 const stuck = { plan: { ...plan, stop: ['shell', 'true'] }, opts: o, child, out: '', t0: performance.now(), done: new Promise((r) => child.on('close', r)) };

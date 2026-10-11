@@ -80,7 +80,7 @@ Script API では届かないことを、Endstone（Python）と LeviLamina（Ty
 
 - 最新版への追従：`.github/workflows/latest.yml` が 6 時間ごとに、新しい Minecraft（BDS）・Endstone・LeviLamina が出ていないか調べ、出ていれば全アドオン・プラグイン・mod をその版で試験してパックします。Endstone や LeviLamina がまだ最新の BDS に対応していなければ「対応待ち」として、対応するまで毎回確かめ続けます。結果はバージョンとファイルが変わるまで覚えておくので、同じ確認を繰り返しません。動かないものがあれば、ラボごとに 1 つの issue にまとめて知らせ、全部通れば閉じます（手元では `node common/latest.mjs probe`）。壊れたものは続けて `maintain --pr` が直し、プルリクエストにします。
 
-- GitHub：`node lab.mjs github`（private リポジトリ）→ `ship`（アドオンごとの枝と Release）→ `publish`（アドオンだけ公開）。CI（`.github/workflows/verify.yml`）が push のたびに、アドオンやラボの本体が変わっていれば全アドオンを本物の BDS で試験します（パネルや文書だけの変更・同じ中身では本物のサーバーを動かしません。手で始めるとすべて）。
+- GitHub：`node lab.mjs github`（private リポジトリ）→ `ship`（アドオンごとの枝と Release）→ `publish`（アドオンだけ公開）。CI（`.github/workflows/verify.yml`）は、前に通ったときに読んだファイルの中身が変わった試験だけを流します。本物の BDS（アドオンの試験も）は PR の最後に 1 回: commit の題に `[bds]` か、Actions で verify を手で。既定の枝と毎晩も（毎晩は 1 週間流れていないものも）。手で full か題に `[full ci]` ですべて（macOS・Endstone・LeviLamina も）。
 - 摩擦の分析：`node bds/bench/bench.mjs friction` が AI の作業記録（Claude Code のセッション、`make` の記録、なければラボ自身のコマンド記録）を読み、失敗した `go`、読まなくてよいファイル、調べもの、シェルでの編集、許可待ちで止まったコマンドなどを、かかったトークン順に並べます。AGENTS.md やエラーメッセージを直すときの材料と、直したあとの確認に使います。
   - 例：Endstone の HTTP プラグインを作らせたとき、`go` が「qa 1 problem」と表示したのに `qa` 単体では問題なしと出て、AI が 8 回ほど回り道をしていました（本当の原因は lint の警告）。`go` の表示を「警告で止まった」と分けて出すように直し、同じ依頼を作り直させたところ、813,487 → 303,247 トークン（28 → 13 ターン、455 → 190 秒）に減りました。
 - AI プレイテストの採点：`node bds/bench/bench.mjs playtest` は、わざと不具合を入れたアドオン（自分のテストは通る）に `make -a <名前> --playtest` をかけ、隠しテストで「入れた不具合がいくつ消えたか」を数えます。プレイテスト用のプロンプトやモデルを変えたときの比較に使います（例は `bds/bench/playtest/shop/`）。
