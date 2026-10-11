@@ -22,6 +22,9 @@ export const toast = (text, bad = false, more = null) => { const d = h('div', { 
 // refused this sign-in's rights → the way to more; the network → again)
 let onFail = null;
 export const setOnFail = (fn) => { onFail = fn; };
+/** the same way out, drawn in place (a tab that could not load, a row that could not be read): the words of the failure and
+ *  the next step — always something, never an empty box. retry: what 「もう一度」 does there */
+export const failView = (e, retry = null) => { let more = null; try { more = onFail?.(e, retry) ?? null; } catch { /* the words alone */ } return h('div', { class: 'bad', role: 'alert' }, e?.message ?? String(e ?? '読めませんでした'), more ? [' ', more] : null); };
 export const act = async (fn, done) => { try { const r = await fn(); if (done) toast(done); return r; } catch (e) { let more = null; try { more = onFail?.(e, () => act(fn, done)) ?? null; } catch { /* no way out offered */ } toast(e.message ?? String(e), true, more); return undefined; } };
 // (an address from GitHub's answers: only https:// ones become links, anything else stays words)
 export const link = (href, text) => (/^https:\/\//.test(String(href ?? '')) ? h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, text) : h('span', {}, text));
