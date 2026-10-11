@@ -51,7 +51,8 @@ await t('the workflows\' inputs from their real YAML: choices, booleans, default
   const app = M.dispatchInputs(y('app.yml')), by = Object.fromEntries(app.inputs.map((i) => [i.name, i]));
   ok(app.dispatch && by.mode.options.join() === 'run,ui,ui-all,hold' && by.mode.default === 'run' && by.account.type === 'boolean' && by.account.default === 'true' && by.hold.default === '0' && /hold/.test(by.hold.description), JSON.stringify(by.mode));
   eq(M.dispatchInputs(y('secrets.yml')).inputs.map((i) => [i.name, i.default]), [['names', 'MS_EMAIL,MS_PASSWORD'], ['minutes', '10']]);
-  eq(M.dispatchInputs(y('verify.yml')), { dispatch: true, inputs: [] });
+  const vf = M.dispatchInputs(y('verify.yml'));
+  eq([vf.dispatch, vf.inputs.map((i) => [i.name, i.type, i.default])], [true, [['full', 'boolean', 'false']]]);
   eq(M.dispatchInputs('on:\n  push:\n    branches: [main]\n'), { dispatch: false, inputs: [] });
   eq(M.dispatchInputs('on: [push, workflow_dispatch]\n').dispatch, true);
   const inline = M.dispatchInputs("on:\n  workflow_dispatch:\n    inputs:\n      a: { description: 'x, y', default: 'q', type: choice, options: [q, r] }\n      b:\n        type: boolean\n        options:\n          - one\n          - 'two'\n");

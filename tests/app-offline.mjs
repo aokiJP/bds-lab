@@ -22,7 +22,18 @@ const { pngEncode, pngDecode } = await imp('common/extra.mjs');
 let pass = 0, fail = 0;
 // APP_TEST_ONLY=<regex>: only the tests whose name matches (the rest are not run, not counted)
 const only = process.env.APP_TEST_ONLY ? new RegExp(process.env.APP_TEST_ONLY) : null;
-const t = async (name, fn) => { if (only && !only.test(name)) return; try { await fn(); pass++; console.log(`ok   ${name}`); } catch (e) { fail++; console.log(`FAIL ${name}\n     ${String(e.message).split('\n').join('\n     ')}\n     ${e.stack?.split('\n')[1] ?? ''}`); } };
+// APP_TEST_SHARD=i/n: every n-th test from the i-th (common/run-tests.mjs runs the file as n such parts side by side). A test
+// that reads what an earlier one made names it as its group: it runs in that one's part ({ after: '<group>' }, the earlier one
+// { group: '<group>' }); every test still counts in the turn, so the others keep their parts
+const shard = /^(\d+)\/(\d+)$/.exec(process.env.APP_TEST_SHARD ?? ''), mine = (() => {
+  let k = 0; const groups = new Map();
+  return ({ group, after } = {}) => {
+    const turn = k++ % Number(shard?.[2] ?? 1), part = after ? groups.get(after) ?? turn : turn;
+    if (group) groups.set(group, part);
+    return !shard || part === Number(shard[1]) - 1;
+  };
+})();
+const t = async (name, fn, opts) => { if (!mine(opts) || (only && !only.test(name))) return; try { await fn(); pass++; console.log(`ok   ${name}`); } catch (e) { fail++; console.log(`FAIL ${name}\n     ${String(e.message).split('\n').join('\n     ')}\n     ${e.stack?.split('\n')[1] ?? ''}`); } };
 const eq = (a, b, m = '') => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${m} want ${JSON.stringify(b)} got ${JSON.stringify(a)}`); };
 const ok = (c, m) => { if (!c) throw new Error(m); };
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'app-offline-'));
@@ -252,7 +263,7 @@ await t('run: jsonui_demo/app.txt end to end → PASS, screenshots, logs, report
   ok((r.state.settings ?? []).includes('global auto_sync 0'), 'account sync turned off so it does not starve the game: ' + (r.state.settings ?? []).join(', '));
   ok(/# app: PASS/.test(fs.readFileSync(path.join(tmp, 'pass-summary.md'), 'utf8')), 'job summary');
   eq(R.guard(r.runDir), []);
-});
+}, { group: 'pass-run' });
 fs.writeFileSync(path.join(tmp, 'short.txt'), 'launch\njoin\nuntil joined 3000\nshot never\n');
 // ---- the results through the GitHub API alone (app/lib/ghresults.mjs, app checks, app ci) ----
 const GR = await imp('app/lib/ghresults.mjs');
@@ -281,7 +292,7 @@ await t('checks: a run folder → check runs (default = result + errors only + s
   eq(wide.length, 3, wide.join('\n')); ok(wide.some((l) => /\tat a\.b/.test(l)) && !wide.some((l) => /noise|% user|info/.test(l)), wide.join('\n'));
   // masked
   ok(GR.checksPayload(runDir, { secrets: ['jsonui_demo'] })[0].summary.includes('<secret>'), 'secrets masked');
-});
+}, { after: 'pass-run' });
 await t('anonymize: tokens, e-mails, account name, device/android ids and home paths are scrubbed; errorLines keeps only results and errors', () => {
   const s = "me@example.com signed in; Account {name=me@example.com, type=com.google}; aas_et/" + 'Q'.repeat(30) + "; setCachedDeviceId(02fdecb97f764084881f5e1ded7f4fdb); android_id=1a2b3c4d5e6f7a8b; /home/alice/bds-lab/x; /Users/bob/y";
   const a = GR.anonymize(s, ['TOPSECRETvalue']);
@@ -320,7 +331,7 @@ await t('checks --print / ci: the workflow posts, `app ci` starts, waits and rea
   const rf = cli(['ci', 'fetch', '123', '--repo', 'o/r'], env);
   ok(rf.status === 0 && /^FAIL app\/runs\/gh-123/m.test(rf.text), rf.text);
   ok(cli(['ci', 'fetch', '--repo', 'o/r'], env).status === 1, 'fetch needs a run number');
-});
+}, { after: 'pass-run' });
 // (a private repository's comments, in the clear — these tests run in GitHub Actions too, where an unsaid visibility is public)
 const asPrivate = (fn) => async () => { const was = process.env.APP_REPO_VISIBILITY; process.env.APP_REPO_VISIBILITY = 'private'; try { await fn(); } finally { if (was === undefined) delete process.env.APP_REPO_VISIBILITY; else process.env.APP_REPO_VISIBILITY = was; } };
 await t('live: comments → commands for this run only, replies with the text and the screen (pure)', asPrivate(async () => {

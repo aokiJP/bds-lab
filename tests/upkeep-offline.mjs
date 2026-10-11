@@ -180,6 +180,37 @@ check(cd.length === 2 && /src\/main\.ts:1,2,3,4,5,6,…/.test(cd[0]), 'type erro
 const fx = B.compactDiags([{ code: 2345, msg: "Argument of type 'string' is not assignable to parameter of type 'ItemStack'.", at: { file: 'src/main.ts', line: 4 } }, { code: 2339, msg: "Property 'setGlowing' does not exist on type 'Player'.", at: { file: 'src/main.ts', line: 5 } }, { code: 2532, msg: "Object is possibly 'undefined'.", at: { file: 'src/main.ts', line: 6 } }]);
 check(/→ new ItemStack\('ns:id', n\)/.test(fx[0]) && /→ not in this API version: node lab\.mjs api Player$/.test(fx[1]) && /→ getComponent\/getItem\/find can give undefined/.test(fx[2]), 'type errors the Script API keeps causing end with the fix (ItemStack, a member this version lacks, possibly undefined)', fx.join('\n'));
 
+// ---------- the build's memos: which SDK a manifest means (no npm for 12 h), a type check that passed on the same sources ----------
+{
+  const cache = path.join(T, 'memo-cache'), deps = [{ module_name: '@minecraft/server', version: '2.0.0' }];
+  let asked = 0;
+  const npmDoc = async () => { asked++; throw new Error('npm asked'); };
+  const want = JSON.stringify(['1.26.50', ['@minecraft/server@2.0.0'], B.LIBS, '@bedrock-apis/env-types@1.1.0-rc']);
+  put(path.join(cache, 'sdk', 'k1', 'ok'), 'x\n');
+  put(path.join(cache, 'sdk', 'resolved.json'), JSON.stringify({ [want]: { key: 'k1', at: Date.now() } }));
+  const dir = await B.sdk({ cache, bv: '1.26.50', deps, npmDoc });
+  check(dir === path.join(cache, 'sdk', 'k1') && asked === 0, 'build: the SDK a manifest meant a moment ago comes from the memo, npm not asked', `${dir} asked=${asked}`);
+  const late = async (extra) => { try { await B.sdk({ cache, bv: '1.26.50', deps, npmDoc, ...extra }); return 'returned'; } catch (e) { return e.message; } };
+  put(path.join(cache, 'sdk', 'resolved.json'), JSON.stringify({ [want]: { key: 'k1', at: Date.now() - 13 * 3600_000 } }));
+  const old = await late();
+  process.env.LAB_SDK_MEMO = '0';
+  put(path.join(cache, 'sdk', 'resolved.json'), JSON.stringify({ [want]: { key: 'k1', at: Date.now() } }));
+  const off = await late();
+  delete process.env.LAB_SDK_MEMO;
+  check(old === 'npm asked' && off === 'npm asked' && asked === 2, 'build: a memo older than 12 h, or LAB_SDK_MEMO=0, asks npm again', `${old} / ${off} asked=${asked}`);
+  // a fake TypeScript: counts its loads, finds what `bad` says
+  let loads = 0, bad = [];
+  const tl = { get ts() { loads++; return { sys: {}, getParsedCommandLineOfConfigFile: () => ({ options: {}, fileNames: [] }), createIncrementalCompilerHost: () => ({}), flattenDiagnosticMessageText: (m) => m,
+    createIncrementalProgram: () => ({ getConfigFileParsingDiagnostics: () => [], getSyntacticDiagnostics: () => [], getSemanticDiagnostics: () => bad.map((m) => ({ code: 2304, messageText: m })), emit() {} }) }; } };
+  const unit = path.join(T, 'memo-unit');
+  put(path.join(unit, 'tsconfig.json'), '{}\n'); put(path.join(unit, 'src', 'main.ts'), 'export const a = 1;\n');
+  const tc = () => B.typecheck({ tl, addon: unit, cache, js: false });
+  const r1 = tc(), r2 = tc(), l2 = loads;
+  put(path.join(unit, 'src', 'main.ts'), 'export const a = 2;\n'); const r3 = tc(), l3 = loads;
+  bad = ["Cannot find name 'y'."]; put(path.join(unit, 'src', 'main.ts'), 'export const a = y;\n'); const r4 = tc(), r5 = tc();
+  check(r1.length === 0 && r2.length === 0 && l2 === 1 && r3.length === 0 && l3 === 2 && r4.length === 1 && r5.length === 1 && loads === 4, 'build: a type check that passed is not run again on the same sources (TypeScript not even loaded); a change, or a check that found errors, runs it', `loads=${l2},${l3},${loads} ${JSON.stringify([r1, r2, r3, r4, r5])}`);
+}
+
 fs.rmSync(T, { recursive: true, force: true });
 console.log(`${bad ? 'FAIL' : 'PASS'} upkeep-offline ${good}/${good + bad}`);
 process.exit(bad ? 1 : 0);

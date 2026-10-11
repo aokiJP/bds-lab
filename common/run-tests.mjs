@@ -1,24 +1,56 @@
 // The lab's offline test files, several at a time (the gate, `share`'s check of a release, `auto gate --all`).
 // Most of a test's time is waiting (fake servers, timeouts, child processes), not CPU: on a 2-core machine 25 tests took
 // 8.5 minutes one by one, a fraction of that side by side. Each test already works in its own temp folder; the few that
-// share something in the lab folder run alone after the others (SERIAL below).
-//   node common/run-tests.mjs [--jobs n] [--cwd dir] [--timeout ms] [--json] <test.mjs>...
+// share something in the lab folder (SERIAL below) each get a copy of their own when the lab is a git work tree — HEAD checked
+// out in the temp folder with the changes not committed yet put over it — and run side by side with the rest; without git (or
+// a copy) they run after the others one by one, as before. The longest first: the last ones to start are the short ones.
+//   node common/run-tests.mjs [--jobs n] [--cwd dir] [--timeout ms] [--json] [--wrap <module>] [--results <file>] [--no-isolate] <test.mjs>...
 //   LAB_GATE_JOBS=n  how many at a time (default: cores, at least 2, at most 6; 1 = one by one, as before)
+//   --wrap m         each test with m's prepare(unit, { root, env }) → { env, finish({ ok, ms }) } (common/deps.mjs: what it read)
+//   --results f      one JSON line per test as soon as it ends: { unit, ok, ms, ...finish() } (without --wrap: deps null)
+//   --no-isolate     the SERIAL ones in the lab folder itself, after the others (as before)
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-// tests that write into the lab folder itself (units, .lab-current, runs/): never side by side with another
+// tests that write into the lab folder itself (units, .lab-current, runs/): never side by side with another in the same folder
+// (each in a copy of its own, or one by one after the others)
 // (cli-offline: it and offline.mjs both read and write the lab's remembered lab, .lab-kind — side by side, one saw the other's)
 export const SERIAL = new Set(['tests/make-offline.mjs', 'tests/guards-offline.mjs', 'tests/cli-offline.mjs', 'tests/ci-offline.mjs', 'tests/import-offline.mjs', 'tests/colony-offline.mjs', 'tests/app-offline.mjs', 'tests/app-browser.mjs', 'tests/device-offline.mjs', 'tests/host-offline.mjs', 'tests/dev-bds.mjs']);
 // tests that take long by design (the app lab drives a fake device through every step): their own time limit
 export const LONG = { 'tests/app-offline.mjs': 3600000, 'tests/offline.mjs': 1800000, 'tests/env-offline.mjs': 1800000 };
-// a test's usual seconds on a 4-core runner (from `auto gate --all`); a test not here counts as UNKNOWN. Only for the shards'
-// balance: a wrong number makes one shard longer, never a test left out. Empty while CI runs them on one runner
-// (common/verify-plan.mjs SHARDS): every test counts the same
-export const TIME = {};
+// a test's usual seconds on CI's runner (verify's every offline test, 2026-10); a test not here counts as UNKNOWN. For the order
+// (the longest first) and the shards' balance: a wrong number makes a run or a shard longer, never a test left out
+// (a test in PARTS: all its parts' time together; each part counts as its share)
+export const TIME = {
+  'tests/app-offline.mjs': 800, 'tests/env-offline.mjs': 300, 'tests/offline.mjs': 300, 'tests/rd-overlap-offline.mjs': 140, 'tests/device-offline.mjs': 120,
+  'tests/host-offline.mjs': 110, 'tests/colony-offline.mjs': 100, 'tests/cli-offline.mjs': 80, 'tests/realplayer-offline.mjs': 65, 'tests/scratch-offline.mjs': 50,
+  'tests/rd-title-offline.mjs': 37, 'tests/lint-offline.mjs': 28, 'tests/sim-offline.mjs': 26, 'tests/auto-offline.mjs': 22, 'tests/rd-boot-offline.mjs': 20, 'tests/login-offline.mjs': 18,
+  'tests/deps-offline.mjs': 18, 'tests/import-offline.mjs': 17, 'tests/guards-offline.mjs': 16,
+};
 const UNKNOWN = 60;
+// tests that run as parts side by side: each part a process of its own (its args, its env; a SERIAL test each part in a copy of
+// its own). The test's result is its parts' together: ok when every part is, its time the longest part's, what it read what its
+// parts read (a part's reads unknown: unknown). The parts together run every check the whole file runs (offline.mjs: the docker
+// section reuses what the ll one made, so they stay one part)
+export const PARTS = {
+  'tests/app-offline.mjs': [1, 2, 3, 4].map((i) => ({ env: { APP_TEST_SHARD: `${i}/4` } })),
+  'tests/offline.mjs': [{ args: ['bds'] }, { args: ['end'] }, { args: ['ll', 'docker'] }],
+  'tests/env-offline.mjs': [{ env: { ENV_TEST_PART: '1' } }, { env: { ENV_TEST_PART: '2' } }],
+};
+const partName = (p) => [...(p.args ?? []), ...Object.entries(p.env ?? {}).map(([k, v]) => `${k}=${v}`)].join(' ');
+// the parts' results as one: { t, ok, code, ms, lines } and finish values ({ deps }: a union, null if any part's is null or two disagree)
+export function joinParts(t, rs, extras) {
+  const r = { t, ok: rs.every((x) => x.ok), code: rs.find((x) => x.code !== 0)?.code ?? 0, ms: Math.max(0, ...rs.map((x) => x.ms)), lines: rs.flatMap((x, i) => [`── ${t} part ${i + 1}/${rs.length} (${x.part}) ${x.ok ? 'ok' : 'FAIL'} ${(x.ms / 1000).toFixed(0)} s`, ...x.lines]) };
+  let deps = {};
+  for (const e of extras) {
+    if (!e?.deps || !deps) { deps = null; continue; }
+    for (const [k, v] of Object.entries(e.deps)) { if (k in deps && deps[k] !== v) { deps = null; break; } deps[k] = v; }
+  }
+  return { r, extra: { ...Object.assign({}, ...extras.map((e) => e ?? {})), deps } };
+}
 
 /** shard i of n (1-based) of the list (pure): the tests split so the shards end about together — each test to the shard it
  *  makes shortest, the longest first; side by side tests count as their time over the jobs (never under the longest of them),
@@ -46,24 +78,134 @@ export const defaultJobs = () => {
   return Math.min(6, Math.max(2, cpus));
 };
 
-// → [{ t, ok, code, ms, lines }] in the order given; onDone(result) as each one ends
-export function runTests(list, { cwd, env = process.env, jobs = defaultJobs(), timeout = 900000, onDone = () => {} } = {}) {
-  const one = (t) => new Promise((res) => {
+// ---------- a SERIAL test's own copy of the lab ----------
+const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 1 << 28 });
+const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+// the top of the git work tree cwd is the top of, with a commit checked out; else null (no copies: the old way)
+function workTree(cwd) {
+  const r = git(cwd, ['rev-parse', '--show-toplevel']);
+  if (r.status !== 0 || !r.stdout.trim() || real(r.stdout.trim()) !== real(cwd)) return null;
+  return git(cwd, ['rev-parse', '--verify', '-q', 'HEAD']).status === 0 ? path.resolve(cwd) : null;
+}
+// HEAD in a new folder of the temp folder (git worktree add --detach), and the work tree's changes not committed yet over it:
+// the changed files and the new ones git does not ignore copied, the deleted ones deleted → { top, parent, dir } or null
+function makeCopy(top) {
+  let parent = null;
+  try {
+    parent = fs.mkdtempSync(path.join(os.tmpdir(), 'bdslab-iso-'));
+    const dir = path.join(parent, path.basename(top)), c = { top, parent, dir };
+    // (no hooks: a post-checkout hook is the person's, not a copy's)
+    const add = git(top, ['-c', `core.hooksPath=${os.devNull}`, 'worktree', 'add', '--detach', '--quiet', dir, 'HEAD']);
+    if (add.status !== 0) { dropCopy(c); return null; }
+    const z = (args) => { const r = git(top, args); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.split('\0').filter(Boolean); };
+    for (const f of new Set([...z(['diff', '--name-only', '--no-renames', '-z', 'HEAD']), ...z(['ls-files', '--others', '--exclude-standard', '-z'])])) {
+      const from = path.join(top, f), to = path.join(dir, f);
+      let st = null;
+      try { st = fs.lstatSync(from); } catch { /* deleted */ }
+      if (st?.isDirectory()) continue;   // (a submodule)
+      fs.rmSync(to, { recursive: true, force: true });
+      if (!st) continue;
+      fs.mkdirSync(path.dirname(to), { recursive: true });
+      if (st.isSymbolicLink()) fs.symlinkSync(fs.readlinkSync(from), to);
+      else { fs.copyFileSync(from, to); fs.chmodSync(to, st.mode & 0o7777); }
+    }
+    // the lab's starting point, which git ignores (.lab-base.json and .lab/base: lab.mjs makes them on its first run in a folder):
+    // as the lab folder has it, or the copy's first `node lab.mjs` reads every file to make its own — not what the test did there,
+    // and it would look as if the test had read the whole lab
+    for (const f of ['.lab-base.json', path.join('.lab', 'base')]) {
+      const from = path.join(top, f);
+      if (fs.existsSync(from)) fs.cpSync(from, path.join(dir, f), { recursive: true });
+    }
+    return c;
+  } catch {
+    if (parent) dropCopy({ top, parent, dir: path.join(parent, path.basename(top)) });
+    return null;
+  }
+}
+function dropCopy(c) {
+  git(c.top, ['worktree', 'remove', '--force', '--force', c.dir]);
+  try { fs.rmSync(c.parent, { recursive: true, force: true }); } catch { /* the temp folder's cleaner takes it */ }
+  git(c.top, ['worktree', 'prune']);
+}
+// copies still there go however this process ends: done, failed, stopped (Ctrl-C, a cancelled run) — the tests are stopped first
+const copies = new Set(), kids = new Set();
+function guardCopies() {
+  const clean = () => { for (const k of kids) { try { k.kill('SIGKILL'); } catch { /* gone */ } } for (const c of copies) dropCopy(c); copies.clear(); };
+  const sig = Object.fromEntries(['SIGINT', 'SIGTERM', 'SIGHUP'].map((s) => [s, () => { clean(); process.exit(128 + (os.constants.signals[s] ?? 0)); }]));
+  process.on('exit', clean);
+  for (const [s, f] of Object.entries(sig)) process.on(s, f);
+  return () => { process.off('exit', clean); for (const [s, f] of Object.entries(sig)) process.off(s, f); };
+}
+
+function one(t, cwd, env, timeout, args = []) {
+  return new Promise((res) => {
     const limit = Math.max(timeout, LONG[t] ?? 0), t0 = Date.now(); let text = '', done = false;
-    const c = spawn(process.execPath, [t], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const c = spawn(process.execPath, [t, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    kids.add(c);
     const add = (d) => { text += d; if (text.length > 64e6) text = text.slice(-32e6); };
     c.stdout.on('data', add); c.stderr.on('data', add);
     const kill = setTimeout(() => { text += `\n✘ ${t}: no end after ${Math.round(limit / 1000)} s (stopped)`; try { c.kill('SIGKILL'); } catch { /* gone */ } }, limit);
-    const end = (code) => { if (done) return; done = true; clearTimeout(kill); const r = { t, ok: code === 0, code, ms: Date.now() - t0, lines: text.trim().split('\n') }; onDone(r); res(r); };
+    const end = (code) => { if (done) return; done = true; kids.delete(c); clearTimeout(kill); res({ t, ok: code === 0, code, ms: Date.now() - t0, lines: text.trim().split('\n') }); };
     c.on('error', (e) => { text += `\n✘ ${e.message}`; end(-1); });
     c.on('close', (code) => end(code));
   });
-  const par = list.filter((t) => !SERIAL.has(t)), ser = list.filter((t) => SERIAL.has(t)), out = new Map();
+}
+
+// → [{ t, ok, code, ms, lines }] in the order given; onDone(result) as each one ends. They start the longest first (times: the
+// caller's ms per test, else TIME, else UNKNOWN). isolate: a SERIAL test in a copy of its own when cwd is the top of a git work
+// tree (side by side with the rest), else after the others one by one. wrap: a module (its path) or an object with
+// prepare(unit, { root, env }) → { env, finish({ ok, ms }) }: the test runs with that env added, and finish's value goes into
+// results — a file, one JSON line { unit, ok, ms, ...finish() } appended as each test ends (a run stopped keeps what ended)
+export function runTests(list, { cwd, env = process.env, jobs = defaultJobs(), timeout = 900000, onDone = () => {}, times = {}, wrap, results, isolate = true, parts = PARTS } = {}) {
+  const est = (t) => times?.[t] ?? (TIME[t] ?? UNKNOWN) * 1000;
+  // one job per test, or per part of a test in `parts` (each part about its share of the test's time), the longest first
+  const jobsOf = (t) => (parts?.[t]?.length > 1 ? parts[t].map((p, k) => ({ t, p, k, n: parts[t].length, est: est(t) / parts[t].length })) : [{ t, p: null, k: 0, n: 1, est: est(t) }]);
+  const order = [...new Set(list)].flatMap(jobsOf).sort((a, b) => b.est - a.est), out = new Map(), got = new Map();
   return (async () => {
-    let i = 0;
-    const worker = async () => { while (i < par.length) { const t = par[i++]; out.set(t, await one(t)); } };
-    await Promise.all(Array.from({ length: Math.max(1, Math.min(jobs, par.length)) }, worker));
-    for (const t of ser) out.set(t, await one(t));
+    const w = typeof wrap === 'string' ? await import(pathToFileURL(path.resolve(wrap)).href) : wrap ?? null;
+    if (results) fs.mkdirSync(path.dirname(path.resolve(results)), { recursive: true });
+    const here = path.resolve(cwd ?? process.cwd());
+    const top = isolate && order.some((j) => SERIAL.has(j.t)) ? workTree(here) : null;
+    const queue = order.filter((j) => top || !SERIAL.has(j.t)), later = order.filter((j) => !top && SERIAL.has(j.t));
+    let warned = false;
+    const run = async (j, at = cwd) => {
+      const { t, p: part } = j;
+      let p = null;
+      try { p = w ? await w.prepare(t, { root: at ?? here, env }) : null; } catch { p = null; }
+      const r = await one(t, at, { ...env, ...(part?.env ?? {}), ...(p?.env ?? {}) }, timeout, part?.args ?? []);
+      let extra = { deps: null };
+      try { if (p) extra = await p.finish({ ok: r.ok, ms: r.ms }); } catch { extra = { deps: null }; }
+      // a part: kept until the test's last part ends, then the parts as one
+      let res = r;
+      if (j.n > 1) {
+        const g = got.get(t) ?? got.set(t, []).get(t);
+        g[j.k] = { r: { ...r, part: partName(part) }, extra };
+        if (g.filter(Boolean).length < j.n) return r;
+        ({ r: res, extra } = joinParts(t, g.map((x) => x.r), g.map((x) => x.extra)));
+      }
+      if (results) {
+        try { fs.appendFileSync(results, JSON.stringify({ unit: t, ok: res.ok, ms: res.ms, ...extra }) + '\n'); } catch (e) { if (!warned) { warned = true; console.error(`W run-tests: 結果を ${results} に書けない: ${e.message}`); } }
+      }
+      out.set(t, res);
+      onDone(res);
+      return res;
+    };
+    const unguard = top ? guardCopies() : () => {};
+    try {
+      let i = 0;
+      const worker = async () => {
+        while (i < queue.length) {
+          const j = queue[i++];
+          if (!(top && SERIAL.has(j.t))) { await run(j); continue; }
+          const copy = makeCopy(top);
+          if (!copy || path.isAbsolute(j.t) || !fs.existsSync(path.join(copy.dir, j.t))) { if (copy) dropCopy(copy); later.push(j); continue; }
+          copies.add(copy);
+          try { await run(j, copy.dir); } finally { copies.delete(copy); dropCopy(copy); }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.max(1, Math.min(jobs, queue.length)) }, worker));
+      for (const j of later) await run(j);
+    } finally { unguard(); }
     return list.map((t) => out.get(t));
   })();
 }
@@ -74,8 +216,9 @@ export const why = (r) => r.lines.filter((l) => /^(✘|FAIL )/.test(l)).slice(0,
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const a = process.argv.slice(2), flag = (k) => { const i = a.indexOf(k); if (i < 0) return undefined; const v = a[i + 1]; a.splice(i, 2); return v; };
   const jobs = Number(flag('--jobs')) || defaultJobs(), cwd = path.resolve(flag('--cwd') ?? process.cwd()), timeout = Number(flag('--timeout')) || 900000;
-  const json = a.includes('--json'), list = a.filter((x) => x !== '--json');
-  const res = await runTests(list, { cwd, jobs, timeout, onDone: json ? () => {} : (r) => console.log(`${r.ok ? '✔' : '✘'} ${r.t} (${(r.ms / 1000).toFixed(0)} s)${r.ok ? '' : ': ' + why(r)}`) });
+  const wrap = flag('--wrap'), results = flag('--results');
+  const json = a.includes('--json'), isolate = !a.includes('--no-isolate'), list = a.filter((x) => x !== '--json' && x !== '--no-isolate');
+  const res = await runTests(list, { cwd, jobs, timeout, wrap: wrap && path.resolve(wrap), results: results && path.resolve(results), isolate, onDone: json ? () => {} : (r) => console.log(`${r.ok ? '✔' : '✘'} ${r.t} (${(r.ms / 1000).toFixed(0)} s)${r.ok ? '' : ': ' + why(r)}`) });
   if (json) process.stdout.write(JSON.stringify(res.map((r) => ({ ...r, lines: r.ok ? r.lines.slice(-3) : r.lines.slice(-200) }))));
   else console.log(res.every((r) => r.ok) ? `PASS ${res.length} tests` : `FAIL ${res.filter((r) => !r.ok).map((r) => r.t).join(' ')}`);
   process.exitCode = res.every((r) => r.ok) ? 0 : 1;

@@ -20,6 +20,11 @@ const clean = { ...process.env }; for (const k of Object.keys(clean)) if (/proxy
 const lab = (args, env = {}, timeout = 120000) => { const r = spawnSync(process.execPath, [path.join(REPO, 'lab.mjs'), ...args], { cwd: REPO, encoding: 'utf8', timeout, env: { ...clean, ...env } }); return { code: r.status, text: (r.stdout ?? '') + (r.stderr ?? '') }; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ENV_TEST_PART=1|2: only sections 1–5 or only 6–8 (common/run-tests.mjs runs the file as these two parts side by side;
+// each part has its own copy of the lab, and no section of the second half reads what the first one left)
+const PART = Number(process.env.ENV_TEST_PART) || 0, part = (n) => !PART || PART === n;
+let r;
+if (part(1)) {
 // 1. HTTPS_PROXY reaches Node's fetch (every download goes through the proxy; it answers 403 + x-deny-reason like a sandbox's)
 const seen = [];
 const px = http.createServer((q, s) => { seen.push(q.url); s.writeHead(403, { 'x-deny-reason': 'host_not_allowed' }).end(); });
@@ -43,7 +48,7 @@ check(pr({ SSL_CERT_FILE: pem }).includes(`ENV ${pem} ${pem}`), 'SSL_CERT_FILE �
 check(pr({ SSL_CERT_FILE: pem, LAB_NETENV: 'off' }).includes('ENV undefined undefined'), 'LAB_NETENV=off leaves the environment alone');
 
 // 3. bg / wait / stop
-let r = lab(['bg', 'bds', 'help']);
+r = lab(['bg', 'bds', 'help']);
 check(/started: bds help/.test(r.text), 'bg starts a job', r.text);
 for (let i = 0; i < 20 && !/DONE exit/.test(r.text); i++) r = lab(['wait', '5']);
 check(/topics:/.test(r.text) && /DONE exit=0/.test(r.text), 'wait prints the output, then DONE exit=0', r.text);
@@ -75,6 +80,8 @@ fs.rmSync(path.join(REPO, 'bds', '.lab'), { recursive: true, force: true });
 r = lab(['cache', 'import', tgz]);
 check(r.code === 0 && fs.readFileSync(path.join(REPO, 'bds', '.lab', 'bds', 'VERSION'), 'utf8') === '1.2.3' && /OK imported/.test(r.text), 'cache import restores it', r.text);
 
+}
+if (part(2)) {
 // 6. the chat relay: handoff (zip for the person, keeps the current unit) → verify (paste-ready block) on a (fake) server
 {
   const cache = path.join(T, 'cache-bds'), bds = path.join(cache, 'bds');
@@ -250,6 +257,7 @@ if (process.platform !== 'win32') {
   check(s.status === 0 && /topics:/.test(s.stdout), 'lab.sh runs the lab', s.stdout + s.stderr);
 }
 
+}
 fs.rmSync(T, { recursive: true, force: true });
 console.log(`\n${bad ? 'FAIL' : 'PASS'} ${good}/${good + bad}`);
 process.exit(bad ? 1 : 0);

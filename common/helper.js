@@ -111,6 +111,7 @@ globalThis.__labsave=(name,text)=>new Promise(res=>{console.warn("lab:action "+J
 // the server's own tick, every 10 ticks: the lab's clients pace themselves by it (a sped-up server that cannot keep up would
 // otherwise fall behind their clocks). The lab takes these lines out of the log
 system.runInterval(()=>console.warn("LAB_T "+system.currentTick),10);
-// lab:sync <n>: the lab sends it after a console command and waits for LAB_SYNC <n> (commands run in order: the one before is done)
-system.afterEvents.scriptEventReceive.subscribe(e=>{if(e.id==="lab:sync")console.warn("LAB_SYNC "+e.message)},{namespaces:["lab"]});
+// lab:sync <n> [ticks]: the lab sends it after a console command and waits for LAB_SYNC <n> (commands run in order: the one before
+// is done); with ticks, that many of the server's ticks later: the lab's pauses counted in game time (a sped-up server, LAB_SPEED)
+system.afterEvents.scriptEventReceive.subscribe(e=>{if(e.id!=="lab:sync")return;const[k,t]=e.message.split(" "),d=Math.min(72000,Math.floor(Number(t))||0);if(d>0)system.runTimeout(()=>console.warn("LAB_SYNC "+k),d);else console.warn("LAB_SYNC "+k)},{namespaces:["lab"]});
 console.warn("LAB_JS_READY");

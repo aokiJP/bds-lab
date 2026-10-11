@@ -4,8 +4,9 @@
 // run come first (test --cov) and get no bug: it would survive anyway. Default 6 bugs (6 server runs; --all: every site);
 // a bug that does not even build is skipped. The unit is put back exactly as it was, whatever happens. Zero tokens.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import * as CP from './checkpoint.mjs';
 
 const OPS = [
@@ -94,6 +95,38 @@ export function runTests(k, u, extra = [], env = {}) {
   const lines = `${r.stdout ?? ''}${r.stderr ?? ''}`.split('\n');
   return { ok: r.status === 0 && lines.some((l) => /^PASS \d/.test(l)), ran: lines.some((l) => /^(PASS|FAIL) \d+\/\d+/.test(l)), lines };
 }
+/** the same, not waited for */
+export function runTestsAsync(k, u, extra = [], env = {}) {
+  return new Promise((res) => {
+    const c = spawn(process.execPath, [path.join(CP.TOP, k, 'lab.mjs'), 'test', '-a', u, ...extra], { cwd: path.join(CP.TOP, k), env: { ...process.env, LAB_NOTRACE: '1', FORCE_COLOR: '0', LAB_NO_LASTFAIL: '1', LAB_NO_KITSYNC: '1', ...env } });
+    let t = ''; c.stdout.on('data', (d) => { t += d; }); c.stderr.on('data', (d) => { t += d; });
+    const timer = setTimeout(() => c.kill('SIGKILL'), 20 * 60_000);
+    c.on('close', (code) => { clearTimeout(timer); const lines = t.split('\n'); res({ ok: code === 0 && lines.some((l) => /^PASS \d/.test(l)), ran: lines.some((l) => /^(PASS|FAIL) \d+\/\d+/.test(l)), lines }); });
+  });
+}
+// how many bugs at once, each in a copy of the unit on a server of its own: LAB_MUTATE_JOBS, else the cores less one, at most 3
+// (the BDS lab: an Endstone or LeviLamina server is heavier, LeviLamina under Wine a machine's worth)
+export function mutateJobs(k) {
+  const n = Number(process.env.LAB_MUTATE_JOBS);
+  if (Number.isInteger(n) && n >= 1) return n;
+  if (k !== 'bds') return 1;
+  return Math.max(1, Math.min(3, (typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length) - 1));
+}
+// a copy of the unit next to it (<unit>__mut<i>), its node_modules linked, not copied; gone with what the lab kept for it
+function copyUnit(k, dir, name) {
+  const to = path.join(path.dirname(dir), name);
+  fs.rmSync(to, { recursive: true, force: true });
+  fs.cpSync(dir, to, { recursive: true, filter: (s) => path.basename(s) !== 'node_modules' });
+  if (fs.existsSync(path.join(dir, 'node_modules'))) fs.symlinkSync(path.join(dir, 'node_modules'), path.join(to, 'node_modules'), 'junction');
+  return {
+    dir: to,
+    drop() {
+      fs.rmSync(to, { recursive: true, force: true });
+      const lab = path.join(CP.TOP, k, '.lab');
+      for (const f of [['reports', name + '.json'], ['maps', name + '.json'], ['last-fail', name + '.json']]) fs.rmSync(path.join(lab, ...f), { force: true });
+    },
+  };
+}
 export const whatOf = (s) => (s.kind === 'call' ? `\`${s.was.slice(0, 70)}\` left out` : `\`${s.was}\` → \`${s.to.trim()}\``);
 /** coverage, then small bugs one at a time (n spread over the code, or exactly `only`: the same bugs again, e.g. after new tests).
  *  { ok (the tests pass as they are), cov, sites, tried, caught, lived: [{ s, what }], skipped }. The unit is put back exactly. */
@@ -114,20 +147,42 @@ export async function measure(k, u, { n = 6, only = null, out = () => {}, onBase
     const backup = new Map(files);
     res.sites = sites(files, only ? new Set() : skip);
     const chosen = only ? only.filter((s) => backup.get(s.file)?.split('\n')[s.line - 1] === s.code) : pick(res.sites, Math.min(n, res.sites.length));   // (a line that changed since: not that bug any more)
-    out(`  ${chosen.length} bug(s), one test run each${k === 'll' ? ' (LeviLamina under Wine: about 2 min each; run it in the background)' : ''}`);
-    let i = 0;
-    for (const s of chosen) {
-      i++;
-      if (!backup.has(s.file)) continue;
-      fs.writeFileSync(path.join(dir, s.file), apply(backup.get(s.file), s));
-      const r = runTests(k, u);
-      fs.writeFileSync(path.join(dir, s.file), backup.get(s.file));
+    const jobs = Math.min(mutateJobs(k), chosen.length);
+    out(`  ${chosen.length} bug(s), one test run each${jobs > 1 ? `, ${jobs} at a time` : ''}${k === 'll' ? ' (LeviLamina under Wine: about 2 min each; run it in the background)' : ''}`);
+    // (the unit's own last result stays the base run's, not a bug's)
+    const rf = path.join(CP.TOP, k, '.lab', 'report.json'), report = fs.existsSync(rf) ? fs.readFileSync(rf) : null;
+    const tally = (i, s, r) => {
       const what = whatOf(s);
-      if (!r.ran) { res.skipped++; out(`  - ${s.file}:${s.line} ${what}: does not build, skipped`); continue; }
+      if (!r.ran) { res.skipped++; out(`  - ${s.file}:${s.line} ${what}: does not build, skipped`); return; }
       res.tried++;
       if (r.ok) res.lived.push({ s, what }); else res.caught++;
       out(`  ${i}/${chosen.length} ${r.ok ? 'survived' : 'caught  '} ${s.file}:${s.line} ${what}`);
+    };
+    if (jobs > 1) {
+      // each bug in a copy of the unit with a server of its own, `jobs` at a time (the unit itself is not touched); said in order
+      const got = new Array(chosen.length);
+      let next = 0;
+      await Promise.all(Array.from({ length: jobs }, async () => {
+        for (let i; (i = next++) < chosen.length;) {
+          const s = chosen[i];
+          if (!backup.has(s.file)) continue;
+          const c = copyUnit(k, dir, `${u}__mut${i + 1}`);
+          try { fs.writeFileSync(path.join(c.dir, s.file), apply(backup.get(s.file), s)); got[i] = await runTestsAsync(k, path.basename(c.dir)); } finally { c.drop(); }
+        }
+      }));
+      chosen.forEach((s, i) => { if (got[i]) tally(i + 1, s, got[i]); });
+    } else {
+      let i = 0;
+      for (const s of chosen) {
+        i++;
+        if (!backup.has(s.file)) continue;
+        fs.writeFileSync(path.join(dir, s.file), apply(backup.get(s.file), s));
+        const r = runTests(k, u);
+        fs.writeFileSync(path.join(dir, s.file), backup.get(s.file));
+        tally(i, s, r);
+      }
     }
+    if (report) try { fs.writeFileSync(rf, report); } catch { /* best-effort */ }
     res.chosen = chosen;
     return res;
   } finally { held.back(); }

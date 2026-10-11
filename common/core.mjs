@@ -587,6 +587,23 @@ async function realDeps({ loud = false } = {}) {
   }
   return { req, ver, versions };
 }
+// the real players' code loaded and this version's packet code compiled while the server boots (Engine.bootUp, a run with a
+// join): the first join spent about a second on it. Only when bedrock-protocol is there and speaks this BDS (else the join
+// installs it or borrows, and says so); a failure here is said by the join
+let WARMED = false;
+function warmPlayers() {
+  if (WARMED) return;
+  WARMED = true;
+  try {
+    const dir = path.join(CACHE, 'node');
+    if (!exists(path.join(dir, 'node_modules', 'bedrock-protocol'))) return;
+    authStub(dir);
+    const req = createRequire(path.join(dir, 'package.json')), keys = Object.keys(req('bedrock-protocol/src/options').Versions);
+    const ver = dataVersion(keys), newest = dataVersion(keys, '9.9.9'), fam = (v) => { const p = v.split('.').map(Number); return p[0] * 1e6 + p[1] * 1e3 + Math.floor(p[2] / 10) * 10; };
+    if (!ver || fam(bdsVersion()) > fam(newest)) return;
+    createRequire(import.meta.url)('./realplayer.cjs').warm(req, ver);
+  } catch { /* the join says what is wrong */ }
+}
 // what a borrowed client's own packet code throws when the new server changed a packet it builds or reads
 const BORROW_GAP = /SizeOf|Cannot convert .* to a BigInt|Read error|Serializ|is not iterable|of undefined|of null/i;
 // borrow: the protocol number this BDS speaks, from its RakNet ping (MCPE;motd;<protocol>;<version>;...), put under the borrowed
@@ -629,6 +646,9 @@ const TRANSPORT = ['nethernet', 'lan'].includes(process.env.LAB_TRANSPORT) ? pro
 const SRV_TRANSPORT = TRANSPORT === 'raknet' ? 'raknet' : 'nethernet';
 // time acceleration (see boot): the multithreaded libfaketime (BDS runs many threads), native Linux only
 let SPEED = Math.max(1, Number(process.env.LAB_SPEED) || 1);   // `speed <x>` changes it (a restart)
+// the lab's fixed pauses counted in the server's ticks (Engine.pause): the BDS lab; LAB_TICK_PAUSE=0 = the wall clock as before
+const TICK_PAUSE = F.name === 'bds' && process.env.LAB_TICK_PAUSE !== '0';
+let CLOCK_X = 1;   // how fast the running server's clock really goes (boot: SPEED with libfaketime, else 1)
 // the server's clock as its own ticks say (globalThis.__labSrvClock, read by realplayer.cjs): the tick, when it came (performance.now()),
 // and the rate over the last second (ticks a second). The clients in this process follow it instead of a fixed 50/k ms, so a server
 // that cannot hold the asked speed slows them down with it rather than falling behind them
@@ -659,6 +679,11 @@ async function boot(inst) {
   if (TRANSPORT === 'lan' && RT.kind === 'docker') die('LAB_TRANSPORT=lan: the server must run natively (LAN discovery on UDP 7551 does not cross the container); use LAB_TRANSPORT=nethernet here');
   let port = Number(process.env.LAB_PORT) || 19132 + 2 * Math.floor(Math.random() * 400);
   for (let k = 0; k < 50 && !(await udpFree(port) && await udpFree(port + 1)); k++) port += 2;
+  // LAB_SPEED=k: the same unmodified BDS on a clock that runs k times as fast (libfaketime: clock_gettime, sleeps and timed waits
+  // scaled), so its 20 ticks a second come k times as often; the lab's clients tick at 50/k ms to match (realplayer LAB_TICK_MS).
+  // CLOCK_X: how fast this server's clock really runs (1 without libfaketime, whatever LAB_SPEED says)
+  const ft = speedLib();
+  CLOCK_X = ft ? SPEED : 1;
   setProps(inst, {
     'level-name': 'lab', 'level-type': WORLD_KIND === 'normal' ? 'DEFAULT' : 'FLAT', ...(WORLD_KIND === 'normal' ? { 'level-seed': SEED } : {}), 'online-mode': 'false', 'allow-list': 'false', 'gamemode': 'survival',
     'difficulty': process.env.LAB_DIFFICULTY || 'normal', 'allow-cheats': 'true', 'content-log-console-output-enabled': 'true', 'content-log-file-enabled': 'false',
@@ -666,7 +691,11 @@ async function boot(inst) {
     ...(process.env.LAB_MAX_THREADS ? { 'max-threads': process.env.LAB_MAX_THREADS } : {}),
     // LAB_WATCHDOG_MS=<ms>: the script watchdog's hang limit, and a hang neither interrupts the script nor stops the server
     // (a machine an Android emulator keeps busy, the app lab: a script that waited 10 s for the CPU did not hang)
-    ...(Number(process.env.LAB_WATCHDOG_MS) > 0 ? { 'script-watchdog-hang-threshold': String(Number(process.env.LAB_WATCHDOG_MS)), 'script-watchdog-hang-exception': 'false', 'script-watchdog-enable-shutdown': 'false' } : {}),
+    // LAB_SPEED=k: the watchdog reads the sped-up clock, so a script's 2.5 real seconds were its 10 s hang at x4 (TS REPL's compiler):
+    // its limits (BDS's defaults: hang 10 s, spike 100 ms, slow 10 ms) k times as long, the same real time as at 1x. Written every
+    // boot (the instance keeps its server.properties: a run's x4 or LAB_WATCHDOG_MS stayed for the next run)
+    ...(Number(process.env.LAB_WATCHDOG_MS) > 0 ? { 'script-watchdog-hang-threshold': String(Number(process.env.LAB_WATCHDOG_MS)), 'script-watchdog-hang-exception': 'false', 'script-watchdog-enable-shutdown': 'false' } : { 'script-watchdog-hang-threshold': String(10000 * CLOCK_X), 'script-watchdog-hang-exception': 'true', 'script-watchdog-enable-shutdown': 'true' }),
+    'script-watchdog-spike-threshold': String(100 * CLOCK_X), 'script-watchdog-slow-threshold': String(10 * CLOCK_X),
     ...(process.env.LAB_COMPRESSION_THRESHOLD ? { 'compression-threshold': process.env.LAB_COMPRESSION_THRESHOLD } : {}),
     'player-idle-timeout': '0', 'max-players': process.env.LAB_MAX_PLAYERS || '100',   // BDS's own default is 10: races put more on one server
     'server-port': String(port), 'server-portv6': String(port + 1), 'transport': SRV_TRANSPORT,
@@ -686,9 +715,6 @@ async function boot(inst) {
   // NetherNet: no fake IPv6 sockets (BDS falls back to IPv4 by itself; faking would hide that), only the empty IPv6 /proc tables
   // (a Windows server under Wine needs them to see any network interface at all)
   if (shim) { env.LD_PRELOAD = pre ? `${shim}:${pre}` : shim; if (SRV_TRANSPORT === 'nethernet') env.LAB_SHIM_NOSOCK = '1'; }
-  // LAB_SPEED=k: the same unmodified BDS on a clock that runs k times as fast (libfaketime: clock_gettime, sleeps and timed waits
-  // scaled), so its 20 ticks a second come k times as often; the lab's clients tick at 50/k ms to match (realplayer LAB_TICK_MS)
-  const ft = speedLib();
   // (speed-shim first: the network's clock stays real, see speedShim)
   if (ft) { const net = speedShim(), pre2 = net ? `${net}:${ft}` : ft; env.LD_PRELOAD = env.LD_PRELOAD ? `${env.LD_PRELOAD}:${pre2}` : pre2; env.FAKETIME = `+0 x${SPEED}`; env.FAKETIME_DONT_FAKE_MONOTONIC = '0'; env.FAKETIME_NO_CACHE = '1'; }
   // own process group (POSIX) or own container: the Endstone launcher and Wine start children of their own; a kill takes them all
@@ -1257,6 +1283,7 @@ class Engine {
     await F.deploy?.(L(), this.inst, this);
     this.bootMark = this.jsMark = LOG.length; this.jsWait = false;   // (the addon's script reports in again on this boot)
     this.srv = await boot(this.inst);
+    if (this.warmJoin) setImmediate(warmPlayers);   // (while it boots: see warmPlayers)
     this.ok = !!(await ready(this.srv));
     // a native crash while the server starts, seen once in a few runs with addons that load fine (BDS 1.26.52, 2 CPUs): start
     // again once. A crash that comes back is the addon's (or the world's) and fails as before; one that does not is said
@@ -1408,10 +1435,25 @@ class Engine {
     }
     this.packHash = await writePacks(this.world, this.settings, this.inst?.name?.startsWith('live'));
     await this.bootUp();
-    if (this.ok) await sleep(wait);
+    if (this.ok) await this.pause(wait);
     return this.ok;
   }
   take(cmd) { const seg = { cmd, lines: LOG.slice(this.mark) }; this.prevMark = this.mark; this.mark = LOG.length; return seg; }
+  // a fixed pause (after a command, an action, `wait ms`) counted in the server's own ticks, ms / 50 of them: the helper prints
+  // the marker that many ticks later (helper.js lab:sync <n> <ticks>). The same pause as before at normal speed, a k-th of it on a
+  // server sped up k times (LAB_SPEED), longer on a server that lags. No helper (it did not answer once) or another lab
+  // (TICK_PAUSE): the wall clock, over the speed. A marker that never comes (the script hung): plain waits from then on
+  async pause(ms) {
+    const srv = this.srv, d = Math.round(ms / 50);
+    if (d > 0 && TICK_PAUSE && this.sync !== false && srv && !srv.exited) {
+      const k = (this.syncN = (this.syncN ?? 0) + 1);
+      srv.send(`scriptevent lab:sync ${k} ${d}`);
+      if (await srv.wait(new RegExp(`LAB_SYNC ${k}\\s*$`), (this.sync ? 30000 : 8000) + ms * 4)) { this.sync = true; return; }
+      if (!srv.exited) this.sync = false;
+      return;   // (longer than the pause has passed)
+    }
+    if (ms > 0) await sleep(ms / CLOCK_X);
+  }
   // the server's ticks per real second since the last sample (20 = full speed; LAB_SPEED=k aims at 20k), logged as `tps`
   async tps(last) {
     const n = LOG.length;
@@ -1479,7 +1521,7 @@ class Engine {
       const bg = w.endsWith('&') && w.length > 2, name = bg ? w.slice(1, -1) : w.slice(1), [action, ...a] = rest;
       try {
         if (action === 'join') {
-          if (bots.has(name)) { LOG.push(`[0-0-0 0:0:0 BOT] @${name} already joined`); await sleep(wait); return; }   // (e.g. after restart, which rejoins players): not an error
+          if (bots.has(name)) { LOG.push(`[0-0-0 0:0:0 BOT] @${name} already joined`); await this.pause(wait); return; }   // (e.g. after restart, which rejoins players): not an error
           const { req, ver, versions, borrow } = await realDeps();
           const { createRealPlayer } = createRequire(import.meta.url)('./realplayer.cjs');
           if (borrow && !this.borrowed) { this.borrowed = await borrowProtocol(req, ver, srvPort); LOG.push(`[0-0-0 0:0:0 BOT] (borrowed client: ${ver} packets, protocol ${this.borrowed ?? '?'} of BDS ${bdsVersion()})`); }
@@ -1516,7 +1558,9 @@ class Engine {
             lanJ = await (await import('./lan.mjs')).labJoin(CACHE, { name });
           }
           let bot; let n0 = LOG.length;
-          const mk = () => createRealPlayer({ req: lanJ?.req ?? req, lan: lanJ, port: cport, name, version: cver, transport: lanJ ? 'lan' : TRANSPORT === 'lan' ? 'nethernet' : TRANSPORT, rtc, emit: (l) => LOG.push('[0-0-0 0:0:0 BOT] ' + l), blockAt, itemTags, packId, packNames, opts: jo, nn: { pins: path.join(CACHE, 'nethernet-pins.json') } });
+          // cmdBehind: `@A cmd` knows a command has run by a /list right behind it (realplayer), not by waiting 1.5 s for an answer a
+          // custom command never sends. BDS only: a plugin (Endstone, LeviLamina) may see or log every command; LAB_CMD_BEHIND=0 = the old wait
+          const mk = () => createRealPlayer({ req: lanJ?.req ?? req, lan: lanJ, port: cport, name, version: cver, transport: lanJ ? 'lan' : TRANSPORT === 'lan' ? 'nethernet' : TRANSPORT, rtc, emit: (l) => LOG.push('[0-0-0 0:0:0 BOT] ' + l), blockAt, itemTags, packId, packNames, opts: jo, nn: { pins: path.join(CACHE, 'nethernet-pins.json') }, cmdBehind: F.name === 'bds' && process.env.LAB_CMD_BEHIND !== '0' });
           // a borrowed client whose protocol number is not quite the server's (a later preview build): the server says older or
           // newer, so walk the number that way until it lets the player in (once per server; the found number is kept)
           if (borrow && cver === ver && !this.borrowDone) {
@@ -1538,8 +1582,8 @@ class Engine {
           try { bot ??= await mk(); } catch (e) {
             // another protocol, no proxy: BDS closes the door like on a real outdated/newer client. That is the expected answer, not an error
             // the server refused the login with a reason (a ban, a whitelist, a full server): that line is the answer, not an error
-            if (/closed/.test(e.message) && LOG.slice(n0).some((l) => l.includes(`@${name} disconnected:`))) { await sleep(wait); return; }
-            if (cver !== ver && cport === srvPort && /closed|did not spawn/.test(e.message)) { LOG.push(`[0-0-0 0:0:0 BOT] @${name} refused: ${e.message} (client ${cver}, server ${ver}; LAB_PROXY translates)`); await sleep(wait); return; }
+            if (/closed/.test(e.message) && LOG.slice(n0).some((l) => l.includes(`@${name} disconnected:`))) { await this.pause(wait); return; }
+            if (cver !== ver && cport === srvPort && /closed|did not spawn/.test(e.message)) { LOG.push(`[0-0-0 0:0:0 BOT] @${name} refused: ${e.message} (client ${cver}, server ${ver}; LAB_PROXY translates)`); await this.pause(wait); return; }
             throw e;
           }
           bot.on('gone', () => { if (bots.get(name) === bot) bots.delete(name); });
@@ -1550,14 +1594,14 @@ class Engine {
           await srv.wait(/Opped|op/i, 3000);
           // BDS 1.26.60+ answers "Could not op" when the player is an operator already (default-player-permission-level): not an error
           for (let i = LOG.length - 1; i >= o0; i--) if (new RegExp(`Could not op: ${name}\\s*$`).test(LOG[i])) LOG.splice(i, 1);
-          await sleep(300);
+          await this.pause(300);
         } else {
           const b = bots.get(name);
           if (!b) throw new Error(`not joined (use: @${name} join)`);
           if (bg && action !== 'join') {
             const p = b.act(action, a).catch((e) => LOG.push(`[0-0-0 0:0:0 ERROR] @${name} ${action}: ${e.message}${this.borrowed && BORROW_GAP.test(e.message) ? ' (borrowed client: this action\'s packets changed; not the addon\'s fault)' : ''}`));
             (this.bgActs ??= new Set()).add(p); p.finally(() => this.bgActs.delete(p));
-            await sleep(wait); return;
+            await this.pause(wait); return;
           }
           await b.act(action, a);
           if (action === 'leave') { bots.delete(name); this.joins.delete(name); }
@@ -1566,8 +1610,8 @@ class Engine {
           else if (F.slowServer?.(L()) && this.sync !== false) { await b.act('__sync', []); const k = (this.syncN = (this.syncN ?? 0) + 1); srv.send(`scriptevent lab:sync ${k}`); await srv.wait(new RegExp(`LAB_SYNC ${k}\\s*$`), 20000); }
         }
       } catch (e) { LOG.push(`[0-0-0 0:0:0 ERROR] @${name} ${action}: ${e.message}${this.borrowed && BORROW_GAP.test(e.message) ? ` (borrowed client: this action's packets changed in BDS ${bdsVersion()}; not the addon's fault, it waits for bedrock-protocol)` : ''}`); }
-      await sleep(wait);
-    } else if (w === 'wait') await sleep(Number(rest[0]) || 0);
+      await this.pause(wait);
+    } else if (w === 'wait') await this.pause(Number(rest[0]) || 0);   // game time (pause): a k-th as long at LAB_SPEED=k
     else if (w === 'template' && rest[0] === 'save') {   // template save: this world (with every chunk generated so far) becomes the seed's template
       srv.send('save hold');
       let files = null;
@@ -1620,7 +1664,7 @@ class Engine {
       if (!this.ok) return false;
       for (const [name, a] of rejoin) await this.exec(`@${name} join ${a.join(' ')}`.trim(), 100);
       LOG.push(`[0-0-0 0:0:0 BOT] speed x${x}: ${20 * x} ticks a second (server restarted with the same world${rejoin.length ? `, ${rejoin.length} players rejoined` : ''})`);
-      await sleep(wait);
+      await this.pause(wait);
     } else if (w === 'packset') {
       // packset <name>=<value>...: the operator's pack settings (world file), then restart the same world; players rejoin.
       // A client cannot change settings on a dedicated server (BDS ignores ServerboundPackSettingChange), so this is how BDS does it
@@ -1633,7 +1677,7 @@ class Engine {
       if (!this.ok) return false;
       for (const [name, a] of rejoin) { await this.exec(`@${name} join ${a.join(' ')}`.trim(), 100); LOG.push(`[0-0-0 0:0:0 BOT] @${name} rejoined`); }
       LOG.push(`[0-0-0 0:0:0 BOT] pack settings ${JSON.stringify(this.settings)} (world restarted)`);
-      await sleep(wait);
+      await this.pause(wait);
     } else if (w === 'view') {
       // view x1 y1 z1 x2 y2 z2 [width]: the blocks in that box, rendered by Mojang Creator Tools with real textures
       const n = rest.map(Number);
@@ -1655,7 +1699,7 @@ class Engine {
       await sleep(50);
     } else if (w === 'restart') {   // the same world again; real players rejoin (as people would), `restart alone` leaves them out
       if (!(await this.restart(rest[0] !== 'alone'))) return false;
-      await sleep(wait);
+      await this.pause(wait);
     } else if (w === 'clock') {   // clock +1d | +3h | -30m: the addon's Date (not the game's day/night) runs ahead from now on
       const ms = clockMs(rest[0]);
       if (ms === null) LOG.push('[0-0-0 0:0:0 ERROR] clock: use clock +1d | +3h | +90m | +30s (the addon\'s Date; time set day is the game\'s sky)');
@@ -1682,9 +1726,9 @@ class Engine {
       if (!reply) LOG.push('[0-0-0 0:0:0 ERROR] serverping: no answer (NetherNet servers do not answer RakNet pings)');
       else { const f = reply.subarray(35).toString('utf8').split(';'); LOG.push(`[0-0-0 0:0:0 BOT] PING motd=${JSON.stringify(f[1] ?? '')} players=${f[4]}/${f[5]} level=${JSON.stringify(f[7] ?? '')} version=${f[3]}`); }
     } else if (w === 'perf') {
-      // perf [ms]: diagnostics capture (script/server tick time, script memory, entities)
+      // perf [ms]: diagnostics capture (script/server tick time, script memory, entities) over that much game time (pause)
       srv.send('script diagnostics startcapture');
-      await sleep(Number(rest[0]) || 3000);
+      await this.pause(Number(rest[0]) || 3000);
       const f = await this.bdsFile('script diagnostics stopcapture', /saved to '\.?\/?(.+?)'/);
       LOG.push('[0-0-0 0:0:0 BOT] ' + (f ? perfSummary(f) : 'perf: no capture'));
     } else {
@@ -1692,13 +1736,14 @@ class Engine {
       srv.send(c);
       // wait until the server has run it (its reply is out): a marker after it comes back once the command is done. Native BDS
       // answers in a tick; Wine (LeviLamina) can queue console input for seconds, and the next step must not overtake it
+      // (TICK_PAUSE: the marker comes the pause's ticks later, so it is the pause too, counted in game time; see pause)
       if (this.sync !== false) {
-        const k = (this.syncN = (this.syncN ?? 0) + 1);
-        srv.send(`scriptevent lab:sync ${k}`);
-        const r = await srv.wait(new RegExp(`LAB_SYNC ${k}\\s*$`), this.sync ? 30000 : 8000);
+        const k = (this.syncN = (this.syncN ?? 0) + 1), d = TICK_PAUSE ? Math.round(wait / 50) : 0;
+        srv.send(`scriptevent lab:sync ${k}${d > 0 ? ' ' + d : ''}`);
+        const r = await srv.wait(new RegExp(`LAB_SYNC ${k}\\s*$`), (this.sync ? 30000 : 8000) + d * 200);
         if (r) this.sync = true; else if (!this.sync) this.sync = false;   // no helper in this world: plain waits from now on
-      } else await srv.wait(/.*/, 3000);
-      await sleep(wait);
+        if (!r || d <= 0) await sleep(wait / CLOCK_X);
+      } else { await srv.wait(/.*/, 3000); await sleep(wait / CLOCK_X); }
     }
     return true;
   }
@@ -1709,6 +1754,7 @@ async function session(cmds, { wait = 300, keep = false, traces = [], cov = fals
   const inst = await claim('main');
   const eng = new Engine(inst);
   const segs = [];
+  eng.warmJoin = TICK_PAUSE && cmds.some((c) => /^@\S+ join\b/.test(c));
   await eng.start({ keep, wait, traces, cov });
   if (cov && eng.ok && F.covOn) await F.covOn(L(), eng);
   segs.push(eng.take(null));
@@ -1750,7 +1796,8 @@ function perfSummary(f) {
   const vals = new Map();
   const walk = (node, p) => { const k = p + node.name; if (node.values) (vals.get(k) ?? vals.set(k, []).get(k)).push(...node.values); for (const c of node.children ?? []) walk(c, k + '/'); };
   for (const fr of frames) for (const s of fr.stats ?? []) walk(s, '');
-  const ms = (k) => { const v = vals.get(k); if (!v?.length) return '-'; const avg = v.reduce((a, b) => a + b, 0) / v.length; return `avg ${(avg / 1000).toFixed(2)}ms max ${(Math.max(...v) / 1000).toFixed(2)}ms`; };
+  // (BDS times them on its own clock: at LAB_SPEED=k that clock runs k times as fast, so over k = the real time, as at 1x)
+  const ms = (k) => { const v = vals.get(k); if (!v?.length) return '-'; const avg = v.reduce((a, b) => a + b, 0) / v.length; return `avg ${(avg / 1000 / CLOCK_X).toFixed(2)}ms max ${(Math.max(...v) / 1000 / CLOCK_X).toFixed(2)}ms`; };
   const last = (k) => vals.get(k)?.at(-1) ?? '-';
   return `PERF script_tick ${ms('server_tick_timings/script_tick')} | level_tick ${ms('server_tick_timings/level_tick')} | script_mem ${Math.round(Number(last('scripting_engine/Memory Used (KB)')) || 0)}KB | entities ${last('entities')} | dynprops ${last('dynamic_properties/total_memory_used')}B`;
 }
