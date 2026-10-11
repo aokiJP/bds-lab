@@ -28,7 +28,8 @@ import { HOST_FILES } from './lib/hosttemplate.mjs';
 import * as MB from './lib/members.mjs';
 import * as GD from './lib/guide.mjs';
 import { helpLine, guideCard, palette, glossaryCard } from './ui/guide.mjs';
-import { checks as setupChecks, moreRights } from './lib/setup.mjs';
+import { checks as setupChecks } from './lib/setup.mjs';
+import * as R from './lib/rescue.mjs';
 import { unitsTab } from './ui/units.mjs';
 import { releasesTab } from './ui/releases.mjs';
 import { scheduleTab } from './ui/schedule.mjs';
@@ -76,13 +77,15 @@ const saveSettings = (patch) => A.setCfg(st.login, patch);
 const st = { login: null, api: null, me: null, lab: null, hosts: [], tab: 'overview', timer: null, routed: false, focus: null, prefill: null, target: 'lab',
   policy: P.DEFAULT_POLICY, policyErrors: [], role: null, audit: 'off', lastActive: Date.now(), handed: false, signinErr: HANDOFF?.error ? S.explainAuth(HANDOFF.error) : null };
 const canLab = () => Boolean(st.lab && (st.lab.role === 'admin' || st.lab.role === 'write'));
-// (GitHub refused this sign-in's rights — 403 that is not the rate limit, or 404 that hides a repository from it — : every
-// failure's notice offers the way to more, a token with everything in or the App's permissions, not a dead end)
-setOnFail((e) => {
-  if (!st.lab || !(e?.status === 404 || (e?.status === 403 && !/上限|rate limit/i.test(String(e.message))))) return null;
-  const m = moreRights({ owner: st.lab.repo?.owner?.login ?? st.lab.slug.split('/')[0], isOrg: st.lab.repo?.owner?.type === 'Organization', appSlug: CONFIG.appSlug, signedInWithApp: A.session(st.login)?.kind === 'oauth' });
-  return link(m.link, m.label);
-});
+// (no dead end: every failure's notice says what happened and offers the next step — lib/rescue.mjs: more rights, sign in
+// again, wait for the rate limit, try again, read again)
+const rescueCtx = () => ({ owner: st.lab?.repo?.owner?.login ?? st.lab?.slug?.split('/')[0], isOrg: st.lab?.repo?.owner?.type === 'Organization', appSlug: CONFIG.appSlug, signedInWithApp: A.session(st.login)?.kind === 'oauth', lab: st.lab?.slug, online: navigator.onLine });
+const rescueView = (r, retry) => h('span', {}, r.why === r.next ? null : h('span', {}, `${r.why}。${r.next} `),
+  r.action?.link ? link(r.action.link, r.action.label)
+    : r.action?.kind === 'retry' && retry ? h('button', { onclick: () => retry() }, r.action.label)
+      : r.action?.kind === 'signin' ? h('button', { onclick: () => renderSignIn('', { login: st.login }) }, r.action.label)
+        : r.action?.kind === 'reload' ? h('button', { onclick: () => render() }, r.action.label) : null);
+setOnFail((e, retry) => rescueView(R.rescue(e, rescueCtx()), retry));
 
 // ---- the lab's policy: may this person do this here (GitHub's role first, then the policy: never wider than GitHub) ----
 /** an administrator who has to lend first (the policy's adminsLend): nothing else is offered until they do */

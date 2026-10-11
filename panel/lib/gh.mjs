@@ -25,7 +25,8 @@ export function gh({ token, base = 'https://api.github.com', fetchImpl = (...a) 
   // (anon: asked without the token — a call whose own argument is the proof, the App manifest's code)
   async function call(method, path, body, opts) {
     const t0 = Date.now(), tell = (status) => { try { onCall?.({ method, path: String(path).split('?')[0], status, ms: Date.now() - t0 }); } catch { /* a view's trouble is not the call's */ } };
-    let r; try { r = await send(method, path, body, opts); } catch (e) { tell(0); throw e; }
+    // (the network itself failed — offline, refused: status 0, for lib/rescue.mjs to say so)
+    let r; try { r = await send(method, path, body, opts); } catch (e) { tell(0); throw new GhError(0, `GitHub につながりません（${e?.message ?? e}）`, path); }
     tell(r.status);
     return read(r, path);
   }
@@ -38,7 +39,8 @@ export function gh({ token, base = 'https://api.github.com', fetchImpl = (...a) 
     if (r.status === 204) return null;
     const text = await r.text();
     let j = null; try { j = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
-    if (!r.ok) throw new GhError(r.status, explain(r.status, j?.message ?? text.slice(0, 120)), path);
+    // (reset: when the rate limit opens again, in seconds — lib/rescue.mjs says how long to wait)
+    if (!r.ok) { const e = new GhError(r.status, explain(r.status, j?.message ?? text.slice(0, 120)), path); e.reset = Number(r.headers?.get?.('x-ratelimit-reset')) || null; throw e; }
     return j;
   }
   // (a repository whose variables GitHub refused this token once — 403: the sign-in lacks Variables — is not asked again: the
