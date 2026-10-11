@@ -8,7 +8,7 @@ import { KIND_WORDS } from '../lib/inbox.mjs';
 const when = (at) => (Number.isFinite(Date.parse(at)) ? ago(at) : '');
 const FILTERS = [['all', 'すべて'], ['unread', '未読'], ['failed', '失敗']];
 const PICK = { all: () => true, unread: (x) => !x.read, failed: (x) => x.kind === 'failure' };
-const EMPTY = { all: 'まだお知らせはありません。', unread: '読んでいないお知らせはありません。', failed: '失敗のお知らせはありません。' };
+const EMPTY = { all: 'まだお知らせはありません。ラボで実行が終わったり、参加のお願いが来たりすると、ここに出ます。', unread: '読んでいないお知らせはありません。「すべて」を押すと、読んだものも見られます。', failed: '失敗のお知らせはありません。うまくいっている印です。「すべて」で、ほかのお知らせも見られます。' };
 
 /** the 🔔: the number of news not read; a tap shows the list at the top of the page (toggleInbox), or ctx.open() when the page
  *  has its own way. It follows the store by itself. ctx: { inbox (lib/inbox.mjs store), go(tab, item), open?() } */
@@ -37,7 +37,7 @@ export function inboxPanel(ctx) {
     const n = ctx.inbox.unread(), xs = ctx.inbox.list().filter(PICK[show]);
     // (h leaves out what is null; replaceChildren would write it as the word)
     bar.replaceChildren(h('div', { class: 'row' }, FILTERS.map(([k, t]) => h('button', { class: show === k ? 'on' : '', 'data-filter': k, 'aria-pressed': show === k ? 'true' : 'false', onclick: () => { show = k; draw(); } }, k === 'unread' ? `${t}（${n}）` : t)),
-      h('button', { id: 'inboxread', disabled: !n, onclick: () => { ctx.inbox.markRead('all'); draw(); } }, 'すべて読んだ'),
+      h('button', { id: 'inboxread', disabled: !n, title: n ? null : '読んでいないお知らせがありません', onclick: () => { ctx.inbox.markRead('all'); draw(); } }, 'すべて読んだ'),
       h('button', { class: 'danger', id: 'inboxclear', onclick: () => { if (confirm('お知らせを全部消しますか')) { ctx.inbox.clear(); draw(); } } }, '消す'),
       ctx.close ? h('button', { id: 'inboxclose', onclick: ctx.close }, '閉じる') : null));
     list.replaceChildren(...(xs.length ? xs.map((x) => h('li', { 'data-inbox': x.id },

@@ -6,7 +6,7 @@
 // are more; text is --fg and --muted, hairlines --line. Colour is never the only way to tell: the legend names each with its
 // mark (✅ ❌ ➖), the stack always runs in the same order, a readout (pointer, touch or the arrow keys) gives the numbers, and
 // the table twin has them all. Styles go through the CSSOM (the page's CSP allows no style attribute).
-import { h, act, link } from './dom.mjs';
+import { h, act, link, failView } from './dom.mjs';
 import * as S from '../lib/stats.mjs';
 import * as M from '../lib/model.mjs';
 
@@ -231,7 +231,7 @@ export function statsTab(body, ctx) {
     const oldest = data.lab.length >= MAX_PAGES * PER_PAGE ? S.clock(Math.min(...data.lab.map(S.startMs)), tz)?.day : null;
     cards.push(h('div', { class: 'card' }, h('h2', {}, `この ${days} 日`), oldest && oldest > rows[0].day ? h('p', { class: 'warn' }, `読めたのは新しい ${data.lab.length} 件（${oldest} から）だけです: ${days} 日の全部ではありません`) : null,
       h('div', { class: 'row', style: { alignItems: 'stretch' } }, tile('始まった実行', String(mine.length)), tile('通った割合', ok + bad ? pct(ok / (ok + bad)) : '—'), tile('落ちた', String(bad)), tile('かかった時間', ms ? M.fmtMs(ms) : '—'))));
-    if (!mine.length) cards.push(h('div', { class: 'card' }, h('p', { class: 'muted' }, `この ${days} 日に始まった実行はありません`)));
+    if (!mine.length) cards.push(h('div', { class: 'card' }, h('p', { class: 'muted' }, `この ${days} 日に始まった実行はありません。${days < Math.max(...RANGES) ? `上の「${Math.max(...RANGES)} 日」を押すと、もっと前まで見られます。` : 'ラボで go や試験を走らせると、ここに出ます。'}`)));
     else {
       const bars = chartBox((W) => barsChart(rows, W)), rate = chartBox((W) => rateChart(rows, W)), grid = S.heat(mine, tz), heatBox = chartBox((W) => heatChart(grid, W));
       later.push(bars.start, rate.start, heatBox.start);
@@ -269,7 +269,7 @@ export function statsTab(body, ctx) {
     const top = Math.max(1, ...list.map((e) => e.minutes));
     return section('使った分（見積もり）', '実行の始まりから最後の更新までを分に切り上げた見積もりです（GitHub の請求そのものではありません）。ラボの分は持ち主、貸し手の分は貸し手のものです。',
       h('ul', { class: 'plain', id: 'statsminutes' }, list.map((e) => h('li', { 'data-where': e.slug },
-        h('div', { class: 'row' }, h('span', { class: 'grow' }, e.url ? link(e.url, e.name) : e.name, e.unread ? h('span', { class: 'chip bad' }, '読めません') : null), h('strong', {}, `${e.minutes} 分`), h('span', { class: 'muted' }, `${e.runs} 回`)),
+        h('div', { class: 'row' }, h('span', { class: 'grow' }, e.url ? link(e.url, e.name) : e.name, e.unread ? [h('span', { class: 'chip bad' }, '読めません'), ' ', h('span', { class: 'muted' }, 'この貸し手の host.yml の実行を読めませんでした。「読み直す」か、'), e.url ? link(`${e.url}/actions/workflows/host.yml`, 'GitHub で見る') : null] : null), h('strong', {}, `${e.minutes} 分`), h('span', { class: 'muted' }, `${e.runs} 回`)),
         // (one place alone is a number, not a bar to compare)
         list.length > 1 ? h('div', { class: 'bar' }, h('i', { style: { width: `${Math.round((e.minutes / top) * 100)}%` } })) : null))),
       twin('場所ごと', ['場所', '終わった実行', '分（見積もり）'], list.map((e) => [e.name, e.runs, e.minutes])));
@@ -292,7 +292,7 @@ export function statsTab(body, ctx) {
       }
       draw();
       return data;
-    } catch (e) { out.replaceChildren(h('p', { class: 'bad' }, e.message ?? String(e))); return undefined; } finally { out.style.opacity = ''; }
+    } catch (e) { out.replaceChildren(failView(e, () => load(true)), h('button', { onclick: () => load(true) }, '読み直す')); return undefined; } finally { out.style.opacity = ''; }
   }).finally(() => { pending = null; }));
   return load();
 }
