@@ -102,7 +102,8 @@ export function offlineSplit(tests, state, { time = TIME, parts = PARTS, n = nul
   return s.map((x) => tests.filter((t) => x.tests.has(t)));
 }
 
-/** the plan (pure) → { offline, tests, eslint, smoke, browser, bds, bdsParts, addons, extra, run, waiting, skipped }:
+/** the plan (pure) → { offline, tests, eslint, smoke, browser, bds, bdsParts (the real server's runners: a part, or parts on one
+ *  runner joined by '+'), addons, extra, run, waiting, skipped }:
  *  full — everything and the extra ones; no state — every unit allowed; the real server's units only when bdsAllowed (or full),
  *  the others wait (run and waiting: Map(unit → why)) */
 export function planVerify({ units = [], state = null, values = {}, env = envKey(), now = Date.now(), full = false, bdsAllowed = false, staleDays = 0, reason = '' } = {}) {
@@ -112,7 +113,11 @@ export function planVerify({ units = [], state = null, values = {}, env = envKey
   for (const [u, why] of picked) (isBds(u) && !(full || bdsAllowed) ? waiting : run).set(u, why);
   const tests = [...run.keys()].filter(isTest);
   const addons = [...run.keys()].filter((u) => u.startsWith('bds:addon:')).map((u) => u.slice('bds:addon:'.length));
-  const bdsParts = [...BDS_PARTS.filter((p) => run.has(`bds:${p}`)), ...(addons.length ? ['addons'] : [])];
+  const parts = [...BDS_PARTS.filter((p) => run.has(`bds:${p}`)), ...(addons.length ? ['addons'] : [])];
+  // play (one server, about 10 s) rides along on a short part's runner, after it ('addons+play'): a runner of its own cost its
+  // setup and the minute GitHub rounds a job up to, more than the test
+  const ride = parts.includes('play') && ['addons', 'bench', 'scratch'].find((p) => parts.includes(p));
+  const bdsParts = ride ? parts.filter((p) => p !== 'play').map((p) => (p === ride ? `${p}+play` : p)) : parts;
   const eslint = run.has('step:eslint'), smoke = run.has('step:github-smoke'), browser = run.has('tests/panel-browser.mjs');
   // the offline job's runners: Linux in one or two lists (offlineSplit), macOS (full only) the whole list on one
   const offMatrix = offlineSplit(tests, state).map((list, i) => ({ os: 'ubuntu-latest', shard: i + 1, tests: list.join(' ') }));
@@ -144,7 +149,7 @@ export function summary(p, from = null) {
   if (p.eslint) what.push('ESLint');
   if (p.smoke) what.push('GitHub の流れ');
   if (p.browser) what.push('本物のブラウザ');
-  if (p.bds) what.push(`本物の BDS（${[...BDS_PARTS.filter((x) => p.bdsParts.includes(x)), ...(p.addons.length ? [`アドオン ${p.addons.join('・')}`] : [])].join('・')}）`);
+  if (p.bds) what.push(`本物の BDS（${[...BDS_PARTS.filter((x) => p.bdsParts.some((q) => q.split('+').includes(x))), ...(p.addons.length ? [`アドオン ${p.addons.join('・')}`] : [])].join('・')}）`);
   L.push(`流す: ${p.run.size ? `${p.run.size} 個 — ${what.join('・')}` : 'なし'}`);
   for (const [u, why] of [...p.run].slice(0, 40)) L.push(`- ${u}: ${why}`);
   if (p.run.size > 40) L.push(`- ほか ${p.run.size - 40} 個`);

@@ -93,7 +93,17 @@ if (a[0] === 'workflow' && a[1] === 'run') {
       spawnSync('git', ['clone', '-q', '-b', ref, bare(slug), w], { encoding: 'utf8' });
       fs.mkdirSync(path.join(w, '.host-main'), { recursive: true });
       fs.writeFileSync(path.join(w, '.host-main', '.lab-host.json'), spawnSync('git', ['--git-dir', bare(slug), 'show', 'main:.lab-host.json'], { encoding: 'utf8' }).stdout);
-      const env = { ...process.env, HOST_JOB: inputs.job, HOST_UNIT: inputs.unit, HOST_REQUEST: inputs.request, HOST_RULES: '.host-main/.lab-host.json' };
+      // (no network in an offline test: the build tools this machine has are the runner's tool cache, linked as the lab keeps
+      // them — tests/offline.mjs does the same —, and npm reaches no registry: on CI the job downloaded esbuild, TypeScript and
+      // two schema packages every run)
+      const g = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['root', '-g'], { encoding: 'utf8', shell: process.platform === 'win32' }).stdout?.trim() ?? '', td = path.join(w, 'bds', '.lab', 'tool');
+      if (['esbuild', 'typescript'].every((n) => g && fs.existsSync(path.join(g, n, 'package.json')))) {
+        fs.mkdirSync(path.join(td, 'node_modules'), { recursive: true });
+        for (const n of ['esbuild', 'typescript']) fs.symlinkSync(path.join(g, n), path.join(td, 'node_modules', n), 'dir');
+        fs.writeFileSync(path.join(td, 'package.json'), '{"private":true}\n');
+        fs.writeFileSync(path.join(td, 'stamp'), JSON.stringify({ esbuild: '^0.28.0', typescript: '~6.0.3' }));
+      }
+      const env = { ...process.env, HOST_JOB: inputs.job, HOST_UNIT: inputs.unit, HOST_REQUEST: inputs.request, HOST_RULES: '.host-main/.lab-host.json', npm_config_registry: 'http://127.0.0.1:9/', npm_config_fetch_retries: '0', npm_config_fetch_timeout: '2000' };
       for (const k of Object.keys(env)) if (/^(FAKE|LAB_HOST|FAKEGH)/.test(k)) delete env[k];
       const r = spawnSync(process.execPath, ['lab.mjs', 'host', '__job'], { cwd: w, encoding: 'utf8', env, timeout: 600_000 });
       conclusion = r.status === 0 ? 'success' : 'failure';

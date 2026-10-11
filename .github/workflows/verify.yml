@@ -144,7 +144,8 @@ jobs:
   bds:
     # the real server's parts the plan names, each on its own runner side by side: bench — the bench's selftest; scratch — the
     # from-scratch lessons, 3 at once; dev — the AI tools' story with a real client; play — the app lab's game verbs on the
-    # server; addons — the addons whose reads changed, 3 at once (a `test` while another runs gets its own server). Each recorded
+    # server (about 10 s: after a short part on its runner, 'addons+play'; each part of a runner runs whatever the one before
+    # it did); addons — the addons whose reads changed, 3 at once (a `test` while another runs gets its own server). Each recorded
     needs: plan
     if: needs.plan.outputs.bds == 'true'
     strategy:
@@ -181,21 +182,21 @@ jobs:
       - run: node lab.mjs bds
       # (the lab's starting point, before anything is recorded: bds/lab.mjs above does not make it, the top lab.mjs does)
       - run: node ../lab.mjs help > /dev/null
-      - if: matrix.part == 'bench'
+      - if: contains(matrix.part, 'bench') && !cancelled()
         run: node ../common/deps.mjs run bds:bench --results "$RUNNER_TEMP/results/bds.jsonl" -- node bench/bench.mjs selftest
       # the from-scratch lessons: the reference passes every one in the sandbox and on this BDS, the empty template fails
-      - if: matrix.part == 'scratch'
+      - if: contains(matrix.part, 'scratch') && !cancelled()
         run: node ../common/deps.mjs run bds:scratch --results "$RUNNER_TEMP/results/bds.jsonl" -- node ../lab.mjs scratch selftest --real --jobs 3
       # why, chaos, shrink, gaps, record, harden (a scripted AI) and mutate on the real server, end to end
-      - if: matrix.part == 'dev'
+      - if: contains(matrix.part, 'dev') && !cancelled()
         run: node ../common/deps.mjs run bds:dev --results "$RUNNER_TEMP/results/bds.jsonl" -- node ../tests/dev-bds.mjs
       # the server's side of the app lab's game verbs (where, items, face, lookat: their very js) with a real client joined
-      - if: matrix.part == 'play'
+      - if: contains(matrix.part, 'play') && !cancelled()
         run: node ../common/deps.mjs run bds:play --results "$RUNNER_TEMP/results/bds.jsonl" -- node ../tests/play-bds.mjs
       # (an addon whose tests fail is also an annotation: which addon, and the last lines it printed — readable on the run's
       # page and through the API where the log is not)
       - name: test and pack the addons
-        if: matrix.part == 'addons'
+        if: contains(matrix.part, 'addons') && !cancelled()
         env:
           ADDONS: ${{ needs.plan.outputs.addons }}
         run: node ../common/deps.mjs each --results "$RUNNER_TEMP/results/bds.jsonl" --jobs 3 --unit 'bds:addon:{}' --names "$ADDONS" -- sh -c 'node lab.mjs test -a {} && node lab.mjs pack -a {}'
@@ -203,7 +204,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with: { name: 'verify-results-bds-${{ matrix.part }}', path: '${{ runner.temp }}/results/', retention-days: 1, if-no-files-found: ignore }
-      - if: always() && matrix.part == 'addons'
+      - if: always() && contains(matrix.part, 'addons')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with: { name: bds-addons, path: 'bds/dist/*', if-no-files-found: ignore }
 

@@ -64,8 +64,12 @@ await t('the plan (pure): the real server waits unless allowed; full: everything
   eq(V.outputs(none), ['offline=true', 'tests=tests/a-offline.mjs tests/b-offline.mjs', 'eslint=true', 'smoke=true', 'browser=true', 'bds=false', 'bdsparts=["none"]', 'addons=', 'extra=false',
     'offmatrix=[{"os":"ubuntu-latest","shard":1,"tests":"tests/a-offline.mjs tests/b-offline.mjs"}]']);
   const allowed = V.planVerify({ units, state: null, bdsAllowed: true });
-  eq([allowed.bds, allowed.bdsParts, allowed.addons, allowed.waiting.size], [true, ['bench', 'scratch', 'dev', 'play', 'addons'], ['coins', 'shop'], 0]);
-  ok(V.outputs(allowed).includes('bdsparts=["bench","scratch","dev","play","addons"]') && V.outputs(allowed).includes('addons=coins shop'), V.outputs(allowed).join(' '));
+  eq([allowed.bds, allowed.bdsParts, allowed.addons, allowed.waiting.size], [true, ['bench', 'scratch', 'dev', 'addons+play'], ['coins', 'shop'], 0], 'play rides along on the addons\' runner');
+  ok(V.outputs(allowed).includes('bdsparts=["bench","scratch","dev","addons+play"]') && V.outputs(allowed).includes('addons=coins shop'), V.outputs(allowed).join(' '));
+  // play: on bench's runner without addons, on its own beside dev alone (dev is the longest), alone when it is all
+  const only = (us) => V.planVerify({ units: us, state: null, bdsAllowed: true }).bdsParts;
+  eq([only(['bds:bench', 'bds:play']), only(['bds:dev', 'bds:play']), only(['bds:play']), only(['bds:scratch', 'bds:dev'])], [['bench+play'], ['dev', 'play'], ['play'], ['scratch', 'dev']]);
+  ok(/本物の BDS（bench・scratch・dev・play・アドオン coins・shop）/.test(V.summary(allowed).join('\n')), 'the summary names play inside addons+play: ' + V.summary(allowed).join('\n'));
   const full = V.planVerify({ units, state: { v: 1, units: {} }, full: true });
   eq([full.extra, full.bds, full.run.size, full.waiting.size], [true, true, units.length, 0]);
   eq(full.offMatrix.map((x) => [x.os, x.shard, x.tests]), [['ubuntu-latest', 1, 'tests/a-offline.mjs tests/b-offline.mjs'], ['macos-latest', 1, 'tests/a-offline.mjs tests/b-offline.mjs']], 'full: macOS with the whole list');
@@ -259,7 +263,7 @@ await t('verify.yml runs what the plan names: every output handed on, each step 
   const y = read(path.join(TOP, '.github', 'workflows', 'verify.yml'));
   const names = V.outputs(V.planVerify({ units: [] })).map((l) => l.split('=')[0]);
   for (const o of names) ok(y.includes(`${o}: \${{ steps.plan.outputs.${o} }}`), `the plan job hands on ${o}`);
-  for (const p of V.BDS_PARTS) ok(y.includes(`matrix.part == '${p}'`) && y.includes(`run bds:${p} --results`), `the real server's part ${p}: run as bds:${p}`);
+  for (const p of V.BDS_PARTS) ok(y.includes(`contains(matrix.part, '${p}') && !cancelled()`) && y.includes(`run bds:${p} --results`), `the real server's part ${p}: run as bds:${p} (on a runner with others too: 'addons+play')`);
   for (const u of V.STEPS) ok(y.includes(`run ${u} --results`), `the step ${u} run as its unit`);
   ok(y.includes("--unit 'bds:addon:{}'") && y.includes('auto gate --tests') && y.includes('--record --results'), 'the addons and the offline tests recorded');
   ok(y.includes('node common/verify-plan.mjs --merge --out') && y.includes('name: verify-state') && /name: '?verify-results-/.test(y), 'the state job saves the memory');
