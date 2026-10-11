@@ -105,7 +105,8 @@ jobs:
           SMOKE: ${{ needs.plan.outputs.smoke }}
           BROWSER: ${{ needs.plan.outputs.browser }}
         run: |
-          beside() { name=$1; shift; ("$@" > "$RUNNER_TEMP/$name.log" 2>&1; echo $? > "$RUNNER_TEMP/$name.code") < /dev/null > /dev/null 2>&1 & }
+          # (its pid kept: the step that waits for it sees it gone without a result, and stops waiting — it waited forever once)
+          beside() { name=$1; shift; ("$@" > "$RUNNER_TEMP/$name.log" 2>&1; echo $? > "$RUNNER_TEMP/$name.code") < /dev/null > /dev/null 2>&1 & echo $! > "$RUNNER_TEMP/$name.pid"; }
           if [ "$ESLINT" = true ]; then beside eslint node common/deps.mjs run step:eslint --results "$RUNNER_TEMP/results/steps.jsonl" -- npx --yes eslint@9 -c tests/eslint.config.mjs .; fi
           if [ "$SMOKE" = true ]; then beside smoke node common/deps.mjs run step:github-smoke --results "$RUNNER_TEMP/results/steps.jsonl" -- node bds/bench/github-smoke.mjs; fi
           if [ "$BROWSER" = true ]; then beside browser node common/deps.mjs run tests/panel-browser.mjs --results "$RUNNER_TEMP/results/steps.jsonl" -- node tests/panel-browser.mjs; fi
@@ -126,13 +127,13 @@ jobs:
           else node lab.mjs auto gate --tests "$TESTS"; fi
       - name: ESLint
         if: matrix.os == 'ubuntu-latest' && matrix.shard == 1 && needs.plan.outputs.eslint == 'true'
-        run: while [ ! -f "$RUNNER_TEMP/eslint.code" ]; do sleep 2; done; cat "$RUNNER_TEMP/eslint.log"; exit "$(cat "$RUNNER_TEMP/eslint.code")"
+        run: while [ ! -f "$RUNNER_TEMP/eslint.code" ]; do if ! kill -0 "$(cat "$RUNNER_TEMP/eslint.pid" 2>/dev/null || echo 0)" 2>/dev/null && [ ! -f "$RUNNER_TEMP/eslint.code" ]; then echo "::error title=eslint::stopped without a result"; tail -200 "$RUNNER_TEMP/eslint.log"; exit 1; fi; if [ "$SECONDS" -ge 900 ]; then echo "::error title=eslint::no result after 900 s"; tail -200 "$RUNNER_TEMP/eslint.log"; ps -ef --forest | tail -80; exit 1; fi; sleep 2; done; cat "$RUNNER_TEMP/eslint.log"; exit "$(cat "$RUNNER_TEMP/eslint.code")"
       - name: GitHub flows (fake gh)
         if: matrix.os == 'ubuntu-latest' && matrix.shard == 1 && needs.plan.outputs.smoke == 'true'
-        run: while [ ! -f "$RUNNER_TEMP/smoke.code" ]; do sleep 2; done; cat "$RUNNER_TEMP/smoke.log"; exit "$(cat "$RUNNER_TEMP/smoke.code")"
+        run: while [ ! -f "$RUNNER_TEMP/smoke.code" ]; do if ! kill -0 "$(cat "$RUNNER_TEMP/smoke.pid" 2>/dev/null || echo 0)" 2>/dev/null && [ ! -f "$RUNNER_TEMP/smoke.code" ]; then echo "::error title=smoke::stopped without a result"; tail -200 "$RUNNER_TEMP/smoke.log"; exit 1; fi; if [ "$SECONDS" -ge 1200 ]; then echo "::error title=smoke::no result after 1200 s"; tail -200 "$RUNNER_TEMP/smoke.log"; ps -ef --forest | tail -80; exit 1; fi; sleep 2; done; cat "$RUNNER_TEMP/smoke.log"; exit "$(cat "$RUNNER_TEMP/smoke.code")"
       - name: management panel (real browser)
         if: matrix.os == 'ubuntu-latest' && matrix.shard == 1 && needs.plan.outputs.browser == 'true'
-        run: while [ ! -f "$RUNNER_TEMP/browser.code" ]; do sleep 2; done; cat "$RUNNER_TEMP/browser.log"; exit "$(cat "$RUNNER_TEMP/browser.code")"
+        run: while [ ! -f "$RUNNER_TEMP/browser.code" ]; do if ! kill -0 "$(cat "$RUNNER_TEMP/browser.pid" 2>/dev/null || echo 0)" 2>/dev/null && [ ! -f "$RUNNER_TEMP/browser.code" ]; then echo "::error title=browser::stopped without a result"; tail -200 "$RUNNER_TEMP/browser.log"; exit 1; fi; if [ "$SECONDS" -ge 1500 ]; then echo "::error title=browser::no result after 1500 s"; tail -200 "$RUNNER_TEMP/browser.log"; ps -ef --forest | tail -80; exit 1; fi; sleep 2; done; cat "$RUNNER_TEMP/browser.log"; exit "$(cat "$RUNNER_TEMP/browser.code")"
       - if: matrix.os == 'ubuntu-latest' && contains(matrix.tests, 'tests/lan-offline.mjs') && hashFiles('common/nethernet-connect/dist/src/index.js') == ''
         run: echo "::warning title=lan-offline not run::common/nethernet-connect/dist is not in this repository - vendor it from the nethernet-connect project (node scripts/vendor.mjs <this lab>), then lan and its test run here"
       # (what passed and what each read: the state job puts it in the memory; kept a day)
