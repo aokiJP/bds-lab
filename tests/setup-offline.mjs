@@ -173,7 +173,8 @@ await t('checks, a new lab: Pages off (its fix turns it on built by pages.yml), 
     eq(cs.map((x) => x.ok), [false, false, false, false, false, false, false]);
     ok(cs.every((x) => typeof x.label === 'string' && x.label && x.need), 'each says what is missing');
     ok(c.app.fix.manifest === true && /1 回のクリック/.test(c.app.need), JSON.stringify(c.app));
-    ok(/まず App/.test(c.installed.need) && /まず App/.test(c.deploy.need) && c.deploy.fix === null && /まず App/.test(c['host:lender/host'].need), 'what needs the App says so');
+    const up = /まず上の「GitHub App」の行で App を作ります/;
+    ok(up.test(c.installed.need) && up.test(c.deploy.need) && c.deploy.fix === null && up.test(c['host:lender/host'].need), 'what needs the App says so, and where to make it');
     ok(/APP_ID（変数）・APP_PRIVATE_KEY（秘密）/.test(c.workflows.need) && /LAB_HOST_TOKEN・LAB_SECRETS_TOKEN は要りません/.test(c.workflows.need), c.workflows.need);
     // Pages turned on, built by a workflow, pages.yml started
     const msg = await c.pages.fix.run();
@@ -340,8 +341,17 @@ await t('checks, Pages on another source (its fix switches it to the workflow) o
   try {
     g.api.variable = async () => { throw new G.GhError(403, 'no', '/x'); };
     const c = byKey(await S.checks({ api: g.api, lab: LAB(), config: {}, panelUrl: 'https://o.github.io/lab/' }));
-    ok(c.pages.ok === null && /読めません/.test(c.pages.need) && !c.pages.fix, JSON.stringify(c.pages));
-    ok(c.app.ok === null && /Variables: Read/.test(c.app.need) && c.workflows.ok === null, JSON.stringify(c.app));
+    // (what this token may not read is no dead end: each such row offers the token with everything in, and says what to do)
+    const tok = S.tokenUrl('o'), q = new URL(tok).searchParams;
+    ok(tok.startsWith('https://github.com/settings/personal-access-tokens/new?') && q.get('target_name') === 'o' && ['actions', 'contents', 'secrets', 'variables', 'issues', 'pages', 'administration'].every((k) => q.get(k) === 'write') && q.get('pull_requests') === 'read', tok);
+    ok(!new URL(S.tokenUrl('bad owner!')).searchParams.has('target_name'), 'an owner that is no login is not written in');
+    ok(c.pages.ok === null && /読めません/.test(c.pages.need) && c.pages.fix?.link === tok && /入り直して/.test(c.pages.need), JSON.stringify(c.pages));
+    ok(c.app.ok === null && /Variables: Read/.test(c.app.need) && c.app.fix?.link === tok && /トークンを作り直す/.test(c.app.fix.label), JSON.stringify(c.app));
+    ok(c.workflows.ok === null && c.workflows.fix?.link === tok, JSON.stringify(c.workflows));
+    // (signed in with the App: the App's permissions, not a token)
+    const w = byKey(await S.checks({ api: g.api, lab: LAB(), config: { appSlug: 'lab-app' }, panelUrl: 'https://o.github.io/lab/', signedInWithApp: true }));
+    ok(w.workflows.ok === null && /\/settings\/apps\/lab-app\/permissions$/.test(w.workflows.fix?.link ?? '') && /Permissions/.test(w.workflows.need), JSON.stringify(w.workflows));
+    ok(S.moreRights({ owner: 'o', signedInWithApp: true }).link === 'https://github.com/settings/apps', 'no App known: the list of Apps');
   } finally { g.close(); }
 });
 
@@ -497,6 +507,22 @@ await t('the 「準備」 tab and the policy: a fix only for a GitHub administra
     await UI.setupTab(b2, { ...base, ...nav('?code=c0dea&state=ok1'), policy: keep, role: 'admin' });
     ok(/App lab-o を作り/.test(b2.textContent) && f.st.vars.get('APP_SLUG') === 'lab-o', b2.textContent);
   } finally { f.close(); }
+});
+
+await t('a failure\'s notice offers the way out the page gives it (setOnFail: e.g. more rights), nothing when it gives none or it throws', async () => {
+  const { toast } = fakeDom();
+  const D = await imp('panel/ui/dom.mjs');
+  const last = () => toast.kids.at(-1);
+  D.setOnFail((e) => (e.status === 403 ? D.link(S.tokenUrl('o'), 'トークンを作り直す') : null));
+  ok(await D.act(async () => { throw new G.GhError(403, 'このトークンには、その操作の権限がありません（no）', '/x'); }) === undefined, 'act answers undefined on a failure');
+  const a = last().all((x) => x.tagName === 'A')[0];
+  ok(last().className === 'bad' && /権限がありません/.test(last().textContent) && a?.attrs.href === S.tokenUrl('o') && /作り直す/.test(a.textContent), last().textContent);
+  await D.act(async () => { throw new G.GhError(500, 'GitHub: 500', '/x'); });
+  ok(!last().all((x) => x.tagName === 'A').length, 'no way out offered for another failure');
+  D.setOnFail(() => { throw new Error('boom'); });
+  await D.act(async () => { throw new Error('plain'); });
+  ok(last().textContent === 'plain', 'a way out that throws: the notice alone');
+  D.setOnFail(null);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

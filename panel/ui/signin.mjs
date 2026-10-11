@@ -4,12 +4,8 @@
 // keeps its ids (#tok #lab #rem #go: tests/panel-browser.mjs fills them). The card only asks; the caller signs in.
 import { h, link, toast } from './dom.mjs';
 import { SLUG } from '../lib/model.mjs';
+import { tokenUrl as tokenLink } from '../lib/setup.mjs';
 
-function tokenLink(owner) {
-  // (GitHub's fine-grained token page, the panel's needs written in; GitHub ignores what it does not take)
-  const q = new URLSearchParams({ name: 'bds-lab panel', description: 'bds-lab の管理パネル（このブラウザだけ）', target_name: owner, expires_in: '90', metadata: 'read', actions: 'write', contents: 'write', secrets: 'write', variables: 'write', issues: 'write', pages: 'write', administration: 'write', pull_requests: 'read' });
-  return `https://github.com/settings/personal-access-tokens/new?${q}`;
-}
 const CLASSIC = 'https://github.com/settings/tokens/new?scopes=repo,workflow&description=bds-lab%20panel';
 /** where to make a token, and which (the same words as the settings tab's) */
 export const tokenHelp = (owner) => h('div', {},

@@ -17,7 +17,10 @@ export const h = (tag, attrs = {}, ...kids) => {
 };
 export const $ = (id) => document.getElementById(id);
 export const main = () => $('main');
-export const toast = (text, bad = false) => { const d = h('div', { class: bad ? 'bad' : '' }, text); $('toast').append(d); setTimeout(() => d.remove(), bad ? 9000 : 4500); };
-export const act = async (fn, done) => { try { const r = await fn(); if (done) toast(done); return r; } catch (e) { toast(e.message ?? String(e), true); return undefined; } };
+export const toast = (text, bad = false, more = null) => { const d = h('div', { class: bad ? 'bad' : '' }, text, more ? [' ', more] : null); $('toast').append(d); setTimeout(() => d.remove(), bad ? 9000 : 4500); };
+// (what to offer when something fails: the page sets it — e.g. GitHub refused this sign-in's rights → the way to more)
+let onFail = null;
+export const setOnFail = (fn) => { onFail = fn; };
+export const act = async (fn, done) => { try { const r = await fn(); if (done) toast(done); return r; } catch (e) { let more = null; try { more = onFail?.(e) ?? null; } catch { /* no way out offered */ } toast(e.message ?? String(e), true, more); return undefined; } };
 // (an address from GitHub's answers: only https:// ones become links, anything else stays words)
 export const link = (href, text) => (/^https:\/\//.test(String(href ?? '')) ? h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, text) : h('span', {}, text));

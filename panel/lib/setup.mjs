@@ -83,6 +83,19 @@ export async function storeApp(api, lab, conv, { random = (n) => globalThis.cryp
 
 /** the link that puts the App on an account's repositories (the lab's owner, or a lender for their host); null for a slug
  *  GitHub would not give */
+/** GitHub's fine-grained token page with everything the panel uses written in (pure; GitHub ignores what it does not take):
+ *  the way out of every 「このトークンでは読めない・できない」 — only the repositories are left to pick */
+export function tokenUrl(owner) {
+  const q = new URLSearchParams({ name: 'bds-lab panel', description: 'bds-lab の管理パネル（このブラウザだけ）', ...(LOGIN.test(String(owner ?? '')) ? { target_name: owner } : {}), expires_in: '90', metadata: 'read', actions: 'write', contents: 'write', secrets: 'write', variables: 'write', issues: 'write', pages: 'write', administration: 'write', pull_requests: 'read' });
+  return `https://github.com/settings/personal-access-tokens/new?${q}`;
+}
+/** what to do when this sign-in may not read or do something (pure): a token → make one with everything in and sign in with
+ *  it; the App → its permissions (its owner adds them on GitHub) */
+export function moreRights({ owner, isOrg = false, appSlug = null, signedInWithApp = false } = {}) {
+  if (!signedInWithApp) return { label: '権限が全部入ったトークンを作り直す（GitHub へ）', link: tokenUrl(owner), how: '下のリンクで作り（Repository access でラボを選んで Generate token）、「アカウントを加える」でそのトークンで入り直してください' };
+  const perms = appSettingsUrl(appSlug, owner, isOrg);
+  return { label: perms ? 'App の Permissions を開く（GitHub へ）' : 'App の一覧を開く（GitHub へ）', link: perms ? `${perms}/permissions` : appsUrl(owner, isOrg), how: 'App の Permissions で足してください（入れている人には GitHub が承認を頼みます）' };
+}
 export const installUrl = (appSlug) => (APP_SLUG.test(String(appSlug ?? '')) ? `https://github.com/apps/${appSlug}/installations/new` : null);
 /** the App's own settings on GitHub (its callback URL, a new private key) */
 export const appSettingsUrl = (appSlug, owner, isOrg) => (!APP_SLUG.test(String(appSlug ?? '')) ? null : isOrg && LOGIN.test(String(owner ?? '')) ? `https://github.com/organizations/${owner}/settings/apps/${appSlug}` : `https://github.com/settings/apps/${appSlug}`);
@@ -172,6 +185,7 @@ export async function checks(ctx) {
   const wf = (f) => (lab.workflows ?? []).some((w) => String(w.path ?? w).endsWith(`/${f}`));
   const v = await readVars(api, slug, ['APP_ID', 'APP_SLUG', 'APP_CLIENT_ID', 'LAB_AUTH_URL']);
   const appSlug = v.APP_SLUG || config.appSlug || null, clientId = v.APP_CLIENT_ID || config.appClientId || null, authUrl = cleanAuthUrl(config.authUrl);
+  const more = moreRights({ owner, isOrg, appSlug, signedInWithApp }), noRight = (why) => `${why}: ${more.how}`, fixMore = { label: more.label, link: more.link };
   const out = [], c = (key, label, ok, need = '', fix = null) => out.push({ key, label, ok, need: ok === true ? '' : need, fix });
   const pagesYml = async () => { if (wf('pages.yml')) await api.dispatch(slug, 'pages.yml', ref, {}); }, PY = wf('pages.yml') ? ['dispatch'] : [];
 
@@ -182,14 +196,14 @@ export async function checks(ctx) {
   const pagesLink = { label: 'Pages の設定で Source を GitHub Actions に（GitHub へ）', link: `https://github.com/${slug}/settings/pages` };
   const pagesFix = (update) => (signedInWithApp ? pagesLink : { label: update ? 'Source を GitHub Actions に' : 'Pages を有効に（GitHub Actions で）', needs: PY, run: async () => { await api.enablePages(slug, { update }); await pagesYml(); return `Pages を有効にしました${wf('pages.yml') ? '（pages.yml を始めました）' : ''}`; } });
   const onGitHub = signedInWithApp ? ': GitHub の Pages の設定で Source を「GitHub Actions」に（App でのサインインでは、ここからは変えられません）' : '';
-  if (pages instanceof Error) c('pages', 'GitHub Pages（このパネルを置く）', null, `Pages の設定を読めません（${pages.message}）`);
+  if (pages instanceof Error) c('pages', 'GitHub Pages（このパネルを置く）', null, [401, 403, 404].includes(pages.status) ? noRight(`Pages の設定を読めません（${pages.message}）`) : `Pages の設定を読めません（${pages.message}）`, [401, 403, 404].includes(pages.status) ? fixMore : pagesLink);
   else if (!pages) c('pages', 'GitHub Pages（このパネルを置く）', false, `Pages が有効ではありません${onGitHub}`, pagesFix(false));
   else if (pages.build_type !== 'workflow') c('pages', 'GitHub Pages（このパネルを置く）', false, `Pages の Source が「GitHub Actions」ではありません（pages.yml で置けません）${onGitHub}`, pagesFix(true));
   else c('pages', 'GitHub Pages（このパネルを置く）', true);
 
   // ---- the App: made from the manifest, its id and slug in variables ----
   const appLabel = appSlug ? `GitHub App（${appSlug}: サインインと許可）` : 'GitHub App（サインインと許可）', makeApp = { label: 'App を作る（GitHub へ）', manifest: true, needs: [...APP_NEEDS] };
-  if (v.APP_ID === undefined && !config.appSlug) c('app', appLabel, null, '変数を読めません（このトークンに Variables: Read が要ります）');
+  if (v.APP_ID === undefined && !config.appSlug) c('app', appLabel, null, noRight(signedInWithApp ? '変数を読めません（App に Variables: Read が要ります）' : '変数を読めません（このトークンに Variables: Read and write が要ります）'), fixMore);
   else if ((v.APP_ID || v.APP_ID === undefined) && appSlug) c('app', appLabel, true);
   else c('app', appLabel, false, 'まだありません: 1 回のクリックで作れます（鍵は秘密に、id は変数に、ここで自動で入ります）', makeApp);
 
@@ -197,7 +211,7 @@ export async function checks(ctx) {
   let inst = null, instWhy = '';
   if (signedInWithApp && appSlug) { try { inst = await installedRepos(api, appSlug); } catch (e) { instWhy = e.message; } }
   const putOn = installUrl(appSlug) ? { label: 'App を入れる（GitHub へ）', link: installUrl(appSlug) } : null;
-  if (!appSlug) c('installed', 'App がラボに入っている', false, 'まず App を作ります');
+  if (!appSlug) c('installed', 'App がラボに入っている', false, 'まず上の「GitHub App」の行で App を作ります');
   else if (!signedInWithApp) c('installed', 'App がラボに入っている', null, 'App でサインインすると分かります', putOn);
   else if (!inst) c('installed', 'App がラボに入っている', null, `App の入り先を読めません（${instWhy}）`, putOn);
   else c('installed', 'App がラボに入っている', inst.has(slug.toLowerCase()), `${slug} に App が入っていません: 入れると、ラボの人はサインインするだけで使えます（許可は App の導入と GitHub の権限で決まります）`, putOn);
@@ -232,7 +246,7 @@ export async function checks(ctx) {
     const hl = await health(authUrl, ctx.fetchImpl), here = strip(ctx.panelUrl);
     const origin = (() => { try { return new URL(here).origin; } catch { return null; } })();
     if (!hl.ok) c('auth', 'サインインのサービス', false, `${authUrl} が答えません（${hl.why}）`, redeploy);
-    else if (!clientId) c('auth', 'サインインのサービス', false, 'App の client ID（変数 APP_CLIENT_ID）がありません: まず App を作ります');
+    else if (!clientId) c('auth', 'サインインのサービス', false, 'App の client ID（変数 APP_CLIENT_ID）がありません: まず上の「GitHub App」の行で App を作ります');
     else if (hl.clientId !== clientId) c('auth', 'サインインのサービス', false, `サービスの client ID（${hl.clientId ?? 'なし'}）が App のもの（APP_CLIENT_ID ${clientId}）と違います: サービスの GITHUB_CLIENT_ID・GITHUB_CLIENT_SECRET を App のものに（auth-deploy.yml なら、もう一度置くだけ）`, redeploy);
     // (a service that names the panels' addresses: this panel's, path and all, must begin with one of them; else its origins)
     else if (origin && hl.panels && !hl.panels.some((p) => p && here.startsWith(p))) c('auth', 'サインインのサービス', false, `サービスの PANEL_ORIGINS にこのパネルのアドレス（パス付き: ${here}）を入れてください（今は ${hl.panels.join('・') || 'なし'}）`, redeploy);
@@ -249,15 +263,15 @@ export async function checks(ctx) {
     const cfFix = { label: '封じて登録し、置く', inputs: [{ name: 'token', label: 'CLOUDFLARE_API_TOKEN（Workers を編集できる API トークン）', secret: true }, { name: 'account', label: 'CLOUDFLARE_ACCOUNT_ID（32 文字）', placeholder: '0123456789abcdef0123456789abcdef' }], needs: deployNeeds(true),
       run: (vals = {}, opts) => deploy({ token: String(vals.token ?? '').trim(), account: String(vals.account ?? '').trim() })(vals, opts) };
     if (!wf('auth-deploy.yml')) c('deploy', label, false, 'auth-deploy.yml がありません（ラボを新しくしてください）');
-    else if (!secrets) c('deploy', label, null, '秘密の名前を見られません（このトークンに Secrets: Read が要ります）', cfFix);
-    else if (!appReady) c('deploy', label, false, 'まず App を作ります（サービスは App の client ID と秘密で動きます）');
+    else if (!secrets) c('deploy', label, null, noRight('秘密の名前を見られません（Secrets: Read and write が要ります）'), fixMore);
+    else if (!appReady) c('deploy', label, false, 'まず上の「GitHub App」の行で App を作ります（サービスは App の client ID と秘密で動きます）');
     else if (cfReady) c('deploy', label, true, '', { label: 'Cloudflare に置く（auth-deploy.yml）', needs: deployNeeds(false), run: deploy(null) });
     else c('deploy', label, false, 'Cloudflare の API トークンとアカウント ID を入れると、ここで封じて登録し、auth-deploy.yml で置き、その URL を LAB_AUTH_URL に入れて pages.yml でページに渡します', cfFix);
   }
 
   // ---- the workflows: the App's own token instead of a person's (hostrun, secrets) ----
   const wfLabel = 'ワークフローが App のトークンを使う（hostrun・secrets に個人のトークンは要りません）';
-  if (!secrets || v.APP_ID === undefined) c('workflows', wfLabel, null, '秘密の名前か変数を見られません');
+  if (!secrets || v.APP_ID === undefined) c('workflows', wfLabel, null, noRight('秘密の名前か変数を見られません（Secrets と Variables が要ります）'), fixMore);
   else if (v.APP_ID && has('APP_PRIVATE_KEY')) c('workflows', wfLabel, true);
   else c('workflows', wfLabel, false, `${[!v.APP_ID && 'APP_ID（変数）', !has('APP_PRIVATE_KEY') && 'APP_PRIVATE_KEY（秘密）'].filter(Boolean).join('・')} があれば、hostrun・secrets は App のトークンで動き、LAB_HOST_TOKEN・LAB_SECRETS_TOKEN は要りません${v.APP_ID ? '（鍵は App の設定で作り直し、「秘密」で APP_PRIVATE_KEY に）' : '（App を作ると両方入ります）'}`,
     v.APP_ID && appSettingsUrl(appSlug, owner, isOrg) ? { label: 'App の設定（GitHub へ）', link: appSettingsUrl(appSlug, owner, isOrg) } : null);
@@ -268,7 +282,7 @@ export async function checks(ctx) {
   for (const x of hosts) {
     if (!SLUG.test(String(x?.slug ?? ''))) continue;
     const key = `host:${x.slug}`, label = `${x.slug}: 貸し手（${x.slug.split('/')[0]} さん）に App を入れてもらう`;
-    if (!appSlug) { c(key, label, false, 'まず App を作ります'); continue; }
+    if (!appSlug) { c(key, label, false, 'まず上の「GitHub App」の行で App を作ります'); continue; }
     const give = { label: '貸し手に渡すリンク', link: installUrl(appSlug) };
     if (inst) c(key, label, inst.has(x.slug.toLowerCase()), `このリンクを貸し手に渡し、ホストのリポジトリに App を入れてもらいます（その人の Actions を、あなたのトークンなしで使えるように）。${onlyHost}`, give);
     else c(key, label, null, `このリンクを貸し手に渡します（入ったかどうかは App でサインインすると分かります）。${onlyHost}`, give);
