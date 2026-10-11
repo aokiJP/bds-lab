@@ -261,7 +261,8 @@ await t('a stranger lends: their own public fork of the lab becomes a host — h
 await t('panel check: a changed file → the checks it needs (ESLint, the offline tests, the browser unless quick); failures\' lines (pure)', async () => {
   const PN = await imp('common/panel.mjs');
   // (a library or a view of the panel: the tabs that read them — 「アドオン」「予約」「統計」「お知らせ」 — are tried too)
-  const LANES = ['tests/units-offline.mjs', 'tests/schedule-offline.mjs', 'tests/stats-offline.mjs', 'tests/inbox-offline.mjs'];
+  const LANES = ['tests/units-offline.mjs', 'tests/schedule-offline.mjs', 'tests/stats-offline.mjs', 'tests/inbox-offline.mjs',
+    'tests/rescue-offline.mjs', 'tests/shell-rescue-offline.mjs', 'tests/setup-rescue-offline.mjs', 'tests/units-rescue-offline.mjs', 'tests/misc-rescue-offline.mjs'];
   eq(PN.plan(['panel/lib/members.mjs']), { lint: ['panel/lib/members.mjs'], tests: ['tests/panel-offline.mjs', 'tests/governance-offline.mjs', ...LANES, 'tests/panel-browser.mjs'] });
   eq(PN.plan(['panel/ui/signin.mjs', 'auth/handler.mjs'], { quick: true }).tests, ['tests/panel-offline.mjs', 'tests/session-offline.mjs', 'tests/auth-offline.mjs', ...LANES]);
   eq(PN.plan(['common/unitci.mjs', 'common/schedule.mjs']), { lint: ['common/unitci.mjs', 'common/schedule.mjs'], tests: ['tests/units-offline.mjs', 'tests/schedule-offline.mjs'] }, 'the CLI side of 「アドオン」 and 「予約」');

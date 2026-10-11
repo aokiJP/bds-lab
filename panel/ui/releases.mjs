@@ -16,7 +16,7 @@ export function releasesTab(body, ctx) {
   const slug = ctx.lab.slug, g = ctx.gate?.('dispatch') ?? {}, c = ctx.caps?.notify;
   const off = g.disabled ? g : !hasWorkflow(ctx.lab.workflows, 'notify.yml') ? { disabled: true, title: 'このラボには notify.yml がありません' } : c?.ok === false ? { disabled: true, title: c.need } : {};
   // (a button that is off says why where it can be read — a title is not seen on a phone — and the one step to turn it on)
-  const why = g.disabled ? g.title : !hasWorkflow(ctx.lab.workflows, 'notify.yml') ? 'このラボには .github/workflows/notify.yml がありません: 「概要」でラボを新しくすると「Discord に知らせる」が使えます。'
+  const why = g.disabled ? g.title : !hasWorkflow(ctx.lab.workflows, 'notify.yml') ? 'このラボには .github/workflows/notify.yml がありません: ラボを新しくすると使えます（フォークなら GitHub のラボのページで Sync fork → Update branch）。'
     : c?.ok === false ? `Discord がまだ使えません（足りないもの: ${c.need}）: 「秘密」タブで入れると「Discord に知らせる」が使えます。` : '';
   const whyNote = why ? h('p', { class: 'warn' }, why, ' ', ctx.go && !g.disabled && c?.ok === false ? h('button', { onclick: () => ctx.go('secrets') }, '「秘密」を開く') : null) : null;
   const sum = h('div', { class: 'row', id: 'reltotals' }), list = h('div', {}, h('p', { class: 'muted' }, '読んでいます…'));

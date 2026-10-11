@@ -102,7 +102,7 @@ await t('panel.js: every failure let go of on purpose carries its reason (a comm
   // (LAB_HOSTS and a lender's .lab-host.json are written from what was read: a failed read must stop the write, never empty it)
   const fn = (name) => { const i = SRC.indexOf(`function ${name}(`); ok(i >= 0, name); return SRC.slice(i, SRC.indexOf('\n}\n', i)); };
   ok(!/variable\([^)]*'LAB_HOSTS'\)\.catch/.test(fn('addLabHost')), 'addLabHost: a failed read of LAB_HOSTS is not a list of none');
-  ok(!/variable\([^)]*'LAB_HOSTS'\)\.catch/.test(fn('forksCard')) && !/'\.lab-host\.json'\)\.catch/.test(fn('forksCard')), 'forksCard: the same, and the file\'s sha read before it is written');
+  ok(!/variable\([^)]*'LAB_HOSTS'\)\.catch\(\(\)/.test(fn('forksCard')) && /variable\([^)]*'LAB_HOSTS'\)\.catch\(\(e\) => \{ if \(e\.status === 403\) return undefined;[^\n]{0,160}throw e; \}\)/.test(fn('forksCard')) && !/'\.lab-host\.json'\)\.catch/.test(fn('forksCard')), 'forksCard: the same, and the file\'s sha read before it is written');
   ok(!/runs\([^)]*\)\.catch/.test(fn('hostUse')), 'hostUse: minutes not read are never counted as 0');
   for (const name of ['files', 'secrets', 'live', 'runs', 'detail', 'hostCard', 'forksCard', 'todoCard', 'discord', 'dispatchForm', 'overview'])
     ok(/\bfill\(/.test(fn(name)), `${name}: the part that says 「読んでいます…」 is filled by fill() — on a failure, failView in its place`);

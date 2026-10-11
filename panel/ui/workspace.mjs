@@ -25,7 +25,7 @@ const ready = (ctx) => W.hasWorkflow(ctx.lab.workflows, W.WORKFLOW);
 /** a button that starts unit.yml: off when the policy does not allow it, or when the lab has no unit.yml */
 export function startAttrs(ctx) {
   const g = ctx.gate?.('dispatch') ?? {}, off = !ready(ctx);
-  return { disabled: Boolean(g.disabled) || off, title: g.title ?? (off ? 'このラボには .github/workflows/unit.yml がありません: 「概要」でラボを新しくすると使えます' : null) };
+  return { disabled: Boolean(g.disabled) || off, title: g.title ?? (off ? 'このラボには .github/workflows/unit.yml がありません: ラボを新しくすると使えます（フォークなら GitHub のラボのページで Sync fork → Update branch）' : null) };
 }
 const noWorkflow = (ctx) => (ready(ctx) ? null : h('p', { class: 'warn' }, 'このラボには .github/workflows/unit.yml がまだありません（古いラボ）: ラボを新しくすると使えます。'));
 const later = (ctx) => setTimeout(() => ctx.go?.('runs'), 2500);

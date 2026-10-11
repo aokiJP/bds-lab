@@ -175,7 +175,7 @@ await t('the 「配布」 tab: a failed read has a next step, an off button says
   await UR.releasesTab(b, ctxOf(api));
   ok(b.all((e) => e.className === 'bad').length === 1 && b.links().some((l) => /^https:\/\/github\.com\//.test(l)) && !/読んでいます/.test(b.textContent), b.textContent);
   const c1 = ctxOf(fakeApi(), { lab: { slug: 'o/lab', workflows: [] } }), b1 = new E('div'); await UR.releasesTab(b1, c1);
-  ok(/notify\.yml がありません: 「概要」でラボを新しくする/.test(b1.textContent), b1.textContent);
+  ok(/notify\.yml がありません: ラボを新しくすると使えます（フォークなら GitHub のラボのページで Sync fork → Update branch）/.test(b1.textContent), b1.textContent);
   const went = [], c2 = ctxOf(fakeApi(), { caps: { notify: { ok: false, need: '秘密 DISCORD_BOT_TOKEN' } }, go: (x) => went.push(x) }), b2 = new E('div'); await UR.releasesTab(b2, c2);
   ok(/DISCORD_BOT_TOKEN/.test(b2.textContent) && /「秘密」タブで入れる/.test(b2.textContent), b2.textContent);
   await b2.button(/「秘密」を開く/).click(); ok(went.join() === 'secrets', 'the way to the secrets');

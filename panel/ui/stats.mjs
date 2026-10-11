@@ -269,7 +269,7 @@ export function statsTab(body, ctx) {
     const top = Math.max(1, ...list.map((e) => e.minutes));
     return section('使った分（見積もり）', '実行の始まりから最後の更新までを分に切り上げた見積もりです（GitHub の請求そのものではありません）。ラボの分は持ち主、貸し手の分は貸し手のものです。',
       h('ul', { class: 'plain', id: 'statsminutes' }, list.map((e) => h('li', { 'data-where': e.slug },
-        h('div', { class: 'row' }, h('span', { class: 'grow' }, e.url ? link(e.url, e.name) : e.name, e.unread ? [h('span', { class: 'chip bad' }, '読めません'), ' ', h('span', { class: 'muted' }, 'この貸し手の host.yml の実行を読めませんでした。「読み直す」か、'), e.url ? link(`${e.url}/actions/workflows/host.yml`, 'GitHub で見る') : null] : null), h('strong', {}, `${e.minutes} 分`), h('span', { class: 'muted' }, `${e.runs} 回`)),
+        h('div', { class: 'row' }, h('span', { class: 'grow' }, e.url ? link(e.url, e.name) : e.name, e.unread ? [h('span', { class: 'chip bad' }, '読めません'), ' ', h('span', { class: 'muted' }, e.url ? 'この貸し手の host.yml の実行を読めませんでした。「読み直す」か、' : 'この貸し手のリポジトリが見えません: 「貸し借り」で外すか、owner/名前 を直してください'), e.url ? link(`${e.url}/actions/workflows/host.yml`, 'GitHub で見る') : null] : null), h('strong', {}, `${e.minutes} 分`), h('span', { class: 'muted' }, `${e.runs} 回`)),
         // (one place alone is a number, not a bar to compare)
         list.length > 1 ? h('div', { class: 'bar' }, h('i', { style: { width: `${Math.round((e.minutes / top) * 100)}%` } })) : null))),
       twin('場所ごと', ['場所', '終わった実行', '分（見積もり）'], list.map((e) => [e.name, e.runs, e.minutes])));

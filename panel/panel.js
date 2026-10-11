@@ -328,8 +328,11 @@ async function loadHosts(list) { const out = []; for (const slug of list) out.pu
 /** this account's hosts: its repositories (owned or as a collaborator, the 40 pushed last) with a .lab-host.json */
 async function findHosts() {
   const found = [];
-  // (gh's file() is null when there is none; a throw is GitHub not answering — the search stops and says so)
-  for (const r of (await st.api.myRepos()).filter((x) => !x.fork && !x.archived).slice(0, 40)) if (await st.api.file(r.full_name, '.lab-host.json')) found.push(r.full_name);
+  // (gh's file() is null when there is none; the list itself not read stops the search and says so; one repository that
+  // cannot be read — an organization's SAML, a 403 — is skipped and counted: the others are still found)
+  let unread = 0;
+  for (const r of (await st.api.myRepos()).filter((x) => !x.fork && !x.archived).slice(0, 40)) { try { if (await st.api.file(r.full_name, '.lab-host.json')) found.push(r.full_name); } catch { unread++; } }
+  if (unread) toast(`${unread} 個のリポジトリは読めませんでした（組織のシングルサインオンや権限）: そのホストは「ホストを足す」に owner/名前 で入れてください`, true);
   return found;
 }
 /** a host now: its runs this month (GitHub's count, everyone's), what it allows now (cached for a minute) */
@@ -1039,7 +1042,9 @@ async function controller(body, run) {
     send(cmd.split(' && ').join('\n'));
   } }, label))));
   const cmdBox = h('textarea', { placeholder: 'walk forward 2\nlook right 600\nwhere' });
-  const poll = () => fill(log, async () => {
+  // (a failed poll is said in a box of its own, emptied once a poll works again: the answers so far stay in the log)
+  const pollErr = h('div', {});
+  const poll = () => fill(pollErr, async () => {
     if (!issue) return;
     const cs = await st.api.comments(st.lab.slug, issue, since);
     for (const c of cs) {
@@ -1053,12 +1058,13 @@ async function controller(body, run) {
         if (r.png) shot.replaceChildren(h('img', { class: 'screen', alt: '端末の画面', src: `data:image/png;base64,${r.png}` }));
       } else if (t) log.prepend(h('p', { class: 'muted' }, t));
     }
+    pollErr.replaceChildren();
   });
   body.replaceChildren(h('div', { class: 'card' }, h('h2', {}, `端末 #${run.id}`, h('span', { class: 'chip' }, starter), link(run.html_url, 'GitHub')),
     mine ? null : h('p', { class: 'warn' }, `命令が効くのは、この実行を始めた ${starter} さんのものだけです（見るのはできます）`),
     isPublic && !key ? h('p', { class: 'warn' }, '公開リポジトリ: 命令と返事は封じられます。設定に APP_CACHE_KEY を入れてください') : null,
     shot, pad, h('label', {}, '命令（1 行 1 つ）'), cmdBox, h('div', { class: 'row' }, h('button', { class: 'primary', onclick: () => { if (cmdBox.value.trim()) { send(cmdBox.value.trim()); cmdBox.value = ''; } } }, '送る'), h('button', { onclick: () => send('screen') }, '📷 画面'), h('button', { class: 'danger', onclick: () => confirm('端末を終わらせますか') && send('stop') }, '終わる'))),
-  h('div', { class: 'card' }, h('h2', {}, '返事'), log));
+  h('div', { class: 'card' }, h('h2', {}, '返事'), pollErr, log));
   drawPad(); poll();
   clearInterval(st.timer); st.timer = setInterval(() => { if (document.visibilityState === 'visible' && st.tab === 'live') poll(); }, 4000);
 }
@@ -1154,7 +1160,7 @@ function forksCard() {
   const sync = (slug) => delegated(slug, async () => { const r = await st.api.repo(slug); await st.api.syncFork(slug, r.default_branch); const w = M.forkWorkflows(await st.api.workflows(slug)); for (const id of w.enable) await st.api.enableWorkflow(slug, id); for (const id of w.disable) await st.api.disableWorkflow(slug, id); });
   const draw = () => fill(box, async () => {
     // (variable() is null when LAB_HOSTS is not set; a failed read is said here — never 「入っていない」 instead)
-    const [d, inv, now] = await Promise.all([forkLendingNow({ fresh: true }), st.api.myInvitations().catch(() => null /* an App's sign-in may not list them: GitHub's page has them */), st.api.variable(st.lab.slug, 'LAB_HOSTS')]);
+    const [d, inv, now] = await Promise.all([forkLendingNow({ fresh: true }), st.api.myInvitations().catch(() => null /* an App's sign-in may not list them: GitHub's page has them */), st.api.variable(st.lab.slug, 'LAB_HOSTS').catch((e) => { if (e.status === 403) return undefined; /* this sign-in may not read variables: the forks still listed, said below */ throw e; })]);
     const listed = new Set(String(now ?? '').split(/[\s,]+/).map((x) => x.toLowerCase()));
     // (invitations from forks of this lab: their say, taken in one tap — or on GitHub when this sign-in may not)
     const mine = [];
@@ -1171,6 +1177,7 @@ function forksCard() {
     box.replaceChildren(
       d.errors?.length ? h('div', { class: 'warn' }, h('ul', {}, d.errors.map((e) => h('li', {}, e))), h('button', { onclick: draw }, 'もう一度')) : null,
       inv === null ? h('p', { class: 'muted' }, 'フォークからの招待は、このサインインでは読めません: ', link('https://github.com/notifications', 'GitHub で招待を見る')) : null,
+      now === undefined ? h('p', { class: 'warn' }, '変数 LAB_HOSTS を読めません（このサインインに Variables の権限がありません）: どのフォークが入っているかは分かりません。「準備」でトークンを作り直すか、App の権限に Variables を足してください') : null,
       mine.length ? h('div', {}, h('h3', {}, 'フォークからの招待（全権限を預かる）'), h('ul', { class: 'plain' }, mine.map((i) => h('li', { class: 'row', 'data-invite': i.repository.full_name }, h('span', { class: 'grow' }, i.repository.full_name, ' ', h('span', { class: 'muted' }, `${i.inviter?.login ?? ''} から`)),
         h('button', { class: 'primary', onclick: () => act(() => st.api.acceptInvitation(i.id).catch((e) => { if (e.status === 403 || e.status === 404) throw new Error('このサインインでは受けられません: 「GitHub で受ける」から'); throw e; }), `${i.repository.full_name} を預かりました`).then(draw) }, '受ける'),
         link(`https://github.com/${i.repository.full_name}/invitations`, 'GitHub で受ける'))))) : null,
