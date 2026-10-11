@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-// The AI-driven development tools on a real BDS with real clients, end to end (about 4 minutes at LAB_SPEED=4 on 4 cores; needs `node lab.mjs setup`).
+// The AI-driven development tools on a real BDS with real clients, end to end (about 3 minutes at LAB_SPEED=4 on 4 cores; needs `node lab.mjs setup`).
 // A small addon with three planted bugs (an item hook without its component, a wrong comparison, an empty hand read) goes
 // through: test → why (each bug: the cause it names) → chaos (finds the crash with players the tests do not use, cuts it, checks
 // it after the other sections, --append) → why on it → shrink (a noisy section to its smallest, the players it names joined) →
 // the bugs fixed → go DONE → gaps → record → harden with a scripted AI over a fake API (only tests.txt may change, a wrong
 // section is kept out, the bugs caught before → after) → mutate. node tests/dev-bds.mjs [--keep] (--keep: leave bds/addons/devbds)
 // The two halves run side by side on units of their own, each on its own server: the bugs as they are (devbds_bugs: test → why →
-// chaos → why → shrink) and the bugs fixed (devbds: go → gaps → record → harden → mutate, its tests.txt with the section chaos
-// appends on the other side). One after the other they took the sum of both
+// chaos → why → shrink) and the bugs fixed (devbds: go, then harden; its tests.txt with the section chaos appends on the other
+// side). gaps → record → mutate run beside harden on a copy of the fixed unit as go left it (devbds_side: harden edits the unit's
+// own files while it runs). One after the other they took the sum of all three
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -16,6 +17,8 @@ import { fileURLToPath } from 'node:url';
 
 const TOP = path.dirname(path.dirname(fileURLToPath(import.meta.url))), NAME = 'devbds', DIR = path.join(TOP, 'bds', 'addons', NAME);
 const BUGS = 'devbds_bugs', BUGS_DIR = path.join(TOP, 'bds', 'addons', BUGS);
+// (the fixed unit as go left it, for gaps, record and mutate beside harden: harden edits the unit's own files while it runs)
+const SIDE = 'devbds_side', SIDE_DIR = path.join(TOP, 'bds', 'addons', SIDE);
 let fails = 0;
 const ok = (c, m, d = '') => { console.log(`${c ? '✔' : '✘'} ${m}${c || !d ? '' : '\n    ' + String(d).trim().split('\n').slice(-14).join('\n    ')}`); if (!c) fails++; };
 const t0 = Date.now(), secs = () => `${Math.round((Date.now() - t0) / 1000)}s`;
@@ -137,10 +140,17 @@ try {
     // ---- the three bugs fixed: go DONE ----
     let r = await lab(['go']);
     ok(r.code === 0 && /^DONE /m.test(r.t), 'go: DONE once the bugs are fixed', r.t);
-    r = await lab(['gaps']);
-    ok(/S src\/main\.ts:33 never ran: \/lab:shop → @A cmd \/lab:shop · until form · @A form 0/.test(r.t) && !/src\/main\.ts:23 never ran/.test(r.t) && !/src\/main\.ts:40 never ran/.test(r.t), 'gaps: the code after the shop form, with the lines that reach it; a function\'s final return (template or constant) counts as run', r.t);
-    r = await lab(['record', '@C cmd /lab:pay 0 A']);
-    ok(/^@C join$/m.test(r.t) && /^= @C PAY nothing to pay$/m.test(r.t), 'record: the players it names join first; the expectation from what it prints', r.t);
+    fs.rmSync(SIDE_DIR, { recursive: true, force: true }); fs.cpSync(DIR, SIDE_DIR, { recursive: true });
+    const sideMain = read('src/main.ts', SIDE_DIR);
+    // ---- beside harden, on the copy: gaps → record → mutate (one bug at a time: harden runs 3 of its own beside it) ----
+    const side = (async () => {
+      let q = await lab(['gaps'], {}, SIDE);
+      ok(/S src\/main\.ts:33 never ran: \/lab:shop → @A cmd \/lab:shop · until form · @A form 0/.test(q.t) && !/src\/main\.ts:23 never ran/.test(q.t) && !/src\/main\.ts:40 never ran/.test(q.t), 'gaps: the code after the shop form, with the lines that reach it; a function\'s final return (template or constant) counts as run', q.t);
+      q = await lab(['record', '@C cmd /lab:pay 0 A'], {}, SIDE);
+      ok(/^@C join$/m.test(q.t) && /^= @C PAY nothing to pay$/m.test(q.t), 'record: the players it names join first; the expectation from what it prints', q.t);
+      q = await lab(['mutate', '3'], { LAB_MUTATE_JOBS: '1' }, SIDE);
+      ok(/coverage: \d+% of code lines ran/.test(q.t) && /(OK|W) mutate devbds_side: \d+\/\d+ bugs caught/.test(q.t) && read('src/main.ts', SIDE_DIR) === sideMain, 'mutate: 3 bugs tried, the unit put back exactly', q.t);
+    })();
 
     // ---- harden with a scripted AI: it may only add sections; a wrong one is kept out; bugs caught before → after ----
     const before = read('tests.txt'), mainNow = read('src/main.ts');
@@ -169,14 +179,13 @@ try {
     ok(r.code === 0 && /harden devbds: \+3 section\(s\)/.test(r.t) && /code the tests run: \d+% → \d+%/.test(r.t) && /^HARDENED /m.test(r.t), 'harden: +3 sections, the coverage before → after, HARDENED', r.t);
     const rank = JSON.parse(fs.readFileSync(path.join(TOP, 'bds', 'bench', 'ranking.json'), 'utf8'));
     ok(rank.some((x) => x.task === `harden:${NAME}` && x.pass), 'harden: a ranking row');
-    r = await lab(['mutate', '3']);
-    ok(/coverage: \d+% of code lines ran/.test(r.t) && /(OK|W) mutate devbds: \d+\/\d+ bugs caught/.test(r.t) && read('src/main.ts') === mainNow, 'mutate: 3 bugs tried, the unit put back exactly', r.t);
+    await side;
   };
   await Promise.all([bugs(), fixed()]);
 } finally {
-  if (!process.argv.includes('--keep')) for (const d of [DIR, BUGS_DIR]) fs.rmSync(d, { recursive: true, force: true });
+  if (!process.argv.includes('--keep')) for (const d of [DIR, BUGS_DIR, SIDE_DIR]) fs.rmSync(d, { recursive: true, force: true });
   for (const f of ['Dev_Bench.mcaddon', 'Dev_Bench_Bugs.mcaddon']) try { fs.rmSync(path.join(TOP, 'bds', 'dist', f), { force: true }); } catch { /* none */ }
-  try { const rf = path.join(TOP, 'bds', 'bench', 'ranking.json'), all = JSON.parse(fs.readFileSync(rf, 'utf8')); fs.writeFileSync(rf, JSON.stringify(all.filter((x) => !String(x.task).endsWith(`:${NAME}`) && !String(x.task).endsWith(`:${BUGS}`)), null, 1) + '\n'); } catch { /* none */ }
+  try { const rf = path.join(TOP, 'bds', 'bench', 'ranking.json'), all = JSON.parse(fs.readFileSync(rf, 'utf8')); fs.writeFileSync(rf, JSON.stringify(all.filter((x) => ![NAME, BUGS, SIDE].some((n) => String(x.task).endsWith(`:${n}`))), null, 1) + '\n'); } catch { /* none */ }
   if (cur0 !== null) fs.writeFileSync(curFile, cur0);
   if (kind0 !== null) fs.writeFileSync(path.join(TOP, '.lab-kind'), kind0);
 }

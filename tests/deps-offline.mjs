@@ -111,9 +111,10 @@ await t('every way of reading is recorded: ESM, import(), require, each fs funct
   const { deps, r } = FIX;
   ok(r.status === 0 && /fixture ok 1 0 0 0/.test(r.stdout), r.stdout + r.stderr);
   ok(deps, 'deps known');
-  const files = ['main.mjs', 'lib/static.mjs', 'lib/dyn.mjs', 'lib/req.cjs', 'lib/wfile.cjs', ...Object.keys(lib), 'lib/run.sh', 'lib/run2.sh', 'bin/tool', 'tree/a.txt', 'tree/sub/b.txt', '.github/workflows/verify.yml'];
+  const files = ['main.mjs', 'lib/static.mjs', 'lib/dyn.mjs', 'lib/req.cjs', 'lib/wfile.cjs', ...Object.keys(lib), 'lib/run.sh', 'lib/run2.sh', 'bin/tool', 'tree/a.txt', 'tree/sub/b.txt'];
   const missing = files.filter((f) => deps[f] !== blob(f));
   eq(missing, [], 'files with their blob ids');
+  eq(deps['job:.github/workflows/verify.yml#offline'], 'absent', 'its job in verify.yml (this one has no jobs: absent)');
   const tree = S.treeAt(REPO);
   for (const k of ['dir:listed', 'dir:rec', 'dir:rec/inner', 'dir:opened', 'dir:tree', 'dir:tree/sub', 'dir:lib']) { ok(deps[k] && deps[k] !== 'absent', `${k}: ${deps[k]}`); eq(deps[k], S.valuesOf([k], tree)[k], k); }
   eq(deps['lib/nope.mjs'], 'absent', 'a relative import not there');

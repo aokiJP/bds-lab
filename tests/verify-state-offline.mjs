@@ -49,9 +49,18 @@ await t('a file added to a folder changes that folder only; an edit changes the 
   eq(S.valuesOf(keys, S.treeAt(TMP, c1)), before, 'an old commit still reads as it was');
 });
 
-await t('the machine a result was made on; verify.yml is everyone\'s; a bad revision says so', () => {
+await t('the machine a result was made on; a unit\'s own job in verify.yml (its lines without comments) — not another job, a comment or the triggers; a bad revision says so', () => {
   eq(S.envKey({ platform: 'linux', arch: 'x64', versions: { node: '22.23.3' } }), 'linux-x64 node22');
-  eq(S.IMPLICIT, ['.github/workflows/verify.yml']);
+  eq([S.implicitFor('tests/a-offline.mjs'), S.implicitFor('step:eslint'), S.implicitFor('bds:addon:coins')], [['job:.github/workflows/verify.yml#offline'], ['job:.github/workflows/verify.yml#offline'], ['job:.github/workflows/verify.yml#bds']]);
+  const W = (offline, bds, on = 'push') => `name: verify\non:\n  ${on}:\njobs:\n  plan:\n    runs-on: x\n  offline:\n    # why\n    runs-on: ${offline}\n\n    steps:\n      - run: a\n  bds:\n    runs-on: ${bds}\n`;
+  eq(S.jobText(W('u1', 'u2'), 'offline'), '  offline:\n    runs-on: u1\n    steps:\n      - run: a', 'the job, comments and blank lines out');
+  eq([S.jobText(W('u1', 'u2'), 'nope'), S.jobText('name: x\n', 'offline')], [null, null], 'no such job');
+  const v = (text) => { fs.mkdirSync(path.join(TMP, 'wf', '.github', 'workflows'), { recursive: true }); fs.writeFileSync(path.join(TMP, 'wf', '.github', 'workflows', 'verify.yml'), text); return S.valuesOf(['job:.github/workflows/verify.yml#offline', 'job:.github/workflows/verify.yml#bds'], { files: new Map(), dirs: new Map() }, { root: path.join(TMP, 'wf') }); };
+  const a = v(W('u1', 'u2')), b = v(W('u1', 'u3')), c = v(W('u1', 'u2', 'pull_request').replace('# why', '# why not')), d = v(W('u9', 'u2'));
+  eq([a.offline === undefined, b['job:.github/workflows/verify.yml#offline'] === a['job:.github/workflows/verify.yml#offline'], b['job:.github/workflows/verify.yml#bds'] !== a['job:.github/workflows/verify.yml#bds']], [true, true, true], 'another job changed: this one\'s value the same');
+  eq(c, a, 'a comment and the triggers changed: the same');
+  ok(d['job:.github/workflows/verify.yml#offline'] !== a['job:.github/workflows/verify.yml#offline'], 'its own job changed: another value');
+  eq(S.valuesOf(['job:.github/workflows/verify.yml#offline'], { files: new Map(), dirs: new Map() }), { 'job:.github/workflows/verify.yml#offline': 'absent' }, 'no checkout: absent');
   eq(S.STATE_VERSION, 1);
   let msg = ''; try { S.treeAt(TMP, 'no-such-rev'); } catch (e) { msg = e.message; }
   ok(/^git ls-tree no-such-rev: /.test(msg), msg);

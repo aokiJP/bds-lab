@@ -15,13 +15,13 @@
 // tail whose folder the repository has); anything else is not the repository's. Kept: a file of HEAD's tree, a folder of it as
 // 'dir:<path>' ('dir:.' the top), and what the tree lacks but git does not ignore (its value 'absent': once such a file is
 // committed the unit runs again; looked for and not there, as a file and as a folder). Never .git/, never what git ignores.
-// IMPLICIT always. Tested by tests/deps-offline.mjs.
+// The unit's job in verify.yml always (implicitFor). Tested by tests/deps-offline.mjs.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { treeAt, valuesOf, envKey, IMPLICIT } from './verify-state.mjs';
+import { treeAt, valuesOf, envKey, implicitFor } from './verify-state.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)), REPO = path.dirname(HERE);
 export const HOOK = pathToFileURL(path.join(HERE, 'deps-hook.mjs')).href;
@@ -74,8 +74,9 @@ function ignoredOf(top, rels) {
   return new Set(r.stdout.split('\0').filter(Boolean).map((x) => x.replace(/\/$/, '')));
 }
 
-/** a record folder → the unit's deps { key: value } (keys sorted, values of root's HEAD), or null when not known */
-export function collect(dir, root) {
+/** a record folder → the unit's deps { key: value } (keys sorted, values of root's HEAD; the unit's job in verify.yml too:
+ *  implicitFor), or null when not known */
+export function collect(dir, root, unit = '') {
   const seen = readRecord(dir);
   if (!seen) return null;
   const top = topOf(root);
@@ -95,7 +96,7 @@ export function collect(dir, root) {
     }
     return null;
   };
-  const keys = new Set(IMPLICIT), rest = new Map();   // rest: rel → kinds, what the tree lacks
+  const keys = new Set(implicitFor(unit)), rest = new Map();   // rest: rel → kinds, what the tree lacks
   for (const [p, kinds] of seen) {
     const rel = keyPath(path.resolve(p), kinds);
     if (rel == null || rel.split('/').includes('.git')) continue;
@@ -110,7 +111,7 @@ export function collect(dir, root) {
     keys.add(rel);
     if (kinds.has('m')) keys.add(`dir:${rel}`);
   }
-  return valuesOf([...keys].sort(), tree);
+  return valuesOf([...keys].sort(), tree, { root: top });
 }
 
 /** run-tests' wrap: a unit about to run → the env its process needs to be recorded, and finish({ ok, ms }) → what its result
@@ -125,7 +126,7 @@ export function prepare(unit, { root = REPO, env = process.env } = {}) {
     finish({ ok } = {}) {
       if (done) return done;
       let deps = null;
-      try { if (ok !== false) deps = collect(dir, root); } catch { deps = null; }
+      try { if (ok !== false) deps = collect(dir, root, unit); } catch { deps = null; }
       done = { deps, sha: headOf(root), env: envKey() };
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* the temp folder's cleaner takes it */ }
       return done;

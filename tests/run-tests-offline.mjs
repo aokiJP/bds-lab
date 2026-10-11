@@ -135,7 +135,7 @@ await t('common/deps.mjs as the wrap: a test run in a copy is recorded under the
   await R.runTests([testOf('guards')], { cwd: LAB, wrap: path.join(TOP, 'common', 'deps.mjs'), results, env: { ...process.env, LOG: newLog() } });
   const [row] = fs.readFileSync(results, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   ok(row.ok && row.deps, JSON.stringify(row));
-  eq([row.deps[testOf('guards')], row.deps['data.txt'], row.deps['new.txt'], row.deps['.github/workflows/verify.yml'], row.sha], [git('rev-parse', `HEAD:${testOf('guards')}`), HEAD_DATA, 'absent', git('rev-parse', 'HEAD:.github/workflows/verify.yml'), git('rev-parse', 'HEAD')]);
+  eq([row.deps[testOf('guards')], row.deps['data.txt'], row.deps['new.txt'], row.deps['job:.github/workflows/verify.yml#offline'], row.sha], [git('rev-parse', `HEAD:${testOf('guards')}`), HEAD_DATA, 'absent', 'absent', git('rev-parse', 'HEAD')]);
   eq(Object.keys(row.deps).filter((k) => /bdslab-|^\//.test(k)), [], 'no key of the copy\'s own path');
   eq([worktrees(), left()], [1, []], 'no copy stays');
 });

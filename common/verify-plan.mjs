@@ -54,7 +54,7 @@ export function listUnits(root = TOP) {
 export function valuesNow(state, root = TOP) {
   const keys = new Set();
   for (const e of Object.values(state?.units ?? {})) if (e?.deps && typeof e.deps === 'object') for (const k of Object.keys(e.deps)) keys.add(k);
-  return valuesOf([...keys], treeAt(root, 'HEAD'));
+  return valuesOf([...keys], treeAt(root, 'HEAD'), { root });
 }
 
 /** which units run and why (pure): not in the state (new, or it failed last time), passed on another machine, a file it read

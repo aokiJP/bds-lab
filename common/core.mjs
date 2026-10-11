@@ -1608,6 +1608,10 @@ class Engine {
           // a slow server (LeviLamina under Wine) handles a player's packets seconds late: wait until it has done this action's
           // (then a console marker: the log lines of that work are out too)
           else if (F.slowServer?.(L()) && this.sync !== false) { await b.act('__sync', []); const k = (this.syncN = (this.syncN ?? 0) + 1); srv.send(`scriptevent lab:sync ${k}`); await srv.wait(new RegExp(`LAB_SYNC ${k}\\s*$`), 20000); }
+          // a sped-up server (LAB_SPEED): the pause after it is a k-th as long in real time, but this client is not sped up — on a
+          // busy machine its packets can reach the server after the pause has run out. Its earlier packets handled first (the
+          // server answers this after them), then the pause in the server's ticks, as at 1x
+          else if (CLOCK_X > 1 && TICK_PAUSE) await b.act('__sync', []);
         }
       } catch (e) { LOG.push(`[0-0-0 0:0:0 ERROR] @${name} ${action}: ${e.message}${this.borrowed && BORROW_GAP.test(e.message) ? ` (borrowed client: this action's packets changed in BDS ${bdsVersion()}; not the addon's fault, it waits for bedrock-protocol)` : ''}`); }
       await this.pause(wait);
