@@ -17,7 +17,29 @@ const C = await imp('app/lib/client.mjs');
 
 let pass = 0, fail = 0;
 const only = process.env.DEVICE_TEST_ONLY ? new RegExp(process.env.DEVICE_TEST_ONLY) : null;
-const t = async (name, fn) => { if (only && !only.test(name)) return; try { await fn(); pass++; console.log(`ok   ${name}`); } catch (e) { fail++; console.log(`FAIL ${name}\n     ${String(e.message).split('\n').join('\n     ')}\n     ${e.stack?.split('\n')[1] ?? ''}`); } };
+// DEVICE_TEST_SHARD=i/n: every n-th test from the i-th. Without it (and without DEVICE_TEST_ONLY) this file runs itself as DEVICE_TEST_PARTS
+// (4) such parts side by side and prints theirs, one after the other: the tests share nothing (each has its own world), most of
+// their time is a child process of the lab being waited for
+const shard = /^(\d+)\/(\d+)$/.exec(process.env.DEVICE_TEST_SHARD ?? '');
+if (!shard && !only) {
+  const n = Math.max(1, Number(process.env.DEVICE_TEST_PARTS) || 4);
+  const parts = await Promise.all(Array.from({ length: n }, (_, i) => new Promise((res) => {
+    const c = spawn(process.execPath, [fileURLToPath(import.meta.url)], { env: { ...process.env, DEVICE_TEST_SHARD: `${i + 1}/${n}` } });
+    let out = ''; c.stdout.on('data', (d) => { out += d; }); c.stderr.on('data', (d) => { out += d; });
+    c.on('exit', (code) => res({ code, out }));
+  })));
+  let pass = 0, fail = 0;
+  for (const { code, out } of parts) {
+    const m = /(?:OK|FAIL) device-offline: (\d+) passed, (\d+) failed/.exec(out);
+    pass += Number(m?.[1] ?? 0); fail += Number(m?.[2] ?? 0) + (m || code === 0 ? 0 : 1);
+    process.stdout.write(out.replace(/\n*(?:OK|FAIL) device-offline: .*\n?/, '\n').replace(/^\n+/, ''));
+  }
+  console.log(`\n${fail ? 'FAIL' : 'OK'} device-offline: ${pass} passed, ${fail} failed`);
+  process.exit(fail ? 1 : 0);
+}
+let turn = 0;
+const mine = () => !shard || turn++ % Number(shard[2]) === Number(shard[1]) - 1;
+const t = async (name, fn) => { if (!mine() || (only && !only.test(name))) return; try { await fn(); pass++; console.log(`ok   ${name}`); } catch (e) { fail++; console.log(`FAIL ${name}\n     ${String(e.message).split('\n').join('\n     ')}\n     ${e.stack?.split('\n')[1] ?? ''}`); } };
 const eq = (a, b, m = '') => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${m} want ${JSON.stringify(b)} got ${JSON.stringify(a)}`); };
 const ok = (c, m) => { if (!c) throw new Error(m); };
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'device-offline-'));
@@ -38,7 +60,7 @@ const stranger = { serial: 'XYZ999', model: 'Other', android: '13', sdk: 33, abi
 function world(name, devices, { host = HOST_WIFI, env = {} } = {}) {
   const state = path.join(tmp, `${name}.json`), lab = path.join(tmp, `${name}-lab`);
   fs.writeFileSync(state, JSON.stringify({ phase: 'home' }));
-  const e = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_DEVICES_DIR: lab, APP_HOST_IFACES: JSON.stringify(host), FAKE_DEVICES: JSON.stringify(devices), APP_DEVICE_WAIT_MS: '300', ...env };
+  const e = { ...process.env, FAKE_APP_STATE: state, APP_ADB: path.join(FAKE, 'adb'), APP_DEVICES_DIR: lab, APP_HOST_IFACES: JSON.stringify(host), FAKE_DEVICES: JSON.stringify(devices), APP_DEVICE_WAIT_MS: '300', APP_RUN_LOCK: path.join(tmp, `${name}.run.lock`), ...env };
   delete e.GITHUB_ACTIONS; delete e.LAB_ASK_FILE; delete e.APP_DEVICE;
   const cli = (args, { input, extra = {} } = {}) => { const r = spawnSync(process.execPath, [path.join(TOP, 'lab.mjs'), 'app', ...args], { cwd: TOP, encoding: 'utf8', timeout: 90_000, env: { ...e, ...extra }, input }); return { status: r.status, text: (r.stdout ?? '') + (r.stderr ?? '') }; };
   const S = () => JSON.parse(fs.readFileSync(state, 'utf8'));

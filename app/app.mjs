@@ -48,7 +48,8 @@ const ENV_FILE = path.join(TOP, '.env.local');
 const BDS_LAB = process.env.APP_BDS_LAB || path.join(TOP, 'bds', 'lab.mjs');
 const BDS_DIR = path.dirname(BDS_LAB), BDS_LIVE = path.join(BDS_DIR, '.lab', 'live.json');
 const ADDONS = path.join(TOP, 'bds', 'addons');
-const MEMO = path.join(LAB, 'apk.json'), LOCK = path.join(LAB, 'run.lock'), PREP_LOG = path.join(LAB, 'prepare.txt');
+// APP_RUN_LOCK: another file for the one-run-at-a-time lock (tests that run apps side by side, each with its own fake world)
+const MEMO = path.join(LAB, 'apk.json'), LOCK = process.env.APP_RUN_LOCK || path.join(LAB, 'run.lock'), PREP_LOG = path.join(LAB, 'prepare.txt');
 // the person's own devices (app device add): app/.lab/devices.json and devices/<name>.json (APP_DEVICES_DIR: tests)
 const DEVICES = process.env.APP_DEVICES_DIR || LAB;
 // (run / ui on one of them: set from --device <name> before the command runs)
