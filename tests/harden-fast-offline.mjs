@@ -61,7 +61,8 @@ for (const s of secs) {
 const rj = JSON.stringify({ addon: u, ok: !fail });
 fs.mkdirSync(path.join(H, '.lab', 'reports'), { recursive: true }); fs.writeFileSync(path.join(H, '.lab', 'report.json'), rj); fs.writeFileSync(path.join(H, '.lab', 'reports', u + '.json'), rj);
 if (cov) { if (S) covs.forEach((l) => console.log(l)); console.log(C(shop)); }
-fs.appendFileSync(path.join(H, 'runs.log'), JSON.stringify({ u, cov, t0, t1: Date.now() }) + '\n');
+const hd = path.join(H, '.lab', 'hold'), m0 = fs.existsSync(path.join(H, 'addons', u.split('__')[0] + '__mut0')), held = fs.existsSync(hd) && fs.readdirSync(hd).length > 0;
+fs.appendFileSync(path.join(H, 'runs.log'), JSON.stringify({ u, cov, t0, t1: Date.now(), m0, held }) + '\n');
 console.log((fail ? 'FAIL ' : 'PASS ') + (secs.length - fail) + '/' + secs.length); process.exit(fail ? 1 : 0);`;
 const L0 = path.join(T, 'lab'), unit = path.join(L0, 'bds', 'addons', 'hf'), LOG = path.join(L0, 'bds', 'runs.log');
 put(path.join(L0, 'bds', 'lab.mjs'), FAKE); put(path.join(L0, 'AGENTS.md'), '# fake lab\n');
@@ -96,6 +97,33 @@ const all = M.sites([['src/main.ts', MAIN]]), lt = all.find((s) => s.was === '<=
   put(path.join(unit, 'tests.txt'), '## base\n@A cmd /lab:pay 5\n~ paid\n\n## zero\n@A cmd /lab:pay 0\n~ nothing\n');
   const r = await M.measure('bds', 'hf', { only: [lt, one] });
   check(r.ok && r.tried === 2 && r.caught === 1 && r.lived[0].s === one && r.cov.startsWith('COV 75%'), 'measure (only, no tail): ok, the same bugs caught as one at a time', JSON.stringify({ ok: r.ok, caught: r.caught }));
+}
+{
+  // one server at a time (mutateJobs 1: Endstone / LeviLamina): the coverage run first, then the bugs one after another in the
+  // unit itself (no copy); the failing last section is left out the same way
+  put(path.join(unit, 'tests.txt'), '## base\n@A cmd /lab:pay 5\n~ paid\n\n## zero\n@A cmd /lab:pay 0\n~ nothing\n\n## wrong\n@A cmd /lab:shop tailonly\n~ PAY 99\n');
+  fs.rmSync(LOG, { force: true });
+  process.env.LAB_MUTATE_JOBS = '1';
+  const outs = [];
+  const r = await M.measure('bds', 'hf', { only: [lt, one], out: (l) => outs.push(l), baseEnv: { LAB_SECTIONS: '1' }, tail: (b) => M.tailFails(b.lines, new Set(['zero', 'wrong'])) });
+  process.env.LAB_MUTATE_JOBS = '2';
+  const rs = runs();
+  check(M.mutateJobs('bds') === 2 && rs.length === 3 && rs[0].cov && rs.every((x) => x.u === 'hf') && rs.every((x, i) => !i || rs[i - 1].t1 <= x.t0) && !rs.some((x) => x.m0), 'measure (mutateJobs 1): not beside — the coverage run, then each bug in turn in the unit itself, no copy', JSON.stringify(rs));
+  check(r.ok && JSON.stringify(r.dropped) === '["wrong"]' && r.cov.startsWith('COV 75%') && r.tried === 2 && r.caught === 1 && r.lived[0].s === one && !outs.some((l) => /beside/.test(l)), 'measure (mutateJobs 1): the last failing section left out as beside (coverage as it began; a bug only it catches survives)', outs.join('\n'));
+  check(!left().length && fs.readFileSync(path.join(unit, 'src', 'main.ts'), 'utf8') === MAIN, 'measure (mutateJobs 1): the unit\'s code as it was', left().join(' '));
+}
+{
+  // a bug's work throws (here: its change cannot be read): the coverage run still ends before the copy it was taken from goes
+  // and the unit is put back; then measure throws it
+  put(path.join(unit, 'tests.txt'), '## base\n@A cmd /lab:pay 5\n~ paid\n\n## zero\n@A cmd /lab:pay 0\n~ nothing\n');
+  fs.rmSync(LOG, { force: true });
+  const boom = Object.defineProperty({ ...lt }, 'to', { get() { throw new Error('boom'); } });
+  let thrown = null;
+  try { await M.measure('bds', 'hf', { only: [boom, one] }); } catch (e) { thrown = e; }
+  const rs = runs(), base = rs.find((x) => x.cov);
+  check(thrown?.message === 'boom', 'measure: a bug\'s work that throws → measure throws it (once all is done)', String(thrown));
+  check(base && base.m0 && base.held, 'measure: the coverage run ends before the copy goes and the unit is put back', JSON.stringify(rs));
+  check(!left().length && fs.readFileSync(path.join(unit, 'src', 'main.ts'), 'utf8') === MAIN && !fs.readdirSync(path.join(L0, 'bds', '.lab', 'hold')).length, 'measure (thrown): no copy left, the unit as it was, no hold left', left().join(' '));
 }
 
 // harden with a scripted AI: its sections end in a wrong one → the check is the one run beside its bugs, nothing runs again
