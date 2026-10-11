@@ -22,7 +22,7 @@ export function access({ lab, hosts = [] }) {
   if (lr === 'admin' || lr === 'write') as.push(lr === 'admin' ? 'admin' : 'write');
   for (const h of hosts) { const r = roleOf(h.permissions); if (r === 'admin') as.push('lender'); else if (r === 'write') as.push('borrower'); }
   const uniq = [...new Set(as)];
-  return uniq.length ? { ok: true, as: uniq, why: '' } : { ok: false, as: [], why: 'このパネルは、ラボのリポジトリに書き込める人と、GitHub Actions の時間を貸している人（ホストの持ち主）・借りている人だけが使えます。このトークンではどちらでもありません' };
+  return uniq.length ? { ok: true, as: uniq, why: '' } : { ok: false, as: [], why: 'このパネルは、ラボのリポジトリに書き込める人と、GitHub Actions の時間を貸している人（ホストの持ち主）・借りている人だけが使えます。このトークンではどちらでもありません。「設定」のラボのリポジトリ（owner/名前）が合っているか確かめるか、持ち主に招いてもらうか、下の「時間を貸す」から始めてください' };
 }
 
 // ---- what a repository's own settings allow (its secrets' names; the values are never read) ----
@@ -167,7 +167,7 @@ export const monthMinutes = (runs, month, tz = 'UTC') => runs.filter((r) => r.st
  *  minutes are what GitHub shows of the host's runs) */
 export function hostNow(rules, used, now = new Date(), running = false) {
   const why = [];
-  if (!rules) return { ok: false, why: ['.lab-host.json がないか正しくありません'], used, limit: 0, stopAt: 0, remaining: 0 };
+  if (!rules) return { ok: false, why: ['.lab-host.json がないか正しくありません（貸し手に「貸し借り」で条件を保存してもらってください）'], used, limit: 0, stopAt: 0, remaining: 0 };
   const tz = rules.timezone ?? 'UTC', stopAt = Math.floor(rules.minutesPerMonth * STOP_AT);
   if (rules.until && dayOf(now, tz) > rules.until) why.push(`期限（${rules.until}）を過ぎました`);
   if (!within(rules.hours, tz, now)) why.push(`時間帯（${rules.hours} ${tz}）の外です`);
@@ -226,7 +226,7 @@ export function alwaysLends(j) {
  *  JSON (null: none); hostYmlOk: its host.yml is the lab's */
 export function adminLend({ required, fork = null, check = null, rules = null, hostYmlOk = false }) {
   if (!required) return { required: false, ok: true, fork: null, why: [] };
-  if (!fork) return { required: true, ok: false, fork: null, why: ['ラボのフォークがまだありません'] };
+  if (!fork) return { required: true, ok: false, fork: null, why: ['ラボのフォークがまだありません（下の「フォークで貸す」で作れます）'] };
   const why = [...(check?.errors ?? []), ...(hostYmlOk ? [] : ['フォークの host.yml がラボと違います（ラボに合わせる）']), ...alwaysLends(rules).why];
   return { required: true, ok: !why.length, fork: fork.full_name ?? null, why };
 }
@@ -253,7 +253,7 @@ export function hostRunInputs({ host, job, unit = '', wait = true, rules }) {
   // (auto: hostrun chooses among LAB_HOSTS the one that may take it now — each host's own rules decide there)
   if (host === 'auto') rules = { jobs: HOST_JOBS };
   else if (!SLUG.test(String(host ?? ''))) return { error: 'ホストを選んでください' };
-  if (!rules) return { error: `${host} の .lab-host.json が読めません` };
+  if (!rules) return { error: `${host} の .lab-host.json が読めません（「貸し借り」で読み直すか、貸し手に条件を保存してもらってください）` };
   if (!rules.jobs.includes(job)) return { error: host === 'auto' ? `${job} はホストで走らせられる仕事ではありません` : `${job} は ${host} では許されていません（許す仕事: ${rules.jobs.join(' ')}）` };
   const u = String(unit ?? '').trim();
   if (HOST_UNIT_JOBS.includes(job) && !/^[a-z0-9_]+$/.test(u)) return { error: `${job} はユニットの名前が要ります（bds/addons/<名前>: 英小文字・数字・_）` };
@@ -302,8 +302,10 @@ export const joinRequests = (issues = []) => issues.filter((i) => !i.pull_reques
   .map((i) => ({ number: i.number, login: i.user?.login ?? String(i.title).slice(JOIN_TITLE.length).trim(), body: String(i.body ?? '').slice(0, 500), at: i.created_at, url: i.html_url }));
 /** what needs doing now, from what the panel read (pure) → [{ level: 'bad' | 'warn' | 'info', text, tab }], the worst first.
  *  health: workflowHealth's; ending: [{ slug, until, days }] a lender's hosts whose last day is near */
-export function todos({ policyErrors = [], version = null, idleAdmins = [], invites = 0, unlisted = [], stale = [], health = [], ending = [], joins = 0, noVars = false } = {}) {
+export function todos({ policyErrors = [], version = null, idleAdmins = [], invites = 0, unlisted = [], stale = [], health = [], ending = [], joins = 0, noVars = false, unread = [] } = {}) {
   const out = [], add = (level, text, tab = null) => out.push({ level, text, tab });
+  // (what could not be read this time — the list is short of it, never silently: 「読み直す」 asks again)
+  if (unread.length) add('warn', `${unread.join('・')}を読めませんでした: この一覧は、そのぶん足りないかもしれません（「読み直す」で、もう一度）`);
   if (joins) add('warn', `参加のお願いが ${joins} 件`, 'members');
   if (noVars) add('info', 'このサインインでは変数（LAB_HOSTS・LAB_NOTIFY）を読めません: App の権限（actions_variables）か、トークンの Variables: Read and write', 'setup');
   if (policyErrors.length) add('bad', '.github/bds-lab-panel.json が正しくありません: 直すまでパネルは何も許しません', 'members');
@@ -330,6 +332,67 @@ export function refusal(status, message) {
   if (/Reference update failed/i.test(m)) return { kind: 'ref', say: '枝を作れません（ruleset が枝を作るのを止めているかもしれません: lab-incoming/** を許してください）' };
   return { kind: null, say: '' };
 }
+// ---- no dead end: what an empty list or a refusal says next (pure: the page draws the steps) ----
+/** a lender's .lab-host.json as it was read (pure): f the file (null: none — usual before the lender saves their rules),
+ *  err what reading it threw (null: read) → { json, rules, errors, state: 'ok' | 'missing' | 'bad' | 'unread' } */
+export function hostFile(f, err = null) {
+  if (err) return { json: null, rules: null, errors: [`.lab-host.json を読めませんでした（${err.message ?? err}）`], state: 'unread' };
+  if (!f) return { json: null, rules: null, errors: ['.lab-host.json がありません: 貸し手（持ち主）が「貸し借り」で条件を保存すると、ここで使えます'], state: 'missing' };
+  let json; try { json = JSON.parse(f.text); } catch { return { json: null, rules: null, errors: ['.lab-host.json が JSON ではありません: GitHub で開いて直すか、「貸し借り」で保存し直してください'], state: 'bad' }; }
+  const c = checkRules(json);
+  return { json, ...c, state: c.rules ? 'ok' : 'bad' };
+}
+/** an empty list of runs, in words and the one next step (pure) → { text, step: 'clear' (take the search away) | 'start'
+ *  (the 「実行」 tab) | null }. all: how many runs there were before narrowing; isLab: the lab's own (else a host's) */
+export function runsEmpty({ all = 0, q = '', show = 'all', isLab = true } = {}) {
+  if (all) return { text: `当てはまる実行がありません（最近の 50 件）${String(q).trim() || show !== 'all' ? ': 探す言葉や「どの実行」を変えてみてください' : ''}`, step: String(q).trim() || show !== 'all' ? 'clear' : null };
+  return isLab ? { text: 'まだ実行がありません: 「実行」でワークフローを始めると、ここに出ます', step: 'start' } : { text: 'このホストでは、まだ実行がありません: 「実行」でこのホストを選んで始めると、ここに出ます', step: 'start' };
+}
+/** what is wrong with an owner/name typed in, before it is used (pure) → words, or null when it is good. have: the list
+ *  it is to join (a name already there is said) */
+export function slugProblem(v, have = []) {
+  const s = String(v ?? '').trim();
+  if (!s) return 'リポジトリを owner/名前 の形で入れてください（例: aokiJP/bds-lab）';
+  if (!SLUG.test(s)) return `「${s.slice(0, 80)}」は形が違います: owner/名前 の形で（例: aokiJP/bds-lab。/ は 1 つ、空白なし。GitHub のアドレスなら github.com/ のあとの 2 つ）`;
+  if (have.some((x) => same(x, s))) return `${s} は、もう一覧にあります`;
+  return null;
+}
+/** what is wrong with a secret's name and value, before GitHub is asked (pure; GitHub's own rules: a 422 otherwise) →
+ *  words, or null when it is good */
+export function secretProblem(name, value) {
+  const n = String(name ?? '').trim();
+  if (!n) return '名前を入れてください（例: MS_EMAIL）';
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(n)) return '名前は英字・数字・_ だけで、数字から始めません（例: MS_EMAIL）';
+  if (/^GITHUB_/i.test(n)) return '名前を GITHUB_ で始めることはできません（GitHub が使う名前です）: ほかの名前にしてください';
+  if (n.length > 255) return '名前が長すぎます（255 文字まで）';
+  if (value !== undefined) {
+    if (!String(value ?? '')) return '値が空です: 登録する値を入れてください';
+    if (new TextEncoder().encode(String(value)).length > 48 * 1024) return '値が大きすぎます（GitHub の秘密は 48 KB まで）: ファイルなら小さくするか、別の置き場所に';
+  }
+  return null;
+}
+/** the inputs a workflow needs that the form left empty (pure: GitHub refuses the run with a 422 otherwise) → their names.
+ *  inputs: dispatchInputs's; values: the form's (a checkbox's is a boolean: never empty) */
+export function dispatchMissing(inputs, values) {
+  return inputs.filter((i) => i.required && i.type !== 'boolean' && String(values[i.name] ?? '').trim() === '' && String(i.default ?? '').trim() === '').map((i) => i.name);
+}
+/** a sign-in that did not go through → the next steps, the likeliest first (pure; the page draws them): 'retry' (the network:
+ *  again), 'oauth' (「GitHub でサインイン」 again: there is the service), 'token' (make a token on GitHub), 'lab' (another
+ *  lab's name). e: what was thrown, or the words alone */
+export function signInNext(e, { authUrl = null } = {}) {
+  const status = Number(e?.status ?? NaN), msg = String(e?.message ?? e ?? '');
+  const net = status === 0 || /つながりません|Failed to fetch|NetworkError|network/i.test(msg);
+  const steps = [];
+  if (net) steps.push('retry');
+  if (authUrl) steps.push('oauth');
+  steps.push('token');
+  if (status === 404 || /見えません|見つからない/.test(msg)) steps.unshift('lab'); else steps.push('lab');
+  const say = net ? 'GitHub につながりませんでした。ネットを確かめて「もう一度」'
+    : status === 401 || /Bad credentials|期限|取り消/.test(msg) ? 'このトークン（サインイン）は GitHub に受け付けられませんでした。入り直すか、新しいトークンを作ってください'
+      : 'うまく入れませんでした。下のどれかから、もう一度';
+  return { say, steps: [...new Set(steps)] };
+}
+
 /** location.hash → { tab, repo, run } (pure; anything unknown → nulls) */
 export function parseHash(hash) {
   const [k, q = ''] = String(hash ?? '').replace(/^#/, '').split('?');
