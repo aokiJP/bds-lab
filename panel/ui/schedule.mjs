@@ -4,7 +4,7 @@
 // computer, no one's token. Saving them starts workflows ahead of time, so it is the policy's 「ワークフローを始める」
 // (dispatch), kept in the audit log; a schedule of hostrun.yml needs the policy's hostrun too, and one of ai-make (the AI's
 // API, each time it starts) is asked first.
-import { h, toast, link } from './dom.mjs';
+import { h, toast, link, failView } from './dom.mjs';
 import * as S from '../lib/schedule.mjs';
 import * as M from '../lib/model.mjs';
 
@@ -14,6 +14,8 @@ const localTz = () => { try { const z = Intl.DateTimeFormat().resolvedOptions().
 const wfOf = (w) => { const file = String(w?.path ?? w ?? '').split('/').pop(); return { file, name: String(w?.name ?? file), state: w?.state ?? 'active' }; };
 const inputsLine = (inputs) => Object.entries(inputs).map(([k, v]) => `${k}=${v.length > 40 ? `${v.slice(0, 40)}…` : v}`).join(' ');
 const aiAsk = (job) => `AI の料金を使います: ${job.workflow} は始まるたびに、ラボの ANTHROPIC_API_KEY（か OPENAI_API_KEY）の分を使います（${S.describe(job)}）。予約しますか`;
+/** a failure kept in words with its status, as failView takes it (the next step the page gives: again, sign in again, more rights) */
+const said = (text, e) => Object.assign(new Error(text), { status: e?.status, reset: e?.reset });
 const when = (job, now) => S.nextRuns(job, now, 3).map((d) => S.fmtWhen(d, job.timezone)).join('・');
 /** an element's children replaced, as h takes them (nested lists flattened, null and false left out — the DOM itself would
  *  show them as text) */
@@ -32,7 +34,7 @@ const protectedSay = (e) => { const r = M.refusal(e?.status, e?.message); return
  *  schedule read (undefined: not read — why is shown where the list goes) */
 export function scheduleTab(body, ctx) {
   const { api, lab } = ctx, now = () => ctx.now?.() ?? Date.now();
-  const may = (a) => Boolean(ctx.may?.(a)), gate = (a) => ctx.gate?.(a) ?? (may(a) ? {} : { disabled: true });
+  const may = (a) => Boolean(ctx.may?.(a)), gate = (a) => ctx.gate?.(a) ?? (may(a) ? {} : { disabled: true, title: '役割に「ワークフローを始める」が要ります（管理者に頼んでください）' });
   const wfs = (ctx.workflows ?? []).map(wfOf).filter((w) => /\.ya?ml$/.test(w.file));
   const inputsOf = async (file) => (ctx.dispatchInputs ? ctx.dispatchInputs(file) : M.dispatchInputs((await api.file(lab.slug, `.github/workflows/${file}`))?.text ?? ''));
   // (the file as read: its sha — a change made elsewhere in between is never written over — and its jobs as they are)
@@ -44,7 +46,9 @@ export function scheduleTab(body, ctx) {
     // (not read — the network, GitHub down or busy, no right to see it: why, where the list goes, and a way to read again; not
     // only a passing toast — the list would stay 「読んでいます…」, or show the jobs read before as if they were the file's)
     try { f = await api.file(lab.slug, S.SCHEDULE_FILE); } catch (e) {
-      fill(list, h('p', { class: 'bad' }, `${S.SCHEDULE_FILE} を読めません: ${e?.message ?? e}`, ' ', h('button', { onclick: reload }, '読み直す')));
+      const v = failView(said(`${S.SCHEDULE_FILE} を読めません: ${e?.message ?? e}`, e), reload);
+      v.append(' ', h('button', { onclick: reload }, '読み直す'));
+      fill(list, v, h('p', { class: 'muted' }, 'つながりと、このサインインの権限を確かめてから、「読み直す」を押してください。'));
       return undefined;
     }
     let j = null, broken = false;
@@ -113,7 +117,7 @@ export function scheduleTab(body, ctx) {
     const j = S.checkJob(st.raw[i]).job;
     if (!j) return;
     const on = !j.enabled;
-    if (on && j.workflow === HOSTRUN && !may('hostrun')) return toast(`貸し手の Actions で走らせる（${HOSTRUN}）予約は、あなたの役割には許されていません`, true);
+    if (on && j.workflow === HOSTRUN && !may('hostrun')) return toast(`貸し手の Actions で走らせる（${HOSTRUN}）予約は、あなたの役割には許されていません。管理者に、役割の「貸し手の Actions で走らせる」を足してもらってください`, true);
     if (on && S.AI_WORKFLOWS.includes(j.workflow) && !confirm(aiAsk(j))) return;
     const what = `${j.workflow}・${S.describe(j)}`;
     await save(st.raw.map((x, k) => (k === i ? { ...j, enabled: on } : x)), { workflow: j.workflow, done: `${on ? '動かしました' : '止めました'}: ${what}`, message: `${on ? '動かす' : '止める'} ${j.id}` });
@@ -126,13 +130,13 @@ export function scheduleTab(body, ctx) {
 
   /** the form for a new job (i: null) or job i: the workflow and its inputs (from its YAML), when, the time zone, a note */
   const open = async (i) => {
-    if (i === null && st.raw.length >= S.MAX_JOBS) return toast(`予約は ${S.MAX_JOBS} 件までです`, true);
+    if (i === null && st.raw.length >= S.MAX_JOBS) return toast(`予約は ${S.MAX_JOBS} 件までです。使わない予約を「消す」と、足せます`, true);
     const raw = i === null ? null : st.raw[i], base = i === null ? {} : S.checkJob(raw).job ?? (raw && typeof raw === 'object' ? raw : {});
     // (a job keeps its id; a new one, or one whose id is not right, is given one from its workflow)
     const id = typeof base.id === 'string' && /^[A-Za-z0-9][\w-]{0,39}$/.test(base.id) ? base.id : null;
     const choices = wfs.filter((w) => w.file !== S.SCHEDULER && w.state === 'active');
     if (typeof base.workflow === 'string' && base.workflow !== S.SCHEDULER && !choices.some((w) => w.file === base.workflow)) choices.push({ file: base.workflow, name: `${base.workflow}（見当たりません）`, state: '?' });
-    if (!choices.length) return editor.replaceChildren(h('div', { class: 'card' }, h('p', { class: 'warn' }, '予約できるワークフローがありません（ラボの .github/workflows に、手で始められる workflow_dispatch のものが要ります）。')));
+    if (!choices.length) return editor.replaceChildren(h('div', { class: 'card' }, h('p', { class: 'warn' }, '予約できるワークフローがありません（ラボの .github/workflows に、手で始められる workflow_dispatch のものが要ります）。', ' ', link(`https://github.com/${lab.slug}/tree/${lab.repo?.default_branch ?? 'main'}/.github/workflows`, 'GitHub でワークフローを見る'))));
     const sel = (label, opts, value) => { const s = h('select', { 'aria-label': label }, opts.map(([v, t]) => h('option', { value: v, selected: v === value ? 'selected' : null }, t))); s.value = value; return s; };
     const f = {
       workflow: sel('ワークフロー', choices.map((w) => [w.file, w.name === w.file ? w.file : `${w.name}（${w.file}）`]), choices.some((w) => w.file === base.workflow) ? base.workflow : choices[0].file),
@@ -166,7 +170,7 @@ export function scheduleTab(body, ctx) {
       form = null;
       inputsBox.replaceChildren(h('p', { class: 'muted' }, `${file} の入力を読んでいます…`));
       let d;
-      try { d = await inputsOf(file); } catch (e) { if (f.workflow.value === file) { inputsBox.replaceChildren(h('p', { class: 'warn' }, `${file} を読めません: ${e.message}`)); sync(); } return; }
+      try { d = await inputsOf(file); } catch (e) { if (f.workflow.value === file) { inputsBox.replaceChildren(failView(said(`${file} を読めません: ${e?.message ?? e}`, e), () => pick()), h('button', { onclick: () => pick() }, '読み直す')); sync(); } return; }
       if (f.workflow.value !== file) return;
       d = { dispatch: Boolean(d?.dispatch), inputs: Array.isArray(d?.inputs) ? d.inputs : [] };
       const keep = base.workflow === file && base.inputs && typeof base.inputs === 'object' && !Array.isArray(base.inputs) ? base.inputs : {}, fields = {};
@@ -189,13 +193,13 @@ export function scheduleTab(body, ctx) {
       sync();
     };
     const saveBtn = h('button', { class: 'primary', ...gate('dispatch'), onclick: async () => {
-      if (!form) return toast('ワークフローの入力をまだ読めていません', true);
-      if (!form.d.dispatch) return toast(`${form.file} は手で始められません（workflow_dispatch がありません）`, true);
+      if (!form) return toast('ワークフローの入力をまだ読めていません。「読み直す」を押すか、ワークフローを選び直してください', true);
+      if (!form.d.dispatch) return toast(`${form.file} は手で始められません（workflow_dispatch がありません）。ほかのワークフローを選んでください`, true);
       const j = job(), miss = form.d.inputs.filter((x) => x.required && !x.default && !(x.name in j.inputs)).map((x) => x.name);
-      if (miss.length) return toast(`入力 ${miss.join('・')} が要ります`, true);
+      if (miss.length) return toast(`入力 ${miss.join('・')} が要ります。その欄に入れてから、もう一度「予約する」を押してください`, true);
       const c = S.checkJob(j);
       if (!c.job) return toast(c.errors.join(' / '), true);
-      if (c.job.workflow === HOSTRUN && !may('hostrun')) return toast(`貸し手の Actions で走らせる（${HOSTRUN}）予約は、あなたの役割には許されていません`, true);
+      if (c.job.workflow === HOSTRUN && !may('hostrun')) return toast(`貸し手の Actions で走らせる（${HOSTRUN}）予約は、あなたの役割には許されていません。管理者に、役割の「貸し手の Actions で走らせる」を足してもらってください`, true);
       if (S.AI_WORKFLOWS.includes(c.job.workflow) && c.job.enabled && !confirm(aiAsk(c.job))) return;
       const what = `${c.job.workflow}・${S.describe(c.job)}`;
       const r = await save(i === null ? [...st.raw, c.job] : st.raw.map((x, k) => (k === i ? c.job : x)),
@@ -219,7 +223,7 @@ export function scheduleTab(body, ctx) {
   const sch = wfs.find((w) => w.file === S.SCHEDULER);
   body.append(h('div', { class: 'card', id: 'schedule' }, h('h2', {}, '⏰ 予約'),
     h('p', { class: 'muted' }, `決めた時刻に、ラボのワークフローを自動で始めます。予約は ${S.SCHEDULE_FILE} に書き、毎時の ${S.SCHEDULER} がラボの Actions で、既定の枝に始めます（パソコンも、だれかのトークンも要りません）。時刻は 1 時間ごとで、GitHub が混んでいると数分〜数十分遅れることがあります。`),
-    may('dispatch') ? null : h('p', { class: 'muted' }, '見るだけです: 予約を変えるには、役割に「ワークフローを始める」が要ります。'),
+    may('dispatch') ? null : h('p', { class: 'muted' }, '見るだけです: 予約を変えるには、役割に「ワークフローを始める」が要ります。ラボの管理者に、「メンバー」の役割で足してもらってください。'),
     list,
     h('div', { class: 'row' }, h('button', { class: 'primary', ...gate('dispatch'), onclick: () => open(null) }, '＋ 予約を足す'), h('button', { onclick: reload }, '読み直す'),
       link(`https://github.com/${lab.slug}/blob/${lab.repo?.default_branch ?? 'main'}/${S.SCHEDULE_FILE}`, 'GitHub でファイルを見る'))), editor);

@@ -27,13 +27,18 @@ export function bulkCard(ctx) {
     const names = now.items.map((x) => x.name), replacing = names.filter((x) => have.has(x));
     // (h leaves out what is null; replaceChildren would write it as the word)
     found.replaceChildren(h('div', {},
-      now.errors.length ? h('ul', { class: 'plain bad', id: 'bulkerrors' }, now.errors.map((e) => h('li', {}, `❌ ${e}`))) : null,
+      now.errors.length ? h('div', {}, h('ul', { class: 'plain bad', id: 'bulkerrors' }, now.errors.map((e) => h('li', {}, `❌ ${e}`))), h('p', { class: 'muted' }, '欄の中をその行から直してください。全部直ると「まとめて登録」が押せます（値はここには出ません）。')) : null,
       now.warnings.length ? h('ul', { class: 'plain warn', id: 'bulkwarnings' }, now.warnings.map((e) => h('li', {}, `⚠️ ${e}`))) : null,
       names.length ? h('div', {}, h('p', {}, `登録する名前（${names.length} 個${replacing.length ? `・うち ${replacing.length} 個は入れ替え` : ''}）。値はここに出しません`),
         h('ul', { class: 'plain', id: 'bulknames' }, names.map((x) => h('li', { 'data-name': x }, have.has(x) ? '🔁 ' : '🆕 ', h('strong', {}, x), have.has(x) ? h('span', { class: 'muted' }, ' 入れ替え') : null)))) : null,
-      !names.length && !now.errors.length ? h('p', { class: 'muted' }, area.value.trim() ? '登録できる行がありません' : 'まだ何も貼られていません') : null));
+      !names.length && !now.errors.length ? h('p', { class: 'muted' }, area.value.trim() ? '登録できる行がありません。NAME=値 の形の行を入れてください（# で始まる行は飛ばします）' : 'まだ何も貼られていません。上の欄に .env の中身を貼ってください') : null));
     go.textContent = names.length ? `${names.length} 個をまとめて登録` : 'まとめて登録';
     go.disabled = busy || Boolean(gated.disabled) || !names.length || now.errors.length > 0;
+    // (why it cannot be pressed: the reason, and the one thing to do)
+    if (gated.disabled) go.title = gated.title ?? '役割に「秘密を登録する」が要ります（管理者に頼んでください）';
+    else if (now.errors.length) go.title = '直す行があります: 赤い行を直すと押せます';
+    else if (!names.length) go.title = '登録する行がありません: 上の欄に NAME=値 の行を貼ってください';
+    else go.title = '';
   };
   // (typing again: what the last press said is no longer about this text)
   area.addEventListener('input', () => { if (!busy) { progress.hidden = true; status.replaceChildren(); } check(); });

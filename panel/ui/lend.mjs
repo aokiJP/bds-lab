@@ -15,7 +15,7 @@ import * as MB from '../lib/members.mjs';
  *  rules: .lab-host.json's JSON */
 export async function lendFork(api, { slug, me, labSlug, rules }) {
   const owner = labSlug.split('/')[0], made = M.hostRulesText(rules);
-  if (!M.SLUG.test(String(slug ?? ''))) throw new Error('owner/名前 で');
+  if (!M.SLUG.test(String(slug ?? ''))) throw new Error('フォークは owner/名前 の形で入れてください（例: あなたの名前/ラボと同じ名前）');
   if (made.errors.length) throw new Error(made.errors.join(' / '));
   let repo = await api.repo(slug).catch(() => null);
   const c = M.forkHostCheck(repo, me, labSlug);
@@ -57,7 +57,7 @@ export function lendStart(ctx) {
       : { minutesPerMonth: Number(f.minutes.value), jobs: M.HOST_JOBS.filter((n) => f.jobs[n].checked), hours: f.hours.value.trim(), timezone: f.tz.value.trim(), ...(f.until.value ? { until: f.until.value } : {}), contact: f.contact.value.trim() };
     const r = await lendFork(api, { slug: f.slug.value.trim(), me: me.login, labSlug: ctx.labSlug, rules });
     let listed = '';
-    if (ctx.labHosts) { try { await ctx.labHosts(r.slug); listed = '・ラボの LAB_HOSTS に入れました'; } catch (e) { listed = `・LAB_HOSTS に入れられません（${e.message}）`; } }
+    if (ctx.labHosts) { try { await ctx.labHosts(r.slug); listed = '・ラボの LAB_HOSTS に入れました'; } catch (e) { listed = `・LAB_HOSTS に入れられません（${e.message}）: ラボの持ち主に、Settings の LAB_HOSTS へ ${r.slug} を足してもらってください`; } }
     toast(`${r.slug} で貸します${r.delegated ? `・持ち主 ${owner} に預けました（招待）` : `・持ち主 ${owner} を招けませんでした: フォークの Settings → Collaborators で招いてください`}${listed}`, !r.delegated);
     ctx.onReady(r.slug, r);
   });

@@ -1,6 +1,6 @@
 // audit (the 「監査」 tab): the lab's audit log (lib/audit.mjs) for the roles the policy lets read it — narrowed by who, what
 // and since when, and taken away as CSV (made in this page: a Blob and a link with download, sent nowhere).
-import { h, toast, act, link } from './dom.mjs';
+import { h, toast, act, link, failView } from './dom.mjs';
 import * as AU from '../lib/audit.mjs';
 import * as P from '../lib/policy.mjs';
 
@@ -9,7 +9,7 @@ import * as P from '../lib/policy.mjs';
 export function auditTab(body, ctx) {
   // (no role handed in: the lab's GitHub role, and teams the policy names counted as not known — the narrowest)
   const { api, lab } = ctx, policy = ctx.policy ?? P.DEFAULT_POLICY, role = ctx.role ?? P.roleFor({ repoRole: lab.repo?.permissions, teams: Object.keys(policy.teams ?? {}).length ? null : [], policy });
-  if (!P.can(policy, role, 'audit.read')) return body.append(h('div', { class: 'card' }, h('h2', {}, '監査ログ'), h('p', { class: 'muted' }, 'この役割では監査ログを見られません（.github/bds-lab-panel.json の roles に audit.read）')));
+  if (!P.can(policy, role, 'audit.read')) return body.append(h('div', { class: 'card' }, h('h2', {}, '監査ログ'), h('p', { class: 'muted' }, 'この役割では監査ログを見られません（.github/bds-lab-panel.json の roles に audit.read）。ラボの管理者に、「メンバー」の役割で「監査ログを見る」を足してもらってください。')));
   const mode = P.auditMode(policy, lab.repo?.visibility);
   const who = h('select', { 'aria-label': '誰' }), what = h('select', { 'aria-label': '何' }, h('option', { value: '' }, 'すべての操作'), Object.entries(AU.AUDIT_WORDS).map(([k, v]) => h('option', { value: k }, `${v}（${k}）`)));
   const since = h('input', { type: 'date', 'aria-label': 'この日から' }), count = h('span', { class: 'muted grow' }), list = h('div', {}, h('p', { class: 'muted' }, '読んでいます…'));
@@ -21,7 +21,7 @@ export function auditTab(body, ctx) {
     list.replaceChildren(xs.length ? h('table', {}, h('thead', {}, h('tr', {}, ['いつ', '誰', '何', 'どこ', '詳しく', ''].map((t) => h('th', {}, t)))),
       h('tbody', {}, [...xs].reverse().map((e) => h('tr', {}, h('td', {}, e.at.replace('T', ' ').slice(0, 19)), h('td', {}, e.actor), h('td', {}, AU.AUDIT_WORDS[e.action] ?? e.action), h('td', {}, e.target),
         h('td', {}, Object.entries(e.detail).map(([k, v]) => `${k}=${[].concat(v).join(',')}`).join(' ')), h('td', {}, e.edited ? h('span', { class: 'warn' }, '✎ 編集あり ') : null, e.url ? link(e.url, 'GitHub') : null)))))
-      : h('p', { class: 'muted' }, all.length ? '当てはまるものがありません。' : 'まだ記録がありません。'));
+      : h('p', { class: 'muted' }, all.length ? '当てはまるものがありません。「誰」「何」「この日から」をゆるめてください。' : mode === 'issue' ? 'まだ記録がありません。パネルで何か操作をすると、ここに出ます。' : 'まだ記録がありません。残すには、.github/bds-lab-panel.json に "audit": "issue" と書いて保存します（「メンバー」の「役割」の「監査ログ」でも選べます）。'));
   };
   for (const el of [who, what, since]) el.addEventListener('change', draw);
   /** the entries shown, as a CSV file (a BOM first: a spreadsheet reads it as UTF-8) */
@@ -37,7 +37,7 @@ export function auditTab(body, ctx) {
       : '記録していません（公開リポジトリの既定。.github/bds-lab-panel.json の "audit": "issue" で残します）。前の記録があれば下に出ます。'),
     h('div', { class: 'row' }, who, what, since, h('button', { onclick: () => load() }, '読み直す'), h('button', { class: 'primary', onclick: csv }, 'CSV で取り出す')), h('div', { class: 'row' }, count)), list);
   const load = () => act(async () => {
-    all = (await AU.readAudit(api, lab.slug)).entries;
+    try { all = (await AU.readAudit(api, lab.slug)).entries; } catch (e) { list.replaceChildren(failView(e, load), h('button', { onclick: () => load() }, '読み直す')); return undefined; }
     const keep = who.value;
     who.replaceChildren(h('option', { value: '' }, 'すべての人'), ...[...new Set(all.map((e) => e.actor))].sort().map((x) => h('option', { value: x, selected: x === keep ? 'selected' : null }, x)));
     draw();
