@@ -186,7 +186,11 @@ export async function checks(ctx) {
   const v = await readVars(api, slug, ['APP_ID', 'APP_SLUG', 'APP_CLIENT_ID', 'LAB_AUTH_URL']);
   const appSlug = v.APP_SLUG || config.appSlug || null, clientId = v.APP_CLIENT_ID || config.appClientId || null, authUrl = cleanAuthUrl(config.authUrl);
   const more = moreRights({ owner, isOrg, appSlug, signedInWithApp }), noRight = (why) => `${why}: ${more.how}`, fixMore = { label: more.label, link: more.link };
-  const out = [], c = (key, label, ok, need = '', fix = null) => out.push({ key, label, ok, need: ok === true ? '' : need, fix });
+  // (next: when a row has no fix of its own because another row comes first, the step to take instead: { label, goto: key } — the
+  // screen scrolls to that row; every row that is not ok has a fix or a next, never neither)
+  const out = [], c = (key, label, ok, need = '', fix = null, next = null) => out.push({ key, label, ok, need: ok === true ? '' : need, fix, ...(next && ok !== true ? { next } : {}) });
+  const GH = `https://github.com/${slug}`, secretsPage = { label: '秘密の画面を開く（GitHub へ）', link: `${GH}/settings/secrets/actions` }, varsPage = { label: '変数の画面を開く（GitHub へ）', link: `${GH}/settings/variables/actions` };
+  const toApp = { label: '上の「GitHub App」の行へ', goto: 'app' };
   const pagesYml = async () => { if (wf('pages.yml')) await api.dispatch(slug, 'pages.yml', ref, {}); }, PY = wf('pages.yml') ? ['dispatch'] : [];
 
   // ---- GitHub Pages: where this panel is served from (built by pages.yml) ----
@@ -211,7 +215,7 @@ export async function checks(ctx) {
   let inst = null, instWhy = '';
   if (signedInWithApp && appSlug) { try { inst = await installedRepos(api, appSlug); } catch (e) { instWhy = e.message; } }
   const putOn = installUrl(appSlug) ? { label: 'App を入れる（GitHub へ）', link: installUrl(appSlug) } : null;
-  if (!appSlug) c('installed', 'App がラボに入っている', false, 'まず上の「GitHub App」の行で App を作ります');
+  if (!appSlug) c('installed', 'App がラボに入っている', false, 'まず上の「GitHub App」の行で App を作ります', null, toApp);
   else if (!signedInWithApp) c('installed', 'App がラボに入っている', null, 'App でサインインすると分かります', putOn);
   else if (!inst) c('installed', 'App がラボに入っている', null, `App の入り先を読めません（${instWhy}）`, putOn);
   else c('installed', 'App がラボに入っている', inst.has(slug.toLowerCase()), `${slug} に App が入っていません: 入れると、ラボの人はサインインするだけで使えます（許可は App の導入と GitHub の権限で決まります）`, putOn);
@@ -238,7 +242,7 @@ export async function checks(ctx) {
   const wait = ctx.wait ?? {}, deploy = (cf) => async (_v, { onStep } = {}) => `サインインのサービスを ${await deployAuth(api, slug, { ref, cf, me: ctx.me?.login, onStep, ...wait })} に置きました（LAB_AUTH_URL に入れ、pages.yml でページに渡します）`;
   const deployNeeds = (cf) => [...(cf ? ['secrets.put'] : []), 'dispatch', 'variables'];
   const redeploy = cfReady ? { label: 'auth-deploy.yml でもう一度置く', needs: deployNeeds(false), run: deploy(null) } : urlFix, varAuth = cleanAuthUrl(v.LAB_AUTH_URL);
-  const rebuild = wf('pages.yml') ? { label: 'pages.yml を始める', needs: ['dispatch'], run: async () => { await pagesYml(); return 'pages.yml を始めました（数分でページが新しくなります）'; } } : null;
+  const rebuild = !wf('pages.yml') ? { label: 'Actions の画面を開く（GitHub へ）', link: `${GH}/actions` } : { label: 'pages.yml を始める', needs: ['dispatch'], run: async () => { await pagesYml(); return 'pages.yml を始めました（数分でページが新しくなります）'; } };
   if (!authUrl && varAuth) c('auth', 'サインインのサービス', false, `変数 LAB_AUTH_URL（${varAuth}）はありますが、このページの設定にまだありません: pages.yml をもう一度`, rebuild);
   else if (!authUrl && String(config.authUrl ?? '').trim()) c('auth', 'サインインのサービス', false, `このページの設定のサービスの URL（${String(config.authUrl).trim()}）が https の origin の根ではありません: サービスは origin の / に（auth/README.md）`, urlFix);
   else if (!authUrl) c('auth', 'サインインのサービス', false, 'まだありません: Cloudflare に置く（下の「置く準備」）か、自分のサーバーに置いて URL を入れます。サービスは origin の / に（auth/README.md）', urlFix);
@@ -246,7 +250,7 @@ export async function checks(ctx) {
     const hl = await health(authUrl, ctx.fetchImpl), here = strip(ctx.panelUrl);
     const origin = (() => { try { return new URL(here).origin; } catch { return null; } })();
     if (!hl.ok) c('auth', 'サインインのサービス', false, `${authUrl} が答えません（${hl.why}）`, redeploy);
-    else if (!clientId) c('auth', 'サインインのサービス', false, 'App の client ID（変数 APP_CLIENT_ID）がありません: まず上の「GitHub App」の行で App を作ります');
+    else if (!clientId) c('auth', 'サインインのサービス', false, 'App の client ID（変数 APP_CLIENT_ID）がありません: まず上の「GitHub App」の行で App を作ります（作ってあるなら、変数に APP_CLIENT_ID を入れます）', appSlug ? varsPage : null, appSlug ? null : toApp);
     else if (hl.clientId !== clientId) c('auth', 'サインインのサービス', false, `サービスの client ID（${hl.clientId ?? 'なし'}）が App のもの（APP_CLIENT_ID ${clientId}）と違います: サービスの GITHUB_CLIENT_ID・GITHUB_CLIENT_SECRET を App のものに（auth-deploy.yml なら、もう一度置くだけ）`, redeploy);
     // (a service that names the panels' addresses: this panel's, path and all, must begin with one of them; else its origins)
     else if (origin && hl.panels && !hl.panels.some((p) => p && here.startsWith(p))) c('auth', 'サインインのサービス', false, `サービスの PANEL_ORIGINS にこのパネルのアドレス（パス付き: ${here}）を入れてください（今は ${hl.panels.join('・') || 'なし'}）`, redeploy);
@@ -262,9 +266,9 @@ export async function checks(ctx) {
     const label = 'サインインのサービスを Cloudflare に置く準備', appReady = has('APP_CLIENT_SECRET') && has('AUTH_STATE_SECRET') && Boolean(clientId);
     const cfFix = { label: '封じて登録し、置く', inputs: [{ name: 'token', label: 'CLOUDFLARE_API_TOKEN（Workers を編集できる API トークン）', secret: true }, { name: 'account', label: 'CLOUDFLARE_ACCOUNT_ID（32 文字）', placeholder: '0123456789abcdef0123456789abcdef' }], needs: deployNeeds(true),
       run: (vals = {}, opts) => deploy({ token: String(vals.token ?? '').trim(), account: String(vals.account ?? '').trim() })(vals, opts) };
-    if (!wf('auth-deploy.yml')) c('deploy', label, false, 'auth-deploy.yml がありません（ラボを新しくしてください）');
+    if (!wf('auth-deploy.yml')) c('deploy', label, false, `auth-deploy.yml がありません。ラボが古いので、新しくします（フォークなら、ラボのページの「Sync fork」→「Update branch」。そうでなければ新しい bds-lab の版を取り込みます）`, { label: 'ラボのページを開く（GitHub へ）', link: GH });
     else if (!secrets) c('deploy', label, null, noRight('秘密の名前を見られません（Secrets: Read and write が要ります）'), fixMore);
-    else if (!appReady) c('deploy', label, false, 'まず上の「GitHub App」の行で App を作ります（サービスは App の client ID と秘密で動きます）');
+    else if (!appReady) c('deploy', label, false, 'まず上の「GitHub App」の行で App を作ります（サービスは App の client ID と秘密で動きます）。作ってあるのに足りないなら、秘密に APP_CLIENT_SECRET・AUTH_STATE_SECRET を、変数に APP_CLIENT_ID を入れます', appSlug ? secretsPage : null, appSlug ? null : toApp);
     else if (cfReady) c('deploy', label, true, '', { label: 'Cloudflare に置く（auth-deploy.yml）', needs: deployNeeds(false), run: deploy(null) });
     else c('deploy', label, false, 'Cloudflare の API トークンとアカウント ID を入れると、ここで封じて登録し、auth-deploy.yml で置き、その URL を LAB_AUTH_URL に入れて pages.yml でページに渡します', cfFix);
   }
@@ -274,7 +278,7 @@ export async function checks(ctx) {
   if (!secrets || v.APP_ID === undefined) c('workflows', wfLabel, null, noRight('秘密の名前か変数を見られません（Secrets と Variables が要ります）'), fixMore);
   else if (v.APP_ID && has('APP_PRIVATE_KEY')) c('workflows', wfLabel, true);
   else c('workflows', wfLabel, false, `${[!v.APP_ID && 'APP_ID（変数）', !has('APP_PRIVATE_KEY') && 'APP_PRIVATE_KEY（秘密）'].filter(Boolean).join('・')} があれば、hostrun・secrets は App のトークンで動き、LAB_HOST_TOKEN・LAB_SECRETS_TOKEN は要りません${v.APP_ID ? '（鍵は App の設定で作り直し、「秘密」で APP_PRIVATE_KEY に）' : '（App を作ると両方入ります）'}`,
-    v.APP_ID && appSettingsUrl(appSlug, owner, isOrg) ? { label: 'App の設定（GitHub へ）', link: appSettingsUrl(appSlug, owner, isOrg) } : null);
+    v.APP_ID ? (appSettingsUrl(appSlug, owner, isOrg) ? { label: 'App の設定（GitHub へ）', link: appSettingsUrl(appSlug, owner, isOrg) } : secretsPage) : null, v.APP_ID ? null : toApp);
 
   // ---- each host: the link its lender opens to put the App on it (the App asks the same permissions everywhere it is put:
   // the lender chooses the host alone) ----
@@ -282,7 +286,7 @@ export async function checks(ctx) {
   for (const x of hosts) {
     if (!SLUG.test(String(x?.slug ?? ''))) continue;
     const key = `host:${x.slug}`, label = `${x.slug}: 貸し手（${x.slug.split('/')[0]} さん）に App を入れてもらう`;
-    if (!appSlug) { c(key, label, false, 'まず上の「GitHub App」の行で App を作ります'); continue; }
+    if (!appSlug) { c(key, label, false, 'まず上の「GitHub App」の行で App を作ります', null, toApp); continue; }
     const give = { label: '貸し手に渡すリンク', link: installUrl(appSlug) };
     if (inst) c(key, label, inst.has(x.slug.toLowerCase()), `このリンクを貸し手に渡し、ホストのリポジトリに App を入れてもらいます（その人の Actions を、あなたのトークンなしで使えるように）。${onlyHost}`, give);
     else c(key, label, null, `このリンクを貸し手に渡します（入ったかどうかは App でサインインすると分かります）。${onlyHost}`, give);

@@ -18,6 +18,9 @@ export const tokenHelp = (owner) => h('div', {},
 export function signInCard({ authUrl = null, err = '', adding = false, login = null, lab = '', onOAuth, onToken, back = null } = {}) {
   const owner = String(lab ?? '').split('/')[0];
   const t = h('input', { type: 'password', id: 'tok', autocomplete: 'off', placeholder: 'github_pat_… / ghp_…' }), labIn = h('input', { type: 'text', id: 'lab', value: lab ?? '' }), rem = h('input', { type: 'checkbox', id: 'rem', checked: true });
+  // (a mistake found before anything is sent: the toast, and under the fields what to put instead)
+  const sayer = () => { const el = h('p', { class: 'bad' }); return [el, (text, hint) => { el.textContent = `${text}: ${hint}`; toast(text, true); }]; };
+  const [fix, no] = sayer(), [fixO, noO] = sayer();
   const backBtn = () => (back ? h('button', { onclick: () => back() }, '戻る') : null);
   const intro = (who) => h('p', {}, `このパネルは、ラボのリポジトリに書き込める人と、GitHub Actions の時間を貸している・借りている人だけが使えます。見えるもの・できることは、${who}に GitHub が許していることだけです。`);
   const tokenForm = [
@@ -26,11 +29,12 @@ export function signInCard({ authUrl = null, err = '', adding = false, login = n
     h('label', { for: 'tok' }, 'トークン'), t,
     h('label', { for: 'lab' }, 'ラボのリポジトリ（owner/名前）'), labIn,
     h('label', {}, rem, ' このブラウザに覚える（共有の端末では外す: このタブを閉じると忘れます）'),
-    !authUrl && err ? h('p', { class: 'bad' }, err) : null,
+    fix,
+    !authUrl && err ? [h('p', { class: 'bad' }, err), h('p', {}, '入れなおしても入れないときは、トークンを作り直してください: ', link(tokenLink(owner), 'トークンを作る（GitHub へ）'))] : null,
     h('div', { class: 'row' }, h('button', { class: authUrl ? null : 'primary', id: 'go', onclick: () => {
       const v = t.value.trim(), l = labIn.value.trim();
-      if (!v) return toast('トークンを入れてください', true);
-      if (!SLUG.test(l)) return toast('ラボのリポジトリは owner/名前 で', true);
+      if (!v) return no('トークンを入れてください', '上の「トークンを作る」で作って、ここに貼り付けてください');
+      if (!SLUG.test(l)) return no('ラボのリポジトリは owner/名前 で', '例: myname/bds-lab（GitHub のアドレスの github.com/ のあとの 2 つ）');
       return onToken?.({ token: v, lab: l, remember: rem.checked });
     } }, adding ? '加える' : '入る'), authUrl ? null : backBtn()),
   ];
@@ -45,10 +49,11 @@ export function signInCard({ authUrl = null, err = '', adding = false, login = n
     h('p', { class: 'muted' }, '使えるリポジトリは、ラボの GitHub App を入れたところから自動で決まります（トークンを作る必要はありません）。サインインのトークンはこのブラウザの中だけに置きます。'),
     h('label', { for: 'oauth-lab' }, 'ラボのリポジトリ（owner/名前）'), oLab,
     h('label', {}, oRem, ' このブラウザに覚える（共有の端末では外す: このタブを閉じると忘れます）'),
-    err ? h('p', { class: 'bad' }, err) : null,
+    fixO,
+    err ? [h('p', { class: 'bad' }, err), h('p', {}, 'もう一度「GitHub でサインイン」を押すか、下の「トークンで入る」から入れます。')] : null,
     h('div', { class: 'row' }, h('button', { class: 'primary', id: 'oauth', onclick: () => {
       const l = oLab.value.trim();
-      if (!SLUG.test(l)) return toast('ラボのリポジトリは owner/名前 で', true);
+      if (!SLUG.test(l)) return noO('ラボのリポジトリは owner/名前 で', '例: myname/bds-lab（GitHub のアドレスの github.com/ のあとの 2 つ）');
       return onOAuth?.({ remember: oRem.checked, lab: l });
     } }, 'GitHub でサインイン'), backBtn()),
     folded(false));

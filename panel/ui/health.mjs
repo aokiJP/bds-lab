@@ -4,7 +4,7 @@
 // ages, the 「準備」 checks, the people (a lab's administrator), the lenders (the owner) — and what this sign-in may not read is
 // left out of the score and said so. The card reads again each time it is drawn (a thing just mended shows at once); the report
 // makes do with what was read in the last minute.
-import { h, toast, act } from './dom.mjs';
+import { h, toast, act, failView } from './dom.mjs';
 import * as H from '../lib/health.mjs';
 import * as S from '../lib/setup.mjs';
 import * as ST from '../lib/stats.mjs';
@@ -19,11 +19,13 @@ import { readRuns } from './stats.mjs';
 const MEMO = new WeakMap();
 // (a read this sign-in may not do, or GitHub refuses, or an answer that is not what it should be: not read — null — and the
 // score leaves it out)
-const safe = async (fn) => { try { return await fn(); } catch { return null; } };
+// (what could not be read is kept, with why, for the card to say — not thrown away: errs gets { what, error })
+const safe = async (fn, errs = null, what = '') => { try { return await fn(); } catch (error) { errs?.push({ what, error }); return null; } };
 const sync = (fn) => { try { return fn(); } catch { return null; } };
 
 /** what the score and the report are made of → { at, score (lib/health.mjs score), review (the access review; null: the people not
- *  readable), runs, failures (the failed ones among the runs), lending (ctx.lending's answer; null: not the owner's) }. The
+ *  readable), runs, failures (the failed ones among the runs), lending (ctx.lending's answer; null: not the owner's), unread
+ *  ([{ what, error }]: what this sign-in could not read, and what GitHub said — the card says so with the way on) }. The
  *  reading — the lab's runs, its secrets' ages, the 「準備」 checks, the people (an administrator's), the lenders (the owner's) —
  *  is made again unless one no older than `maxAge` ms (default 0: always) was made; what the panel knows itself (the policy's
  *  errors, the page's version, the policy) is taken as it is now. Never throws. Same ctx as healthCard's */
@@ -34,13 +36,14 @@ export async function readFacts(ctx, { fresh = false, maxAge = 0 } = {}) {
   let raw = hit?.raw;
   // (a reading from a moment after now — the clock was set back — is no reading)
   if (fresh || !(age >= 0 && age < maxAge)) {
+    const errs = [];
     const [runs, secrets, checks, people, lending] = await Promise.all([
-      ctx.runs ? ctx.runs : safe(() => api.runs(lab.slug, { per: 100 })), safe(() => api.secrets(lab.slug)), safe(() => (ctx.checks ? ctx.checks() : S.checks(ctx))),
-      lab.role === 'admin' ? safe(() => MB.readMembers(api, lab.slug, lab.repo)) : null, ctx.lending ? safe(() => ctx.lending()) : null]);
-    raw = { runs, secrets, checks, people, lending };
+      ctx.runs ? ctx.runs : safe(() => api.runs(lab.slug, { per: 100 }), errs, '実行の一覧'), safe(() => api.secrets(lab.slug), errs, '秘密の名前'), safe(() => (ctx.checks ? ctx.checks() : S.checks(ctx)), errs, '「準備」の確かめ'),
+      lab.role === 'admin' ? safe(() => MB.readMembers(api, lab.slug, lab.repo), errs, 'メンバー') : null, ctx.lending ? safe(() => ctx.lending(), errs, '貸し手') : null]);
+    raw = { runs, secrets, checks, people, lending, unread: errs };
     memo.set(lab.slug, { at, raw });
   }
-  const { runs, secrets, checks, people, lending } = raw;
+  const { runs, secrets, checks, people, lending, unread = [] } = raw;
   const rs = Array.isArray(runs) ? runs.filter((r) => r && typeof r === 'object') : [], decided = rs.filter((r) => ST.kindOf(r) !== 'other'), must = P.adminsLend(ctx.policy), state = ctx.version?.state;
   const lends = lending ? sync(() => (lending.list ?? []).filter((x) => x.always.ok)) : null, list = Array.isArray(checks) ? checks : null;
   const review = people ? sync(() => G.accessReview({ members: people.members, invitations: people.invitations, runs: rs, owner: people.owner, lending: (lends ?? []).map((x) => x.owner), adminsLend: must, now: at })) : null;
@@ -50,7 +53,7 @@ export async function readFacts(ctx, { fresh = false, maxAge = 0 } = {}) {
     staleSecrets: Array.isArray(secrets) ? sync(() => secrets.filter((x) => M.secretAge(x.updated_at, at).stale).length) : null, flagged: review ? review.flagged : null,
     lendersAlways: lends ? lends.length : null, adminsIdle: lends && must ? sync(() => (lending.idle ?? []).length) : null,
     versionLive: state === 'live' ? true : state === 'newer' || state === 'failed' ? false : null });
-  return { at, score, review, runs: rs, failures: rs.filter((r) => ST.kindOf(r) === 'bad'), lending };
+  return { at, score, review, runs: rs, failures: rs.filter((r) => ST.kindOf(r) === 'bad'), lending, unread };
 }
 
 // (replaceChildren takes nodes, not lists or nulls)
@@ -71,21 +74,24 @@ export function healthCard(ctx) {
     fill(box, h('h2', {}, '🩺 ラボの健康度', sc.enough ? h('span', { class: 'chip' }, `評価 ${sc.grade}`) : null),
       sc.enough ? [h('p', {}, h('strong', { class: tone(sc.grade), style: { fontSize: '28px' } }, String(sc.score)), h('span', { class: 'muted' }, ' / 100')),
         h('div', { class: `bar${sc.score < 60 ? ' bad' : sc.score < 75 ? ' warn' : ''}`, role: 'img', 'aria-label': `${sc.score} 点` }, h('i', { style: { width: `${sc.score}%` } }))]
-        : h('p', { class: 'muted' }, sc.known ? 'まだ測れません: この役割・設定では、読めた項目が少なすぎます' : 'まだ測れません: この役割では、読めるものがありませんでした'),
+        : h('p', { class: 'muted' }, `${sc.known ? 'まだ測れません: この役割・設定では、読めた項目が少なすぎます' : 'まだ測れません: この役割では、読めるものがありませんでした'}${f.unread?.length ? '。下の「読めなかったもの」の言葉のとおりに直して、「測り直す」を押してください' : '。権限の足りたトークン（か App）で入り直すと測れます'}`),
       up.length ? h('div', {}, h('h3', {}, '直すと点が上がること'), h('ul', { class: 'plain' }, up.map((x) => h('li', { class: 'row', 'data-factor': x.key },
         h('span', { class: 'grow' }, '⚠️ ', x.say, h('span', { class: 'muted' }, `（+${x.gain} 点）`)),
         x.tab ? h('button', { onclick: () => ctx.go?.(x.tab) }, `「${tabName(x.tab)}」を開く`) : h('button', { onclick: () => (ctx.reload ? ctx.reload() : globalThis.location?.reload()) }, '読み直す')))))
         : sc.enough ? h('p', { class: 'ok' }, '✅ 直すところはありません') : null,
+      // (what could not be read: said with GitHub's words and the way on, not left out without a word)
+      f.unread?.length ? h('div', {}, h('h3', {}, '読めなかったもの'), f.unread.map((u) => h('div', { 'data-unread': u.what }, `${u.what}: `, failView(u.error, () => load(true))))) : null,
       h('div', { class: 'row' }, h('button', { onclick: () => load(true) }, '測り直す'), h('span', { class: 'muted grow' }, `${sc.known}/${sc.factors.length} 項目で測りました${sc.known < sc.factors.length ? '（この役割・設定で読めないものは数えません）' : ''}`)),
       // (the numbers behind it)
       h('details', {}, h('summary', {}, '📋 数字で見る（点の内訳）'), h('table', {}, h('thead', {}, h('tr', {}, ['項目', '点', '満点', '状況'].map((t) => h('th', {}, t)))),
         h('tbody', {}, sc.factors.map((x) => h('tr', { 'data-factor': x.key }, h('td', {}, x.name), h('td', {}, x.known ? String(x.points) : '—'), h('td', {}, x.known ? String(x.max) : '—'), h('td', { class: x.known && x.points === x.max ? '' : 'muted' }, x.say)))))));
   };
   // (the last picture stays, dimmed, while it is read again)
-  const load = (fresh) => act(async () => {
+  // (drawing failed: the words and 「もう一度」, not the waiting line for good)
+  const load = async (fresh) => {
     box.style.opacity = '0.55';
-    try { const f = await readFacts(ctx, { fresh }); draw(f); return f; } finally { box.style.opacity = ''; }
-  });
+    try { const f = await readFacts(ctx, { fresh }); draw(f); return f; } catch (e) { fill(box, h('h2', {}, '🩺 ラボの健康度'), h('p', { class: 'muted' }, '測れませんでした。'), failView(e, () => load(true)), h('div', { class: 'row' }, h('button', { onclick: () => load(true) }, 'もう一度'))); return undefined; } finally { box.style.opacity = ''; }
+  };
   load(false);
   return box;
 }
