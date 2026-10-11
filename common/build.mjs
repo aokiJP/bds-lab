@@ -135,18 +135,24 @@ export function writeTsconfig(addon, sdkDir, js) {
 // loading TypeScript alone is most of a build's second (a test then a pack; the lab's own runs of a unit that did not change)
 function typeStamp(addon, js) {
   const h = crypto.createHash('sha1').update(js ? 'js\n' : 'ts\n');
-  const add = (f) => { try { h.update(path.relative(addon, f) + '\0').update(fs.readFileSync(f)).update('\0'); } catch { h.update(f + '\0-\0'); } };
+  const add = (f) => { const r = path.relative(addon, f); try { h.update(r + '\0').update(fs.readFileSync(f)).update('\0'); } catch { h.update(r + '\0-\0'); } };   // (relative, a missing file too: the same sources elsewhere are the same)
   for (const f of ['tsconfig.json', 'package.json', 'package-lock.json']) add(path.join(addon, f));
   const walk = (d) => { let es = []; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch { return; } for (const e of es.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) { const p = path.join(d, e.name); if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p); } else if (/\.([cm]?[jt]s|json)$/.test(e.name)) add(p); } };
   walk(path.join(addon, js ? path.join('bp', 'scripts') : 'src'));
   return h.digest('hex');
 }
+// (and what a check found, by the same content wherever it is: the brief's audit copies each unit to check it on stable and on
+// beta, and the same sources under another name — a post seen again, a copy — were checked again: colony-offline spent two
+// thirds of its CPU there)
 export function typecheck({ tl, addon, cache, js, max = 12 }) {
   const okFile = path.join(cache, 'tsinfo', crypto.createHash('sha1').update(addon).digest('hex').slice(0, 10) + (js ? '.js' : '') + '.clean');
   const stamp = process.env.LAB_TYPES_MEMO === '0' ? null : typeStamp(addon, js);
   try { if (stamp && fs.readFileSync(okFile, 'utf8') === stamp) return []; } catch { /* not checked yet */ }
+  const found = stamp && path.join(cache, 'tsinfo', 'found', `${stamp}-${max}.json`);
+  try { if (found) { const r = JSON.parse(fs.readFileSync(found, 'utf8')); if (Array.isArray(r)) return r; } } catch { /* not checked yet */ }
   const res = typecheckNow({ tl, addon, cache, js, max });
   try { if (stamp && !res.length) { fs.mkdirSync(path.dirname(okFile), { recursive: true }); fs.writeFileSync(okFile, stamp); } else fs.rmSync(okFile, { force: true }); } catch { /* only a memo */ }
+  try { if (found) { fs.mkdirSync(path.dirname(found), { recursive: true }); const t = `${found}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify(res)); fs.renameSync(t, found); } } catch { /* only a memo */ }
   return res;
 }
 function typecheckNow({ tl, addon, cache, js, max = 12 }) {

@@ -207,8 +207,13 @@ check(/→ new ItemStack\('ns:id', n\)/.test(fx[0]) && /→ not in this API vers
   const tc = () => B.typecheck({ tl, addon: unit, cache, js: false });
   const r1 = tc(), r2 = tc(), l2 = loads;
   put(path.join(unit, 'src', 'main.ts'), 'export const a = 2;\n'); const r3 = tc(), l3 = loads;
-  bad = ["Cannot find name 'y'."]; put(path.join(unit, 'src', 'main.ts'), 'export const a = y;\n'); const r4 = tc(), r5 = tc();
-  check(r1.length === 0 && r2.length === 0 && l2 === 1 && r3.length === 0 && l3 === 2 && r4.length === 1 && r5.length === 1 && loads === 4, 'build: a type check that passed is not run again on the same sources (TypeScript not even loaded); a change, or a check that found errors, runs it', `loads=${l2},${l3},${loads} ${JSON.stringify([r1, r2, r3, r4, r5])}`);
+  bad = ["Cannot find name 'y'."]; put(path.join(unit, 'src', 'main.ts'), 'export const a = y;\n'); const r4 = tc(), r5 = tc(), l5 = loads;
+  // (what a check found is remembered by the content too, wherever it is: the same sources in another folder — the brief's audit
+  // copy, a post seen again — are not checked again)
+  const copy = path.join(T, 'memo-copy'); fs.cpSync(unit, copy, { recursive: true });
+  const r6 = B.typecheck({ tl, addon: copy, cache, js: false });
+  put(path.join(unit, 'src', 'main.ts'), 'export const a = 3;\n'); bad = []; const r7 = tc();
+  check(r1.length === 0 && r2.length === 0 && l2 === 1 && r3.length === 0 && l3 === 2 && r4.length === 1 && r5.length === 1 && l5 === 3 && r6.length === 1 && r7.length === 0 && loads === 4, 'build: a type check is not run again on the same sources (TypeScript not even loaded): what it found, errors or none, by the content — another folder with the same sources too; a change runs it', `loads=${l2},${l3},${l5},${loads} ${JSON.stringify([r1, r2, r3, r4, r5, r6, r7])}`);
 }
 
 fs.rmSync(T, { recursive: true, force: true });
