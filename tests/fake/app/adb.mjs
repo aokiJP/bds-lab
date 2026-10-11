@@ -58,7 +58,9 @@ if (DEVS) {
   }
   if (a[0] === 'mdns' && a[1] === 'services') { say('List of discovered mdns services\n'); for (const d of DEVS.filter((x) => x.mdns)) say(`adb-${d.hw}-AbCdEf\t_adb-tls-connect._tcp\t${d.mdns}\n`); process.exit(0); }
   const dev = serialArg ? listed().find((d) => d.serial === serialArg) ?? DEVS.find((d) => d.serial === serialArg || d.wifi === serialArg) : null;
-  if (serialArg && serialArg !== 'emulator-5554') { (S.dev ??= []).push(`${serialArg} ${a.join(' ')}`); save(); }
+  // (not logcat's: it runs beside the rest without the lock, and writing the state back undid what happened meanwhile — the game
+  // launched on the device, gone again: device-offline's su0 run failed on CI once the other calls got faster)
+  if (serialArg && serialArg !== 'emulator-5554' && a[0] !== 'logcat') { (S.dev ??= []).push(`${serialArg} ${a.join(' ')}`); save(); }
   if (serialArg && serialArg !== 'emulator-5554' && !dev) { process.stderr.write(`error: device '${serialArg}' not found\n`); process.exit(1); }
   if (dev && a[0] === 'tcpip') { (S.tcpip ??= {})[dev.serial] = a[1]; save(); say(`restarting in TCP mode port: ${a[1]}\n`); process.exit(0); }
   // (adbd back on USB: its Wi-Fi address is gone from adb's list)
@@ -156,7 +158,8 @@ const MAYBE_LATER = [38, 26, 62, 34];   // the welcome screen's Maybe later on t
 // already run, and each of those writes the whole state back — a flag in the state could be lost between them)
 const POWER = `${SF}.power`, BOOT = `${SF}.boot`;
 const powered = () => !process.env.FAKE_EMU_POWER || (fs.existsSync(POWER) && fs.readFileSync(POWER, 'utf8') === 'on');
-if (fs.existsSync(BOOT)) { try { Object.assign(S, JSON.parse(fs.readFileSync(BOOT, 'utf8'))); fs.rmSync(BOOT, { force: true }); save(); } catch { /* another call took it */ } }
+// (logcat leaves it to the next locked call: it writes nothing back)
+if (a[0] !== 'logcat' && fs.existsSync(BOOT)) { try { Object.assign(S, JSON.parse(fs.readFileSync(BOOT, 'utf8'))); fs.rmSync(BOOT, { force: true }); save(); } catch { /* another call took it */ } }
 if (a[0] === '-avd') {
   const snap = a.includes('-snapshot') ? a[a.indexOf('-snapshot') + 1] : null;
   const boot = snap && S.snapshots?.[snap] ? { ...S.snapshots[snap], restored: snap } : { restored: null, launched: false, phase: 'home', ...(a.includes('-wipe-data') ? { installed: false, sql: null } : {}) };
