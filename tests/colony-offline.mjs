@@ -261,7 +261,9 @@ await new Promise((r) => srv.listen(0, '127.0.0.1', r));
 const CDIR = path.join(T, 'colony');
 const env = { ...process.env, COLONY_ORIGIN: `http://127.0.0.1:${srv.address().port}`, LAB_COLONY_DIR: CDIR, LAB_COLONY_DELAY_MS: '0', LAB_DOTENV: 'off', LAB_NETENV: 'off', NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost', NO_COLOR: '1' };
 const lab = (args, cwd = T) => new Promise((res) => { const c = spawn(process.execPath, [path.join(TOP, 'lab.mjs'), 'colony', ...args], { cwd, env }); let t = ''; c.stdout.on('data', (d) => { t += d; }); c.stderr.on('data', (d) => { t += d; }); c.on('close', (code) => res({ code, t })); });
-try {
+// The site checks (one request at a time, their own lab folder) run while the borrowing part below runs; the imports, which write
+// the bds lab's units and its current addon like harvest does, wait until that is done (siteDone, awaited at its end).
+const siteChecks = async () => {
   let r = await lab(['new']);
   ok(r.code === 0 && /^12348 +2026-10-05 ビヘイビア＆リソース +Knockdown Revive$/m.test(r.t) && /脱出ワールド & 謎解き/.test(r.t) && /next: node lab\.mjs colony show 12348/.test(r.t), 'colony new: the newest posts from the feed (one request), the next step', r.t);
   r = await lab(['search', '謎解き']);
@@ -301,26 +303,8 @@ try {
   ok(r.code === 1 && /has no zip button \(it has: mcworld\)/.test(r.t), 'colony get --type: a kind the post does not have is said with what it has', r.t);
   r = await lab(['get', '12348']);
   ok(r.code === 0 && fs.existsSync(path.join(CDIR, '12348', '復活.mcaddon')) && /addon "Revive" 2\.0\.0 · modules script/.test(r.t) && /next: node lab\.mjs colony import 12348/.test(r.t), 'colony get: an addon (mcpack/mcaddon button)', r.t);
-  // import: the addon from the post, and the behavior pack out of the world, as units of the bds lab (then removed)
-  const units = path.join(TOP, 'bds', 'addons'), curFile = path.join(TOP, 'bds', '.lab', 'addon'), cur0 = fs.existsSync(curFile) ? fs.readFileSync(curFile, 'utf8') : null;
-  const u1 = `zz_colony_addon_${process.pid}`, u2 = `zz_colony_world_${process.pid}`;
-  try {
-    r = await lab(['import', '12348', 'make the revive faster', '--name', u1]);
-    const task = fs.existsSync(path.join(units, u1, 'TASK.md')) ? fs.readFileSync(path.join(units, u1, 'TASK.md'), 'utf8') : '';
-    ok(r.code === 0 && fs.existsSync(path.join(units, u1, 'bp', 'scripts', 'main.js')) && /make the revive faster/.test(task), 'colony import <post>: the downloaded addon becomes a unit with the request', r.t);
-    r = await lab(['import', '12345', '--name', u2]);
-    const task2 = fs.existsSync(path.join(units, u2, 'TASK.md')) ? fs.readFileSync(path.join(units, u2, 'TASK.md'), 'utf8') : '';
-    ok(r.code === 0 && fs.existsSync(path.join(units, u2, 'bp', 'manifest.json')) && fs.existsSync(path.join(units, u2, 'rp', 'manifest.json')) && /Crafters Colony .*12345.*脱出ワールド/.test(task2),
-      'colony import <post of a world>: its behavior pack and the resource pack it depends on, the post named in TASK.md', r.t + task2);
-  } finally {
-    for (const u of [u1, u2]) fs.rmSync(path.join(units, u), { recursive: true, force: true });
-    if (cur0 === null) fs.rmSync(curFile, { force: true }); else fs.writeFileSync(curFile, cur0);
-  }
-  r = await lab(['show', '12']);
-  ok(r.code === 1 && /usage: node lab\.mjs colony show <post>/.test(r.t), 'colony show with no post number: its usage, exit 1', r.t);
-} finally {
-  srv.close();
-}
+};
+const siteDone = siteChecks(); siteDone.catch(() => {});
 
 // ---------------------------------------------------------------- borrowing other people's addons (common/borrow.mjs, colony harvest)
 const B = await imp('common/borrow.mjs');
@@ -538,8 +522,31 @@ try {
   ok(o.code === 0 && /KEEP bds\/addons\/borrowed_m_hand/.test(o.t) && hm.site === 'manual' && hm.url === 'https://example.org/hand' && !hm.pending && B.readSeen(seen).at(-1).site === 'manual', 'colony borrow <file>: a file from elsewhere, the same verdict, marked as borrowed', o.t);
   o = await hlab(['get', '13011'], { LAB_BORROW_SEEN: seen, LAB_COLONY_DIR: CD });
   ok(/^W seen before \(\d{4}-\d\d-\d\d: kept/m.test(o.t), 'colony get on a post harvest saw: said, not refused', o.t);
+  // the site checks have finished by now: the imports (units of the bds lab, like harvest's) come last
+  await siteDone;
+  {
+  let r;
+  // import: the addon from the post, and the behavior pack out of the world, as units of the bds lab (then removed)
+  const units = path.join(TOP, 'bds', 'addons'), curFile = path.join(TOP, 'bds', '.lab', 'addon'), cur0 = fs.existsSync(curFile) ? fs.readFileSync(curFile, 'utf8') : null;
+  const u1 = `zz_colony_addon_${process.pid}`, u2 = `zz_colony_world_${process.pid}`;
+  try {
+    r = await lab(['import', '12348', 'make the revive faster', '--name', u1]);
+    const task = fs.existsSync(path.join(units, u1, 'TASK.md')) ? fs.readFileSync(path.join(units, u1, 'TASK.md'), 'utf8') : '';
+    ok(r.code === 0 && fs.existsSync(path.join(units, u1, 'bp', 'scripts', 'main.js')) && /make the revive faster/.test(task), 'colony import <post>: the downloaded addon becomes a unit with the request', r.t);
+    r = await lab(['import', '12345', '--name', u2]);
+    const task2 = fs.existsSync(path.join(units, u2, 'TASK.md')) ? fs.readFileSync(path.join(units, u2, 'TASK.md'), 'utf8') : '';
+    ok(r.code === 0 && fs.existsSync(path.join(units, u2, 'bp', 'manifest.json')) && fs.existsSync(path.join(units, u2, 'rp', 'manifest.json')) && /Crafters Colony .*12345.*脱出ワールド/.test(task2),
+      'colony import <post of a world>: its behavior pack and the resource pack it depends on, the post named in TASK.md', r.t + task2);
+  } finally {
+    for (const u of [u1, u2]) fs.rmSync(path.join(units, u), { recursive: true, force: true });
+    if (cur0 === null) fs.rmSync(curFile, { force: true }); else fs.writeFileSync(curFile, cur0);
+  }
+  r = await lab(['show', '12']);
+  ok(r.code === 1 && /usage: node lab\.mjs colony show <post>/.test(r.t), 'colony show with no post number: its usage, exit 1', r.t);
+  }
 } finally {
-  hsrv.close();
+  await siteDone.catch(() => {}); // the board checks finish (or fail) before the server and T go away
+  hsrv.close(); srv.close();
   for (const u of [...units(), 'borrowed_m_hand', 'borrowed_m_slip']) fs.rmSync(path.join(UNITS, u), { recursive: true, force: true });
   if (cur0 === null) fs.rmSync(curFile, { force: true }); else fs.writeFileSync(curFile, cur0);
   fs.rmSync(T, { recursive: true, force: true });

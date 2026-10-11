@@ -1783,25 +1783,29 @@ class Engine {
   }
 }
 
-async function session(cmds, { wait = 300, keep = false, traces = [], cov = false } = {}) {
+// marks (with cov): Map command index → a name: the coverage so far just before that command, in secCov [[name, COV ...]]
+async function session(cmds, { wait = 300, keep = false, traces = [], cov = false, marks = null } = {}) {
   await setup();
   const inst = await claim('main');
   const eng = new Engine(inst);
-  const segs = [];
+  const segs = [], secCov = [];
+  const covNow = () => (F.covReport ? F.covReport(L(), eng) : eng.covReport());
   eng.warmJoin = TICK_PAUSE && cmds.some((c) => /^@\S+ join\b/.test(c));
   await eng.start({ keep, wait, traces, cov });
   if (cov && eng.ok && F.covOn) await F.covOn(L(), eng);
   segs.push(eng.take(null));
-  for (const c of eng.ok ? cmds : []) {
+  for (let i = 0; i < (eng.ok ? cmds.length : 0); i++) {
+    const c = cmds[i];
+    if (cov && marks?.has(i)) secCov.push([marks.get(i), await covNow()]);
     const r = await eng.exec(c, wait);
     segs.push(eng.take(c));
     if (r === false) break;
   }
-  const cr = cov ? (F.covReport ? await F.covReport(L(), eng) : eng.covReport()) : null;
+  const cr = cov ? await covNow() : null;
   await eng.stop();
   segs.push(eng.take('stop'));
   inst.release();
-  return { ready: eng.ok, segs: render(segs), cov: cr };
+  return { ready: eng.ok, segs: render(segs), cov: cr, secCov };
 }
 
 // cpuprofile -> self time per function, addon frames first (lab's own helper frames dropped)
@@ -2353,7 +2357,7 @@ async function test(args, { built = false } = {}) {
   let pass = 0, total = 0;
   const fails = [];
   const matched = new Set(), secBad = new Set(), secWhy = new Map();   // why a section failed: an expectation, or an E line and its command
-  const why = (t, w) => { secBad.add(t); (secWhy.get(t) ?? secWhy.set(t, []).get(t)).push(w); };
+  const why = (t, w) => { secBad.add(t); (secWhy.get(t) ?? secWhy.set(t, []).get(t)).push(w); }, outside = [];   // (what failed in no section: before the first ##, the boot, the stop)
   steps.forEach((s, k) => {
     // expectations under a query (js / py / lse) check its value only: `js inv(p('B'))` then `js inv(p('A'))` + `!~ diamond`
     // must not see B's line (a section-wide check there can never pass, or passes on the wrong player's line)
@@ -2378,7 +2382,7 @@ async function test(args, { built = false } = {}) {
       const near = e.op.startsWith('!') ? hit : key ? got.filter(([, , g]) => g.startsWith(key)) : [];
       const own = got.filter(([q]) => q === k + 1), pool = near.length ? near : [...own, ...got.filter(([q]) => q !== k + 1)];   // this command's own output first
       const show = squeeze(pool.map(([, , g]) => g)).slice(0, 6);
-      if (s.sec) why(s.sec.title, `expect ${e.op} ${e.v}`);
+      if (s.sec) why(s.sec.title, `expect ${e.op} ${e.v}`); else outside.push(`expect ${e.op} ${e.v}`);
       const lm = literalMiss(e.op, e.v, got.map(([, , g]) => g));
       fails.push(`✘ ${e.line}: ${s.sec ? '## ' + s.sec.title + ' > ' : ''}${s.cmd}\n  want ${e.op} ${e.v}\n  got ${show.length ? show.join(' | ') : '(nothing)'}${lm ? `\n  note: ${lm}` : ''}`);
     }
@@ -2393,7 +2397,7 @@ async function test(args, { built = false } = {}) {
   const seen = printed.join('\n');   // (a fix line a ✘ block above already showed is not repeated under its E line)
   const errs = [];
   // an unexpected E, with its detail lines (the reason, a fix hint) that follow it indented
-  segs.forEach((s, k) => s.out.forEach((l, j) => { if (l.startsWith('E ') && !matched.has(`${k}:${j}`)) { if (steps[k - 1]?.sec) why(steps[k - 1].sec.title, `${l} @@ ${s.cmd}`); const more = []; for (let i = j + 1; i < s.out.length && /^  \S/.test(s.out[i]) && more.length < 3; i++) more.push(s.out[i]); errs.push(l + (s.cmd && s.cmd !== 'stop' ? `   (during: ${s.cmd})` : s.cmd === null ? '   (during: boot)' : '') + (more.length ? '\n' + more.join('\n') : '')); } }));
+  segs.forEach((s, k) => s.out.forEach((l, j) => { if (l.startsWith('E ') && !matched.has(`${k}:${j}`)) { if (steps[k - 1]?.sec) why(steps[k - 1].sec.title, `${l} @@ ${s.cmd}`); else outside.push(`${l} @@ ${s.cmd}`); const more = []; for (let i = j + 1; i < s.out.length && /^  \S/.test(s.out[i]) && more.length < 3; i++) more.push(s.out[i]); errs.push(l + (s.cmd && s.cmd !== 'stop' ? `   (during: ${s.cmd})` : s.cmd === null ? '   (during: boot)' : '') + (more.length ? '\n' + more.join('\n') : '')); } }));
   // the same error from several commands (a loop, every player) is one line with a count: fewer lines to read, same facts
   const grouped = new Map();
   for (const l of errs) { const [head, ...more] = l.split('\n'), m = /^(.*?)   \(during: (.*)\)$/.exec(head), key = (m ? m[1] : head) + '\n' + more.join('\n'); const g = grouped.get(key) ?? grouped.set(key, { dur: [], more }).get(key); if (m) g.dur.push(m[2]); }
@@ -2409,13 +2413,16 @@ async function test(args, { built = false } = {}) {
   const ok = pass === total && !errs.length;
   sameAsLast(ok, [...secBad].sort().join('|') + '#' + errs.map((l) => l.split('\n')[0].replace(/\d+ms|\d+(\.\d+)? ?s\b/g, '')).sort().join('|'), file, fails, [...secBad], errs);
   if (process.env.LAB_SECTIONS) for (const t of new Set(steps.filter((q) => q.sec).map((q) => q.sec.title))) { out(`SECTION ${secBad.has(t) ? 'FAIL' : 'PASS'} ${t}`); for (const w of (secWhy.get(t) ?? []).slice(0, 4)) out(`SECTION WHY ${t} :: ${w}`); }
+  if (process.env.LAB_SECTIONS) for (const w of outside.slice(0, 4)) out(`SECTION OUTSIDE :: ${w}`);
   if (!NO_LASTFAIL) try {   // (not the lab's own try of the stable modules: status shows the go a person ran)
     const rj = JSON.stringify({ addon: path.basename(ADDON), file: rel(file), bds: bdsVersion(), pass, total, errors: errs.length, ok, at: new Date().toISOString() });
     fs.mkdirSync(path.join(LAB, 'reports'), { recursive: true }); fs.writeFileSync(path.join(LAB, 'report.json'), rj);
     if (path.resolve(file) === path.join(ADDON, 'tests.txt')) fs.writeFileSync(path.join(LAB, 'reports', path.basename(ADDON) + '.json'), rj);   // each unit's last result (ui)
   } catch { /* report is best-effort */ }
   // coverage is a second pass: its pauses change timing, so it never decides PASS/FAIL
-  if (o.cov) { LOG.length = 0; const c = await session(steps.map((q) => q.cmd), o); out(c.cov); }
+  // (with LAB_SECTIONS: the coverage as each section began too, SECTION COV <title> :: COV ...: harden's coverage without the
+  // last sections, which ran last and changed nothing before them)
+  if (o.cov) { LOG.length = 0; const marks = process.env.LAB_SECTIONS ? new Map(steps.flatMap((q, i) => (q.sec && q.sec.from === i ? [[i, q.sec.title]] : []))) : null; const c = await session(steps.map((q) => q.cmd), { ...o, marks }); for (const [t, cv] of c.secCov) out(`SECTION COV ${t} :: ${cv}`); out(c.cov); }
   // progress: the sections that failed in the last run (the same reader, 20 minutes) and pass now, so a fix is seen to work
   const titles = new Set(steps.filter((q) => q.sec).map((q) => q.sec.title)), recent = last && Date.now() - (last.t ?? 0) < 20 * 60_000 && !process.env.LAB_NO_LASTFAIL && !NO_LASTFAIL && path.resolve(file) === path.join(ADDON, 'tests.txt');
   const fixed = recent ? (last.secs ?? []).filter((t) => titles.has(t) && !secBad.has(t)) : [];

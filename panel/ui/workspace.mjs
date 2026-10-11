@@ -2,10 +2,17 @@
 // changed — each by GitHub alone: the files through the contents API, the lab's own work by unit.yml on GitHub Actions
 // (lib/workspace.mjs: its inputs; common/unitci.mjs runs them). Each change goes through the lab's policy once:
 // guarded('dispatch', …) — allowed for this role, asked again when the policy wants, kept in the audit log.
-import { h, toast, link } from './dom.mjs';
+import { h, toast, link, failView } from './dom.mjs';
 import * as W from '../lib/workspace.mjs';
 import * as U from '../lib/units.mjs';
 import { fmtBytes } from '../lib/model.mjs';
+
+/** a failure drawn in place (a list that could not be read, a file that could not be opened): GitHub's words as they came
+ *  and, under them, what to do — lib/rescue.mjs's next step, with its GitHub page as a link or 「もう一度」 as a button
+ *  (retry: what that button does; none: no button, the words alone). Never an empty box */
+// (the page's own way out — failView: the same words and next step as every other failure, with this sign-in's context: the
+// App or a token; ctx is not needed for it)
+export function wayOut(e, _ctx, retry = null) { return failView(e, retry); }
 
 /** ctx, the same for every card here (ui/units.mjs passes its own on): {
  *    api (lib/gh.mjs), lab: { slug, repo: { default_branch }, workflows? (GitHub's list: unit.yml looked for in it) },
@@ -18,7 +25,7 @@ const ready = (ctx) => W.hasWorkflow(ctx.lab.workflows, W.WORKFLOW);
 /** a button that starts unit.yml: off when the policy does not allow it, or when the lab has no unit.yml */
 export function startAttrs(ctx) {
   const g = ctx.gate?.('dispatch') ?? {}, off = !ready(ctx);
-  return { disabled: Boolean(g.disabled) || off, title: g.title ?? (off ? 'このラボには .github/workflows/unit.yml がありません' : null) };
+  return { disabled: Boolean(g.disabled) || off, title: g.title ?? (off ? 'このラボには .github/workflows/unit.yml がありません: ラボを新しくすると使えます（フォークなら GitHub のラボのページで Sync fork → Update branch）' : null) };
 }
 const noWorkflow = (ctx) => (ready(ctx) ? null : h('p', { class: 'warn' }, 'このラボには .github/workflows/unit.yml がまだありません（古いラボ）: ラボを新しくすると使えます。'));
 const later = (ctx) => setTimeout(() => ctx.go?.('runs'), 2500);
@@ -42,7 +49,7 @@ export function newUnitCard(ctx) {
   const make = async () => {
     const r = W.newUnitInputs({ unit: name.value, title: title.value, request: what.value });
     if (r.error) return toast(r.error, true);
-    // (a name taken already: said now, not by a run a minute later)
+    // (a name taken already: said now, not by a run a minute later; the look failing is not said here — the run checks it again)
     if (await U.unitExists(ctx.api, ctx.lab.slug, r.inputs.unit).catch(() => false)) return toast(`bds/addons/${r.inputs.unit} はもうあります: ほかの名前に`, true);
     const ok = await ctx.guarded('dispatch', { workflow: W.WORKFLOW, job: 'new', unit: r.inputs.unit }, () => ctx.dispatch(W.WORKFLOW, r.inputs), `${r.inputs.unit} を作り始めました（数分: できると「アドオン」に出ます）`);
     if (ok === undefined) return;
@@ -83,7 +90,7 @@ export function importCard(ctx) {
     const f = file.files?.[0];
     if (!f) return toast('ファイルを選んでください', true);
     const p = W.importPlan({ fileName: f.name, size: f.size, words: words.value, unit: unit.value });
-    if (p.error) return toast(p.error, true);
+    if (p.error) return toast(`${p.error}。ファイルを選び直すか「名前」の欄を直して、もう一度「取り込む」`, true);
     // (a unit by that name already: said now, not by a run a minute later)
     if (await U.unitExists(ctx.api, ctx.lab.slug, p.unit).catch(() => false)) return toast(`bds/addons/${p.unit} はもうあります: 名前を変えて（「名前」の欄に）`, true);
     const ok = await ctx.guarded('dispatch', { workflow: W.WORKFLOW, job: 'import', file: p.path, unit: p.unit }, async () => {
@@ -92,7 +99,7 @@ export function importCard(ctx) {
       state.replaceChildren(`${p.branch} に入れています…`);
       return W.importUnit(ctx.api, ctx.lab.slug, p, content, ctx.dispatch, branch(ctx));
     }, `${f.name} を bds/addons/${p.unit} に取り込み始めました（数分: できると「アドオン」に出ます）`);
-    state.replaceChildren(ok === undefined ? '' : `✅ ${p.branch} に入れ、unit.yml を始めました（bds/addons/${p.unit} に）`);
+    state.replaceChildren(ok === undefined ? '取り込めませんでした: 上の知らせを読んで、直してからもう一度「取り込む」を押してください' : `✅ ${p.branch} に入れ、unit.yml を始めました（bds/addons/${p.unit} に）`);
     if (ok === undefined) return;
     file.value = ''; unit.value = ''; words.value = '';
     later(ctx);
@@ -112,7 +119,8 @@ export function importCard(ctx) {
 export function editorView(ctx, unit) {
   const u = typeof unit === 'string' ? U.unitSummary({ name: unit }) : unit;
   const close = ctx.closeEditor ? h('button', { onclick: () => ctx.closeEditor() }, '閉じる') : null;
-  if (u?.kind !== 'bds' || !U.UNIT.test(String(u?.name ?? ''))) return h('div', { class: 'card', id: 'editor' }, h('h2', {}, '✏️ ファイルを直す'), h('p', { class: 'warn' }, 'ここで直せるのは bds のアドオン（bds/addons/<名前>）だけです。'), close);
+  if (u?.kind !== 'bds' || !U.UNIT.test(String(u?.name ?? ''))) return h('div', { class: 'card', id: 'editor' }, h('h2', {}, '✏️ ファイルを直す'), h('p', { class: 'warn' }, 'ここで直せるのは bds のアドオン（bds/addons/<名前>）だけです。Endstone・LeviLamina のものは GitHub の画面で直してください。'),
+    u?.dir ? h('p', {}, link(`https://github.com/${ctx.lab.slug}/tree/${branch(ctx)}/${u.dir}`, 'GitHub で開く')) : null, close);
   const files = W.editableFiles(u), slug = ctx.lab.slug, g = ctx.gate?.('dispatch') ?? {};
   const pick = h('select', { id: 'edit-file', 'aria-label': '直すファイル' }, files.map((f) => h('option', { value: f }, f)));
   pick.value = files[0];
@@ -129,15 +137,15 @@ export function editorView(ctx, unit) {
     try {
       const r = await W.readUnitFile(ctx.api, slug, `${u.dir}/${f}`);
       if (pick.value !== f) return;   // (another file chosen meanwhile: that one is shown)
-      if (!r) return state.replaceChildren(`${f} はこのユニットにありません`);
+      if (!r) return state.replaceChildren(`${f} はこのユニットにありません。足すなら `, link(`https://github.com/${slug}/new/${branch(ctx)}/${u.dir}?filename=${encodeURIComponent(f)}`, 'GitHub で新しく作る'), '（または「AI で変える」で作らせる）');
       sha = r.sha; loaded = r.text; text.value = r.text; text.disabled = false;
       state.replaceChildren(`${u.dir}/${f}`);
-    } catch (e) { if (pick.value === f) state.replaceChildren(h('span', { class: 'bad' }, e.message)); }
+    } catch (e) { if (pick.value === f) state.replaceChildren(wayOut(e, ctx, load)); }
   };
   pick.addEventListener('change', load);
   const store = async (thenTest) => {
     const f = pick.value;
-    if (loaded === null) return toast(`${f} がまだ読めていません`, true);
+    if (loaded === null) return toast(`${f} がまだ読めていません: 「読み直す」を押してください`, true);
     // (the textarea gives every line break as \n: compared as such — a file of \r\n untouched is no change — and saved with
     // the line breaks the file had, not as a commit of every line)
     const now = W.withEol(text.value, W.eolOf(loaded));

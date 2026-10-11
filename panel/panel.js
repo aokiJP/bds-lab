@@ -17,7 +17,7 @@ import { accounts, memoryStorage } from './lib/accounts.mjs';
 import * as S from './lib/session.mjs';
 import * as P from './lib/policy.mjs';
 import * as AU from './lib/audit.mjs';
-import { h, $, main, toast, act, link } from './ui/dom.mjs';
+import { h, $, main, toast, act, link, setOnFail, failView } from './ui/dom.mjs';
 import { signInCard, tokenHelp } from './ui/signin.mjs';
 import { setupTab, takeAppReturn } from './ui/setup.mjs';
 import { auditTab } from './ui/audit.mjs';
@@ -28,7 +28,8 @@ import { HOST_FILES } from './lib/hosttemplate.mjs';
 import * as MB from './lib/members.mjs';
 import * as GD from './lib/guide.mjs';
 import { helpLine, guideCard, palette, glossaryCard } from './ui/guide.mjs';
-import { checks as setupChecks } from './lib/setup.mjs';
+import { checks as setupChecks, tokenUrl } from './lib/setup.mjs';
+import * as R from './lib/rescue.mjs';
 import { unitsTab } from './ui/units.mjs';
 import { releasesTab } from './ui/releases.mjs';
 import { scheduleTab } from './ui/schedule.mjs';
@@ -55,7 +56,7 @@ const HANDOFF = FRAMED ? null : S.takeHandoff(location.hash, { nonce: PENDING?.n
 if (HANDOFF) { history.replaceState(null, '', location.pathname + location.search + HANDOFF.rest); TAB.removeItem(SIGNIN); }
 
 // ---- the page's own config (pages.yml writes it from the lab's variables: common/panel-config.mjs) ----
-const RAW = await fetch('./config.json', { cache: 'no-store', credentials: 'omit' }).then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
+const RAW = await fetch('./config.json', { cache: 'no-store', credentials: 'omit' }).then((r) => (r.ok ? r.json() : {})).catch(() => ({ /* none (a copy served by hand): tokens alone, said on the door */ }));
 const CONFIG = { version: /^[0-9a-f]{40}$/.test(String(RAW?.version ?? '')) ? RAW.version : null, authUrl: S.authBase(RAW?.authUrl), appSlug: /^[a-z0-9][a-z0-9-]{0,62}$/.test(String(RAW?.appSlug ?? '')) ? RAW.appSlug : null, appClientId: /^[A-Za-z0-9._-]{1,64}$/.test(String(RAW?.appClientId ?? '')) ? RAW.appClientId : null };
 
 // ---- debug: the last GitHub calls and the page's errors on this device (lib/debug.mjs; 「設定」→「デバッグ」) ----
@@ -76,6 +77,20 @@ const saveSettings = (patch) => A.setCfg(st.login, patch);
 const st = { login: null, api: null, me: null, lab: null, hosts: [], tab: 'overview', timer: null, routed: false, focus: null, prefill: null, target: 'lab',
   policy: P.DEFAULT_POLICY, policyErrors: [], role: null, audit: 'off', lastActive: Date.now(), handed: false, signinErr: HANDOFF?.error ? S.explainAuth(HANDOFF.error) : null };
 const canLab = () => Boolean(st.lab && (st.lab.role === 'admin' || st.lab.role === 'write'));
+// (no dead end: every failure's notice says what happened and offers the next step — lib/rescue.mjs: more rights, sign in
+// again, wait for the rate limit, try again, read again)
+const rescueCtx = () => ({ owner: st.lab?.repo?.owner?.login ?? st.lab?.slug?.split('/')[0], isOrg: st.lab?.repo?.owner?.type === 'Organization', appSlug: CONFIG.appSlug, signedInWithApp: A.session(st.login)?.kind === 'oauth', lab: st.lab?.slug, online: navigator.onLine });
+const rescueView = (r, retry) => h('span', { class: 'muted' }, r.why === r.next ? null : h('span', {}, `${r.why}。${r.next} `),
+  r.action?.link ? link(r.action.link, r.action.label)
+    : r.action?.kind === 'retry' && retry ? h('button', { onclick: () => retry() }, r.action.label)
+      : r.action?.kind === 'signin' ? h('button', { onclick: () => renderSignIn('', { login: st.login }) }, r.action.label)
+        : r.action?.kind === 'reload' ? h('button', { onclick: () => render() }, r.action.label) : null);
+setOnFail((e, retry) => rescueView(R.rescue(e, rescueCtx()), retry));
+/** a part of a tab filled by fn(): when it fails, the part says so in place — the words and the next step (failView), its
+ *  「もう一度」 filling it again — never left 「読んでいます…」 */
+const fill = async (box, fn) => { try { return await fn(); } catch (e) { box?.replaceChildren(failView(e, () => fill(box, fn))); return undefined; } };
+/** a read that may fail without stopping the rest: its failure kept in `bag` (what, error) to be said, the fallback used */
+const soft = (p, fallback, bag, what) => Promise.resolve(p).catch((e) => { bag.push({ what, e }); return fallback; });
 
 // ---- the lab's policy: may this person do this here (GitHub's role first, then the policy: never wider than GitHub) ----
 /** an administrator who has to lend first (the policy's adminsLend): nothing else is offered until they do */
@@ -98,7 +113,7 @@ async function guarded(action, detail, fn, done) {
 /** what was done, kept as this person's own comment on the audit issue (GitHub says who wrote it) — when the policy keeps it */
 function record(action, detail = {}, slug = st.lab?.slug, mode = st.audit) {
   if (!slug || mode !== 'issue' || !st.me) return;
-  AU.record(st.api, slug, { actor: st.me.login, action, target: slug, detail }).then((r) => { if (r?.why) toast(`監査ログ: ${r.why}`, true); }).catch((e) => toast(`監査ログに書けません: ${e.message}`, true));
+  AU.record(st.api, slug, { actor: st.me.login, action, target: slug, detail }).then((r) => { if (r?.why) toast(`監査ログ: ${r.why}`, true); }).catch((e) => toast(`監査ログに書けませんでした（${e.message}）。した操作はそのままです`, true, rescueView(R.rescue(e, rescueCtx()), () => record(action, detail, slug, mode))));
 }
 
 // ---- the sign-in kept good: a token from 「GitHub でサインイン」 renewed before it runs out; idle too long: signed out ----
@@ -177,7 +192,9 @@ function renderSignIn(err = '', { adding = false, login = null } = {}) {
   clearInterval(st.timer);
   if (!adding) renderWho();
   const lab0 = (login && A.get(login) ? A.cfg(login).lab : null) ?? (adding ? DEFAULT_LAB : settings().lab ?? DEFAULT_LAB);
-  main().replaceChildren(signInCard({ authUrl: CONFIG.authUrl, err: err || st.signinErr || '', adding, login, lab: lab0,
+  // (err: the words, or what was thrown — its status tells the next step: the network again, a new token, another lab)
+  const why = err || st.signinErr || '', words = typeof why === 'string' ? why : why?.message ?? String(why);
+  main().replaceChildren(signInCard({ authUrl: CONFIG.authUrl, err: words, adding, login, lab: lab0,
     // (to GitHub through the service; this tab keeps the nonce it expects back, how to keep the account, and the lab)
     onOAuth: ({ remember, lab }) => {
       const nonce = S.newNonce();
@@ -186,17 +203,39 @@ function renderSignIn(err = '', { adding = false, login = null } = {}) {
     },
     onToken: async ({ token, lab, remember }) => {
       let me;
-      try { me = await gh({ token }).me(); } catch (e) { return renderSignIn(e.message, { adding, login }); }
+      try { me = await gh({ token }).me(); } catch (e) { return renderSignIn(e, { adding, login }); }
       A.add({ login: me.login, avatar: me.avatar_url, token, remember, cfg: { lab } });
       st.tab = 'overview'; st.target = 'lab';
       await connect();
     },
     back: (adding || login) && A.active() && st.me ? () => render() : null }));
+  if (words) main().append(signInNext(why, { adding, login }));
   st.signinErr = null;
 }
-function renderLocked(why) {
+/** a sign-in that failed: what to do now (lib/model.mjs signInNext) — try again, 「GitHub でサインイン」 again, a new token, or
+ *  another lab's name — each a tap */
+function signInNext(why, { adding, login }) {
+  const n = M.signInNext(why, { authUrl: CONFIG.authUrl }), owner = String(settings().lab ?? DEFAULT_LAB).split('/')[0];
+  const field = () => $('oauth-lab') ?? $('lab');
+  const step = (k) => (k === 'retry' ? (A.active() && !adding ? h('button', { onclick: () => connect() }, 'もう一度') : h('button', { onclick: () => $('tok')?.focus() }, 'トークンを入れ直す'))
+    : k === 'oauth' ? h('button', { onclick: () => $('oauth')?.click() }, 'GitHub でサインインし直す')
+      : k === 'token' ? link(tokenUrl(owner), '新しいトークンを作る（GitHub へ）')
+        : h('button', { onclick: () => { const f = field(); f?.closest?.('details')?.setAttribute('open', ''); f?.focus(); f?.select?.(); } }, '別のラボを入れる'));
+  return h('div', { class: 'card', id: 'signin-next', role: 'status' }, h('h3', {}, '次にすること'), h('p', {}, n.say), h('div', { class: 'row' }, n.steps.map(step)));
+}
+/** the ways on from the shut door: another lab's name (a typo, or the wrong one), another account — and what could not be
+ *  read, with 「もう一度」 */
+function lockedWays(err) {
+  const lab = h('input', { type: 'text', value: settings().lab ?? '', 'aria-label': 'ラボのリポジトリ', placeholder: 'owner/名前' });
+  return h('div', { class: 'card', id: 'locked-ways' }, h('h3', {}, 'ほかの道'),
+    err ? failView(err, () => connect()) : null,
+    h('p', { class: 'muted' }, `いまのラボ: ${settings().lab}。名前がちがうなら直して入り直せます。持ち主に招いてもらった（Collaborators）なら、GitHub で招待を受けてから「もう一度」。`),
+    h('div', { class: 'row' }, lab, h('button', { onclick: () => { const bad = M.slugProblem(lab.value); if (bad) return toast(bad, true); saveSettings({ lab: lab.value.trim() }); connect(); } }, 'このラボで入り直す'),
+      h('button', { onclick: () => connect() }, 'もう一度'), link('https://github.com/notifications', '招待を見る（GitHub へ）')));
+}
+function renderLocked(why, err = null) {
   // (someone the lab's owner did not invite: the one thing offered is to lend their own Actions minutes — ui/lend.mjs)
-  if (st.me) return main().replaceChildren(h('p', { class: 'muted' }, why), lendStart({ api: st.api, me: st.me, labSlug: settings().lab, oauth: A.session(st.login)?.kind === 'oauth', appSlug: CONFIG.appSlug,
+  if (st.me) return main().replaceChildren(h('p', { class: 'muted' }, why), lockedWays(err), lendStart({ api: st.api, me: st.me, labSlug: settings().lab, oauth: A.session(st.login)?.kind === 'oauth', appSlug: CONFIG.appSlug,
     onReady: (slug) => { saveSettings({ hosts: [...new Set([...settings().hosts, slug])] }); st.tab = 'hosts'; st.routed = true; connect(); },
     other: () => { forget(st.login); Object.assign(st, { login: null, me: null }); renderWho(); renderSignIn(); } }));
   main().replaceChildren(h('div', { class: 'card' }, h('h2', {}, '🔒 使えません'), h('p', {}, why),
@@ -219,36 +258,42 @@ async function connect() {
     st.handed = true;
     const t = S.fromHandoff(HANDOFF.tokens);
     try { const me = await gh({ token: t.token }).me(); A.add({ login: me.login, avatar: me.avatar_url, ...t, kind: 'oauth', remember: PENDING?.remember !== false, cfg: M.SLUG.test(String(PENDING?.lab ?? '')) ? { lab: PENDING.lab } : null }); }
-    catch (e) { st.signinErr = e.message; }
+    catch (e) { st.signinErr = e; }
   }
   // (an address that names a run — Discord's 「管理パネル」 button — opens with the account whose lab that run is in)
   const want = st.routed ? { tab: null, repo: null, run: null } : M.parseHash(location.hash);
   if (want.repo) { const who = A.list().find((e) => String(A.cfg(e.login).lab).toLowerCase() === want.repo.toLowerCase()); if (who) A.use(who.login); }
   const login = A.active();
   if (!login) { renderWho(); return renderSignIn(); }
-  if (st.signinErr) { toast(st.signinErr, true); st.signinErr = null; }
+  if (st.signinErr) { const e = st.signinErr; toast(`サインインを受け取れませんでした: ${e?.message ?? e}`, true, h('button', { onclick: () => renderSignIn('', { adding: true }) }, 'もう一度サインインする')); st.signinErr = null; }
   st.login = login; st.me = null;
   if (!A.token(login)) { forget(login); return connect(); }
   if (!(await freshen(login))) return renderSignIn(st.signinErr, { login });
   st.apiToken = null; useToken(A.token(login));
   renderWho();
   main().replaceChildren(h('p', { class: 'muted' }, `GitHub に聞いています…（${login}）`));
-  try { st.me = await st.api.me(); } catch (e) { return renderSignIn(e.message, { login }); }
+  try { st.me = await st.api.me(); } catch (e) { return renderSignIn(e, { login }); }
   st.lastActive = Date.now();
   renderWho();
   const s = settings();
-  let labRepo = null; try { labRepo = await st.api.repo(s.lab); } catch { /* not visible to this account */ }
+  // (a lab this account cannot see — 404 — is usual for a lender or a borrower; anything else is said, with 「もう一度」)
+  let labRepo = null;
+  try { labRepo = await st.api.repo(s.lab); } catch (e) {
+    if (e.status !== 404) return main().replaceChildren(h('div', { class: 'card' }, h('h2', {}, `ラボ（${s.lab}）を読めませんでした`), failView(e, () => connect()),
+      h('p', { class: 'muted' }, 'ラボの名前がちがうときは「設定」で直せます: '), h('button', { onclick: () => { st.lab = null; st.as = []; st.tab = 'settings'; render(); } }, '「設定」を開く')));
+  }
   st.lab = labRepo ? { slug: s.lab, repo: labRepo, role: M.roleOf(labRepo.permissions) } : null;
   st.hosts = await loadHosts(s.hosts);
   let a = M.access({ lab: labRepo, hosts: st.hosts.filter((x) => x.repo).map((x) => x.repo) });
   // (a lender's first visit: no host in this account's settings yet — their own hosts looked for before the door shuts)
   if (!a.ok && !s.hosts.length) {
     main().replaceChildren(h('p', { class: 'muted' }, '貸し借りのホストを探しています…'));
-    const found = await findHosts().catch(() => []);
+    let found = [];
+    try { found = await findHosts(); } catch (e) { st.findErr = e; }
     if (found.length) { saveSettings({ hosts: found }); st.hosts = await loadHosts(found); a = M.access({ lab: labRepo, hosts: st.hosts.filter((x) => x.repo).map((x) => x.repo) }); }
   }
   st.as = a.as;
-  if (!a.ok) return renderLocked(a.why);
+  if (!a.ok) { const e = st.findErr; st.findErr = null; return renderLocked(a.why, e); }
   if (canLab()) await loadEnv(st.lab);
   await loadPolicy();
   st.adminLend = await adminLendNow();
@@ -272,35 +317,47 @@ async function loadPolicy() {
 /** a host: its repository, its .lab-host.json read and checked; one this account cannot see is kept with the reason */
 async function loadHost(slug) {
   let repo;
-  try { repo = await st.api.repo(slug); } catch (e) { return { slug, error: e.status === 404 ? (A.session(st.login)?.kind === 'oauth' ? 'このアカウントでは見えません（招待を受けていないか、貸し手がラボの GitHub App をこのホストに入れていません: 「準備」のリンクを貸し手に）' : 'このトークンでは見えません（招待を受けていない・トークンの対象にない。Fine-grained トークンはほかの人の個人アカウントのリポジトリを選べません: 「GitHub でサインイン」か Classic トークンを）') : e.message }; }
-  const f = await st.api.file(slug, '.lab-host.json').catch(() => null);
-  let json = null, parsed = { rules: null, errors: ['.lab-host.json がありません'] };
-  if (f) { try { json = JSON.parse(f.text); parsed = M.checkRules(json); } catch { parsed = { rules: null, errors: ['.lab-host.json が JSON ではありません'] }; } }
-  return { slug, repo, file: f, json, ...parsed, role: M.roleOf(repo.permissions) === 'admin' ? 'lender' : M.roleOf(repo.permissions) === 'write' ? 'borrower' : 'read' };
+  try { repo = await st.api.repo(slug); } catch (e) { return { slug, err: e, error: e.status === 404 ? (A.session(st.login)?.kind === 'oauth' ? 'このアカウントでは見えません（招待を受けていないか、貸し手がラボの GitHub App をこのホストに入れていません: 「準備」のリンクを貸し手に）' : 'このトークンでは見えません（招待を受けていない・トークンの対象にない。Fine-grained トークンはほかの人の個人アカウントのリポジトリを選べません: 「GitHub でサインイン」か Classic トークンを）') : e.message }; }
+  // (none is usual before the lender saves their rules: gh's file() is null then; a throw is a read that failed — said so)
+  let f = null, err = null;
+  try { f = await st.api.file(slug, '.lab-host.json'); } catch (e) { err = e; }
+  const { json, rules, errors, state } = M.hostFile(f, err);
+  return { slug, repo, file: f, json, rules, errors, state, readErr: err, role: M.roleOf(repo.permissions) === 'admin' ? 'lender' : M.roleOf(repo.permissions) === 'write' ? 'borrower' : 'read' };
 }
 async function loadHosts(list) { const out = []; for (const slug of list) out.push(await loadHost(slug)); return out; }
 /** this account's hosts: its repositories (owned or as a collaborator, the 40 pushed last) with a .lab-host.json */
 async function findHosts() {
   const found = [];
-  for (const r of (await st.api.myRepos()).filter((x) => !x.fork && !x.archived).slice(0, 40)) if (await st.api.file(r.full_name, '.lab-host.json').catch(() => null)) found.push(r.full_name);
+  // (gh's file() is null when there is none; the list itself not read stops the search and says so; one repository that
+  // cannot be read — an organization's SAML, a 403 — is skipped and counted: the others are still found)
+  let unread = 0;
+  for (const r of (await st.api.myRepos()).filter((x) => !x.fork && !x.archived).slice(0, 40)) { try { if (await st.api.file(r.full_name, '.lab-host.json')) found.push(r.full_name); } catch { unread++; } }
+  if (unread) toast(`${unread} 個のリポジトリは読めませんでした（組織のシングルサインオンや権限）: そのホストは「ホストを足す」に owner/名前 で入れてください`, true);
   return found;
 }
 /** a host now: its runs this month (GitHub's count, everyone's), what it allows now (cached for a minute) */
 async function hostUse(x) {
   if (x.use && Date.now() - x.use.at < 60_000) return x.use;
   const tz = x.rules.timezone, month = M.monthOf(new Date(), tz), from = new Date(Date.parse(`${month}-01T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
-  const rs = await st.api.runs(x.slug, { workflow: 'host.yml', created: `>=${from}`, per: 100 }).catch(() => []);
+  // (not read: thrown — the minutes are never counted as 0 when they could not be read)
+  const rs = await st.api.runs(x.slug, { workflow: 'host.yml', created: `>=${from}`, per: 100 });
   const used = M.monthMinutes(rs, month, tz);
   x.use = { at: Date.now(), rs, used, month, now: M.hostNow(x.rules, used, new Date(), rs.some((r) => r.status !== 'completed')) };
   return x.use;
 }
 /** a repository's own settings: its secrets' and variables' names (null: may not look), its workflows */
 async function loadEnv(x) {
-  x.secrets = await st.api.secretNames(x.slug).catch(() => null);
-  x.vars = await st.api.variableNames(x.slug).catch(() => null);
-  x.workflows = await st.api.workflows(x.slug).catch(() => []);
+  // (secretNames / variableNames are null by themselves when this sign-in may not look; a throw is a read that failed: kept
+  // in x.envErr, said on 「概要」 and 「実行」 with 「もう一度」)
+  const bag = [];
+  x.secrets = await soft(st.api.secretNames(x.slug), null, bag, '秘密の名前');
+  x.vars = await soft(st.api.variableNames(x.slug), null, bag, '変数の名前');
+  x.workflows = await soft(st.api.workflows(x.slug), [], bag, 'ワークフロー');
+  x.envErr = bag.length ? Object.assign(new Error(`${bag.map((b) => b.what).join('・')}を読めませんでした（${bag[0].e.message}）`), { status: bag[0].e.status, reset: bag[0].e.reset }) : null;
   x.caps = M.capabilities({ secrets: x.secrets, workflows: x.workflows, visibility: x.repo.visibility, vars: x.vars });
 }
+/** the lab's own settings that could not be read, in place: the words and 「もう一度」 (null: all read) */
+const envNote = () => (st.lab?.envErr ? h('div', { class: 'card', id: 'envfail' }, failView(st.lab.envErr, async () => { await loadEnv(st.lab); render(); })) : null);
 const capsOf = () => Object.fromEntries((st.lab?.caps ?? []).map((c) => [c.key, c]));
 const hasWf = (f) => (st.lab?.workflows ?? []).some((w) => String(w.path).endsWith(`/${f}`));
 
@@ -351,7 +408,7 @@ const healthCtx = () => {
   const ctx = { api: st.api, lab: st.lab, hosts: st.hosts, me: st.me, config: CONFIG, panelUrl: `${location.origin}${location.pathname}`, signedInWithApp: A.session(st.login)?.kind === 'oauth',
     policy: st.policy, policyErrors: st.policyErrors, version: st.version, go, reload: () => location.reload(), lending: isOwner() ? forkLendingNow : null };
   ctx.checks = () => {
-    if (setupMemo?.lab !== st.lab.slug || Date.now() - setupMemo.at > 300_000) { setupMemo = { lab: st.lab.slug, at: Date.now(), p: setupChecks(ctx) }; setupMemo.p.catch(() => { setupMemo = null; }); }
+    if (setupMemo?.lab !== st.lab.slug || Date.now() - setupMemo.at > 300_000) { setupMemo = { lab: st.lab.slug, at: Date.now(), p: setupChecks(ctx) }; setupMemo.p.catch(() => { setupMemo = null; /* asked again next time; the card that awaits it says the failure */ }); }
     return setupMemo.p;
   };
   return ctx;
@@ -363,29 +420,38 @@ function members(body) { membersTab(body, { api: st.api, lab: st.lab, me: st.me,
 const isOwner = () => Boolean(st.lab && st.me) && M.same(st.lab.repo.owner?.login, st.me.login);
 /** this person's fork of the lab: the same name in their account first, else among the lab's forks (the newest 100) */
 async function findFork(login) {
-  const name = st.lab.slug.split('/')[1], mine = await st.api.repo(`${login}/${name}`).catch(() => null);
+  // (a 404 is usual — no fork by that name; anything else is thrown: the caller says it could not read)
+  const none404 = (e) => { if (e.status === 404) return null; throw e; };
+  const name = st.lab.slug.split('/')[1], mine = await st.api.repo(`${login}/${name}`).catch(none404);
   if (mine && M.same(M.forkOf(mine), st.lab.slug)) return mine;
-  const f = (await st.api.forks(st.lab.slug).catch(() => []) ?? []).find((x) => M.same(x.owner?.login, login));
-  return f ? st.api.repo(f.full_name).catch(() => null) : null;
+  const f = ((await st.api.forks(st.lab.slug)) ?? []).find((x) => M.same(x.owner?.login, login));
+  return f ? st.api.repo(f.full_name).catch(none404) : null;
 }
 /** a fork's .lab-host.json (its JSON; null: none, or not JSON) and whether its host.yml is the lab's */
 async function forkFiles(slug) {
-  const [f, wf] = await Promise.all([st.api.file(slug, '.lab-host.json').catch(() => null), st.api.file(slug, '.github/workflows/host.yml').catch(() => null)]);
-  let json = null; try { json = f ? JSON.parse(f.text) : null; } catch { json = null; }
-  return { json, file: f, hostYmlOk: wf?.text === HOST_FILES['.github/workflows/host.yml'] };
+  // (gh's file() is null when there is none; a throw is kept as err — said where the fork is shown, never 「違う」 instead)
+  let err = null;
+  const read = (p) => st.api.file(slug, p).catch((e) => { err ??= e; return null; });
+  const [f, wf] = await Promise.all([read('.lab-host.json'), read('.github/workflows/host.yml')]);
+  let json = null; try { json = f ? JSON.parse(f.text) : null; } catch { json = null; /* not JSON: checkRules says what is wrong */ }
+  return { json, file: f, hostYmlOk: wf?.text === HOST_FILES['.github/workflows/host.yml'], err };
 }
 /** this administrator's lending (M.adminLend): required by the policy unless they own the lab */
 async function adminLendNow() {
   const required = Boolean(st.lab && st.me) && P.adminsLend(st.policy) && st.lab.role === 'admin' && !isOwner();
   if (!required) return M.adminLend({ required: false });
-  const fork = await findFork(st.me.login);
-  if (!fork) return M.adminLend({ required, fork: null });
-  const x = await forkFiles(fork.full_name);
-  return M.adminLend({ required, fork, check: M.forkHostCheck(fork, st.me.login, st.lab.slug), rules: x.json, hostYmlOk: x.hostYmlOk });
+  try {
+    const fork = await findFork(st.me.login);
+    if (!fork) return M.adminLend({ required, fork: null });
+    const x = await forkFiles(fork.full_name);
+    if (x.err) throw x.err;
+    return M.adminLend({ required, fork, check: M.forkHostCheck(fork, st.me.login, st.lab.slug), rules: x.json, hostYmlOk: x.hostYmlOk });
+  } catch (e) { return { required: true, ok: false, fork: null, why: [`あなたのフォークを読めませんでした（${e.message}）`], err: e }; }
 }
 /** a fork into the lab's LAB_HOSTS (hostrun's auto chooses among them, each through the App on it), kept in the audit log */
 async function addLabHost(slug, drop = false) {
-  const now = await st.api.variable(st.lab.slug, 'LAB_HOSTS').catch(() => null), next = M.labHostsWith(now, drop ? [] : [slug], drop ? [slug] : []);
+  // (variable() is null when there is none; a failed read throws — never written over from an empty list)
+  const now = await st.api.variable(st.lab.slug, 'LAB_HOSTS'), next = M.labHostsWith(now, drop ? [] : [slug], drop ? [slug] : []);
   if (next === M.labHostsWith(now)) return false;
   await st.api.setVariable(st.lab.slug, 'LAB_HOSTS', next);
   record('variables', { name: 'LAB_HOSTS' });
@@ -395,22 +461,24 @@ async function addLabHost(slug, drop = false) {
  *  idle: [administrators lending nothing] , files: { slug: forkFiles } } */
 async function forkLendingNow({ fresh = false } = {}) {
   if (!fresh && st.forkCache && Date.now() - st.forkCache.at < 60_000 && st.forkCache.lab === st.lab.slug) return st.forkCache.data;
-  const forks = ((await st.api.forks(st.lab.slug).catch(() => [])) ?? []).slice(0, 30);
+  // (what could not be read is kept in errors — said on 「貸し借り」; a list with a gap is not kept for the minute)
+  const errors = [];
+  const forks = ((await st.api.forks(st.lab.slug).catch((e) => { errors.push(`フォークの一覧を読めませんでした（${e.message}）`); return []; })) ?? []).slice(0, 30);
   let admins = [];
-  try { admins = (await MB.readMembers(st.api, st.lab.slug, st.lab.repo)).members.filter((m) => m.permission === 'admin' && !M.same(m.login, st.lab.repo.owner?.login)).map((m) => m.login); } catch { /* the people not readable: none marked */ }
+  try { admins = (await MB.readMembers(st.api, st.lab.slug, st.lab.repo)).members.filter((m) => m.permission === 'admin' && !M.same(m.login, st.lab.repo.owner?.login)).map((m) => m.login); } catch (e) { if (e.status !== 403) errors.push(`管理者の一覧を読めませんでした（${e.message}）`); /* 403: this sign-in may not read the people (「メンバー」 says how): none marked */ }
   const files = {};
-  for (const f of forks) files[f.full_name] = await forkFiles(f.full_name);
+  for (const f of forks) { files[f.full_name] = await forkFiles(f.full_name); if (files[f.full_name].err) errors.push(`${f.full_name} を読めませんでした（${files[f.full_name].err.message}）`); }
   const list = M.lendingForks(forks.map((f) => ({ fork: f, json: files[f.full_name].json })), admins);
   const idle = admins.filter((a) => !list.some((x) => M.same(x.owner, a) && x.always.ok));
-  const data = { list, admins, idle, files };
-  st.forkCache = { at: Date.now(), lab: st.lab.slug, data };
+  const data = { list, admins, idle, files, errors };
+  st.forkCache = errors.length ? null : { at: Date.now(), lab: st.lab.slug, data };
   return data;
 }
 
 // ---- this panel kept on the device (sw.js): it opens with no network, and a notification reaches a phone (a phone's
 // browser shows one only from a service worker). The cache is named by this page's version: a new deploy is a new one ----
 const SW = FRAMED || !globalThis.navigator?.serviceWorker ? Promise.resolve(null)
-  : navigator.serviceWorker.register(`./sw.js?v=${CONFIG.version ?? ''}`).then(() => navigator.serviceWorker.ready).catch(() => null);
+  : navigator.serviceWorker.register(`./sw.js?v=${CONFIG.version ?? ''}`).then(() => navigator.serviceWorker.ready).catch(() => null /* none (a private window, a file:// copy): the page works as it is */);
 // (a new version taking over a page that had one: said once — the page goes on with what it has until it is read again)
 if (!FRAMED && globalThis.navigator?.serviceWorker?.controller) navigator.serviceWorker.addEventListener('controllerchange', () => toast('パネルの新しい版が届きました（読み直すと新しくなります）'));
 
@@ -438,7 +506,7 @@ window.addEventListener('hashchange', () => {
 });
 setInterval(async () => {
   if (!st.lab || !st.api || !canLab() || document.hidden && !notifyOn()) return;
-  let rs; try { rs = await st.api.runs(st.lab.slug, { per: 20 }); } catch { return; }
+  let rs; try { rs = await st.api.runs(st.lab.slug, { per: 20 }); } catch { return; /* in the background: the next look tries again; GitHub not answering shows as ⚠ at the top (the debug log) */ }
   const ended = watched.size ? M.endedSince(watched, rs) : [];
   watched.clear(); for (const r of rs) watched.set(r.id, r.status);
   const going = rs.filter((r) => r.status !== 'completed').length;
@@ -450,7 +518,7 @@ setInterval(async () => {
   // (the same look kept as news; on the device only what the lines above did not tell, and only what is recent — a return
   // after days is a list to read, not a burst: several at once are one notification, tapped open on the list)
   const told = new Set(ended.map((r) => String(r.id)));
-  const fresh = (await news(rs).catch(() => [])).filter((e) => !(e.run && told.has(e.run)) && Date.now() - Date.parse(e.at) < 15 * 60_000);
+  const fresh = (await news(rs).catch(() => [] /* in the background: the next look tries again */)).filter((e) => !(e.run && told.has(e.run)) && Date.now() - Date.parse(e.at) < 15 * 60_000);
   if (fresh.length === 1) { const e = fresh[0]; await tell(e.title, e.body, e.id, e.run ? `#runs?${e.repo ? `repo=${e.repo}&` : ''}run=${e.run}` : `#${e.tab || 'overview'}`); }
   else if (fresh.length > 1) await tell(`bds-lab: お知らせ ${fresh.length} 件`, fresh.slice(0, 3).map((e) => e.title).join('\n'), 'inbox', '#overview?inbox=1');
 }, 45_000);
@@ -482,8 +550,9 @@ async function news(runs) {
   const box = inboxStore();
   if (!box) return [];
   const n = looks++, wide = n % 4 === 0, owner = isOwner(), admin = st.lab.role === 'admin', name = st.lab.slug.split('/')[1];
-  const [issues, forks, inv] = await Promise.all([wide && admin ? st.api.issues(st.lab.slug).catch(() => null) : null, n % 16 === 0 && owner ? forkLendingNow().catch(() => null) : null,
-    wide && owner ? st.api.myInvitations().catch(() => null) : null]);
+  // (null: not read this time — the part from the last look is kept below, nothing is told from a gap)
+  const [issues, forks, inv] = await Promise.all([wide && admin ? st.api.issues(st.lab.slug).catch(() => null /* kept from the last look */) : null, n % 16 === 0 && owner ? forkLendingNow().catch(() => null /* kept from the last look */) : null,
+    wide && owner ? st.api.myInvitations().catch(() => null /* kept from the last look */) : null]);
   const last = box.last(), now = IB.snapshot({ runs, joins: issues ? M.joinRequests(issues) : null, forks: forks?.list ?? null,
     invitations: inv ? inv.filter((i) => i.repository?.fork && M.same(i.repository?.name, name)) : null, version: st.version });
   for (const k of ['joins', 'forks', 'invitations']) if (now[k] === null && Array.isArray(last?.[k])) now[k] = last[k];
@@ -498,7 +567,7 @@ async function news(runs) {
 st.version = DBG.versionState(CONFIG.version, []);
 async function checkVersion() {
   if (!st.lab || !st.api || !CONFIG.version) return st.version;
-  let rs; try { rs = await st.api.runs(st.lab.slug, { per: 1, workflow: 'pages.yml' }); } catch { return st.version; }
+  let rs; try { rs = await st.api.runs(st.lab.slug, { per: 1, workflow: 'pages.yml' }); } catch { return st.version; /* in the background: asked again in two minutes */ }
   const was = st.version.state, v = DBG.versionState(CONFIG.version, rs);
   st.version = v;
   if (v.state !== was && (v.state === 'newer' || v.state === 'failed')) toast(v.say, v.state === 'failed');
@@ -531,7 +600,8 @@ window.addEventListener('keydown', (e) => {
 function overview(body) {
   const ses = A.session(st.login);
   // (an administrator who has to lend: that first, here — nothing else is offered until they do)
-  if (lendFirst()) body.append(h('div', { class: 'card' }, h('h2', {}, '⏱ まず時間を貸します'), h('p', {}, '管理者の決まり（adminsLend）: 次がそろうと、管理者の操作が使えるようになります。'), h('ul', {}, st.adminLend.why.map((w) => h('li', { class: 'warn' }, w)))),
+  if (lendFirst()) body.append(h('div', { class: 'card' }, h('h2', {}, '⏱ まず時間を貸します'), h('p', {}, '管理者の決まり（adminsLend）: 次がそろうと、管理者の操作が使えるようになります。'), h('ul', {}, st.adminLend.why.map((w) => h('li', { class: 'warn' }, w))),
+      st.adminLend.err ? failView(st.adminLend.err, () => connect()) : null),
     lendStart({ api: st.api, me: st.me, labSlug: st.lab.slug, oauth: A.session(st.login)?.kind === 'oauth', appSlug: CONFIG.appSlug, always: true, embedded: true, labHosts: (slug) => addLabHost(slug),
       onReady: (slug) => { saveSettings({ hosts: [...new Set([...settings().hosts, slug])] }); connect(); } }));
   body.append(h('div', { class: 'card' }, h('h2', {}, `${st.me.login} さん`), h('p', {}, 'あなたは: ', st.as.map((r) => h('span', { class: 'chip' }, M.ROLE_NAMES[r])), ' ',
@@ -542,6 +612,10 @@ function overview(body) {
     h('div', { id: 'version' }),
     !CONFIG.authUrl && st.lab?.role === 'admin' ? h('p', { class: 'warn' }, '「GitHub でサインイン」はまだ使えません: ', h('button', { onclick: () => go('setup') }, '「準備」で整える'), '（App・サインインのサービス・Pages）') : null));
   body.append(guideSlot());
+  if (st.lab && canLab()) body.append(envNote() ?? '');
+  // (a lender or a borrower whose account cannot see the lab: said, with the way to another lab's name)
+  if (!st.lab) body.append(h('div', { class: 'card', id: 'nolab' }, h('h2', {}, `ラボ（${settings().lab}）`), h('p', { class: 'muted' }, 'このアカウントでは、このラボが見えません（招かれていないか、名前がちがいます）。貸し借りは下から使えます。ラボも使うなら、持ち主に招いてもらうか、「設定」でラボの名前を直してください。'),
+    h('div', { class: 'row' }, h('button', { onclick: () => go('settings') }, '「設定」でラボを直す'), link('https://github.com/notifications', '招待を見る（GitHub へ）'))));
   if (st.lab && canLab()) { const hc = healthCtx(); body.append(todoCard(), healthCard(hc), h('div', { class: 'card' }, h('h2', {}, '📄 会社向けの報告書'), reportButton(hc))); }
   checkVersion().then((v) => $('version')?.replaceChildren(...(v.state === 'newer' ? [h('p', { class: 'warn' }, v.say, ' ', h('button', { onclick: () => location.reload() }, '読み直す'))] : v.state === 'deploying' || v.state === 'failed' ? [h('p', { class: v.state === 'failed' ? 'bad' : 'muted' }, v.say)] : [])));
   if (st.lab && st.lab.caps) {
@@ -549,11 +623,12 @@ function overview(body) {
       h('h3', {}, 'このリポジトリの設定でできること'),
       h('ul', { class: 'plain' }, st.lab.caps.map((c) => h('li', {}, c.ok === null ? '❔ ' : c.ok ? '✅ ' : '⚠️ ', c.label, c.need ? h('div', { class: 'muted' }, c.need) : null))),
       h('div', { id: 'ovruns' }, h('p', { class: 'muted' }, '実行を読んでいます…'))));
-    act(async () => {
-      const [all, prs] = await Promise.all([st.api.runs(st.lab.slug, { per: 50 }), st.api.pulls(st.lab.slug).catch(() => [])]), rs = all.slice(0, 20);
+    fill($('ovruns') ?? body, async () => {
+      const [all, prs] = await Promise.all([st.api.runs(st.lab.slug, { per: 50 }), st.api.pulls(st.lab.slug).catch(() => null /* said: 「PR は読めませんでした」 */)]), rs = all.slice(0, 20);
       const going = rs.filter((r) => r.status !== 'completed'), bad = rs.filter((r) => r.conclusion === 'failure');
       const last = bad[0];
-      $('ovruns')?.replaceChildren(h('h3', {}, '最近'), h('p', {}, `動いている ${going.length}・失敗 ${bad.length}（最近 ${rs.length} 件）・開いている PR ${prs.length}`),
+      $('ovruns')?.replaceChildren(h('h3', {}, '最近'), h('p', {}, `動いている ${going.length}・失敗 ${bad.length}（最近 ${rs.length} 件）・${prs ? `開いている PR ${prs.length}` : '開いている PR は読めませんでした（「r」で読み直す）'}`),
+        rs.length ? null : h('p', { class: 'muted' }, 'まだ実行がありません: ', h('button', { onclick: () => go('start') }, '「実行」で始める')),
         // (one tap for what is wanted most: the last failure again, what runs now, what failed)
         h('div', { class: 'row' }, last ? h('button', { ...gate('dispatch'), onclick: () => guarded('dispatch', { run: String(last.id), workflow: String(last.path ?? '').split('/').pop() }, () => st.api.rerunFailed(st.lab.slug, last.id), `${last.name} の落ちたジョブをやり直します`) }, `🔁 ${last.name} をやり直す`) : null,
           going.length ? h('button', { onclick: () => { st.runsShow = 'going'; go('runs'); } }, `🔄 動いている ${going.length} 件を見る`) : null,
@@ -561,9 +636,10 @@ function overview(body) {
         h('ul', { class: 'plain' }, rs.slice(0, 5).map((r) => h('li', {}, M.STATE_ICON[r.status === 'completed' ? r.conclusion : r.status] ?? '•', ' ', link(r.html_url, r.name), ' ', h('span', { class: 'muted' }, `${r.head_branch} · ${M.ago(r.created_at)}`)))),
         healthTable(M.workflowHealth(all), all.length));
     });
-  } else if (st.lab) body.append(h('div', { class: 'card' }, h('h2', {}, st.lab.slug), h('p', { class: 'muted' }, `このリポジトリは ${M.ROLE_NAMES[st.lab.role] ?? '見えない'} です: 実行・秘密・端末は、書き込める人だけ`)));
+  } else if (st.lab) body.append(h('div', { class: 'card' }, h('h2', {}, st.lab.slug), h('p', { class: 'muted' }, `このリポジトリは ${M.ROLE_NAMES[st.lab.role] ?? '見えない'} です: 実行・秘密・端末は、書き込める人だけ。使うときは、持ち主に書き込める人（Write 以上）として招いてもらってください。`),
+    link(st.lab.repo.html_url, 'ラボを GitHub で見る')));
   for (const x of st.hosts) body.append(hostCard(x, true));
-  if (!st.hosts.length) body.append(h('div', { class: 'card' }, h('h2', {}, '貸し借り（ホスト）'), h('p', { class: 'muted' }, 'まだありません。「貸し借り」で探すか加えます。')));
+  if (!st.hosts.length) body.append(h('div', { class: 'card' }, h('h2', {}, '貸し借り（ホスト）'), h('p', { class: 'muted' }, 'まだありません。「貸し借り」で自分のホストを探すか、貸し手のリポジトリを加えると、ここに出ます。'), h('button', { onclick: () => go('hosts') }, '「貸し借り」を開く')));
   const others = A.list().filter((e) => e.login !== st.login);
   if (others.length) body.append(h('div', { class: 'card' }, h('h2', {}, 'このブラウザのほかのアカウント'),
     h('ul', { class: 'plain' }, others.map((e) => h('li', { class: 'row' }, h('span', { class: 'grow' }, e.login, ' ', h('span', { class: 'muted' }, `${A.cfg(e.login).lab}・ホスト ${A.cfg(e.login).hosts.length}`)), h('button', { onclick: () => switchTo(e.login) }, '切り替える'))))));
@@ -576,7 +652,8 @@ function guideSlot() {
   const slot = h('div', {});
   act(async () => {
     const role = guideRole(), lab = st.lab && canLab();
-    const [rs, lh] = await Promise.all([lab ? st.api.runs(st.lab.slug, { per: 1 }).catch(() => []) : [], lab ? st.api.variable(st.lab.slug, 'LAB_HOSTS').catch(() => null) : null]);
+    // (the guide's facts are best guesses: a read that failed counts as not done yet — 「いまやること」 says what was not read)
+    const [rs, lh] = await Promise.all([lab ? st.api.runs(st.lab.slug, { per: 1 }).catch(() => [] /* a guess: not run yet */) : [], lab ? st.api.variable(st.lab.slug, 'LAB_HOSTS').catch(() => null /* a guess: none */) : null]);
     const caps = capsOf(), mine = st.hosts.filter((x) => x.role === 'lender');
     const facts = { pages: Boolean(CONFIG.version), app: Boolean(CONFIG.appSlug), auth: Boolean(CONFIG.authUrl), discord: caps.notify?.ok === true || caps.discord?.ok === true,
       ran: (rs ?? []).length > 0, lenders: Boolean(M.labHostsWith(lh)) || st.hosts.some((x) => st.lab && M.canBorrow(x, st.lab.slug)), lending: st.adminLend?.required ? st.adminLend.ok : mine.length > 0,
@@ -590,20 +667,23 @@ function guideSlot() {
  *  role: the owner's forks and invitations, an administrator's secrets, a lender's last days */
 function todoCard() {
   const box = h('div', { class: 'card', id: 'todo' }, h('h2', {}, 'いまやること'), h('p', { class: 'muted' }, '見ています…'));
-  act(async () => {
+  fill(box, async () => {
     const owner = isOwner(), admin = st.lab.role === 'admin', name = st.lab.slug.split('/')[1];
+    // (each read on its own: one that fails is named in the list — 「…を読めませんでした」 — the rest still shown)
     let noVars = false;
-    const [forks, inv, secrets, runs, listed, issues] = await Promise.all([owner ? forkLendingNow().catch(() => null) : null, owner ? st.api.myInvitations().catch(() => null) : null,
-      admin ? st.api.secrets(st.lab.slug).catch(() => null) : null, st.api.runs(st.lab.slug, { per: 50 }).catch(() => []),
-      admin ? st.api.variable(st.lab.slug, 'LAB_HOSTS').catch((e) => { noVars = e.status === 403; return null; }) : null, admin ? st.api.issues(st.lab.slug).catch(() => []) : []]);
+    const bag = [];
+    const [forks, inv, secrets, runs, listed, issues] = await Promise.all([owner ? soft(forkLendingNow(), null, bag, 'フォーク') : null, owner ? st.api.myInvitations().catch(() => null /* an App's sign-in may not list them: usual */) : null,
+      admin ? soft(st.api.secrets(st.lab.slug), null, bag, '秘密') : null, soft(st.api.runs(st.lab.slug, { per: 50 }), [], bag, '実行'),
+      admin ? st.api.variable(st.lab.slug, 'LAB_HOSTS').catch((e) => { if (e.status === 403) noVars = true; else bag.push({ what: 'LAB_HOSTS', e }); return null; }) : null, admin ? soft(st.api.issues(st.lab.slug), [], bag, '参加のお願い') : []]);
+    if (forks?.errors?.length) bag.push({ what: 'フォークの一部', e: new Error(forks.errors[0]) });
     const inList = new Set(M.labHostsWith(listed).toLowerCase().split(' ')), today = Date.now();
-    const items = M.todos({ policyErrors: st.policyErrors, version: st.version, idleAdmins: forks?.idle ?? [], joins: M.joinRequests(issues ?? []).length, noVars,
+    const items = M.todos({ policyErrors: st.policyErrors, version: st.version, idleAdmins: forks?.idle ?? [], joins: M.joinRequests(issues ?? []).length, noVars, unread: bag.map((b) => b.what),
       invites: (inv ?? []).filter((i) => i.repository?.fork && M.same(i.repository?.name, name)).length,
       unlisted: (forks?.list ?? []).filter((x) => x.rules && !inList.has(x.slug.toLowerCase())).map((x) => x.slug),
       stale: (secrets ?? []).filter((x) => M.secretAge(x.updated_at).stale).map((x) => x.name), health: M.workflowHealth(runs ?? []),
       ending: st.hosts.filter((x) => x.role === 'lender' && x.rules?.until).map((x) => ({ slug: x.slug, until: x.rules.until, days: Math.ceil((Date.parse(`${x.rules.until}T23:59:59Z`) - today) / 86_400_000) })).filter((x) => x.days >= 0 && x.days <= 7) });
     box.replaceChildren(h('h2', {}, 'いまやること'), items.length ? h('ul', { class: 'plain' }, items.map((x) => h('li', { class: 'row' }, h('span', { class: `grow ${x.level}` }, x.level === 'bad' ? '❌ ' : x.level === 'warn' ? '⚠️ ' : 'ℹ️ ', x.text),
-      x.tab ? h('button', { onclick: () => go(x.tab) }, '開く') : h('button', { onclick: () => location.reload() }, '読み直す'))))
+      x.tab ? h('button', { onclick: () => go(x.tab) }, '開く') : h('button', { onclick: () => (x.text === st.version?.say ? location.reload() : box.replaceWith(todoCard())) }, '読み直す'))))
       : h('p', { class: 'ok' }, '✅ いまやることはありません'));
   });
   return box;
@@ -631,7 +711,7 @@ function runs(body) {
   const q = h('input', { type: 'search', placeholder: '探す（名前・枝・人）', value: st.runsQ ?? '', 'aria-label': '実行を探す', oninput: () => { st.runsQ = q.value; load(); } });
   const show = h('select', { 'aria-label': 'どの実行', onchange: () => { st.runsShow = show.value; load(); } }, [['all', 'すべて'], ['failed', '落ちたもの'], ['going', '動いているもの'], ['mine', '自分の']].map(([v, t]) => h('option', { value: v, selected: v === (st.runsShow ?? 'all') ? 'selected' : null }, t)));
   const stopAll = h('button', { class: 'danger', hidden: true, ...gate('run.cancel') });
-  const load = () => act(async () => {
+  const load = () => fill(list, async () => {
     const all = await st.api.runs(from, { per: 50 }), rs = M.filterRuns(all, { q: q.value, show: show.value, me: st.me.login });
     for (const r of rs) if (r.status !== 'completed' && !shut.has(r.id)) open.add(r.id);
     const going = rs.filter((r) => r.status !== 'completed');
@@ -643,7 +723,10 @@ function runs(body) {
       for (const r of going) if (await act(() => st.api.cancel(from, r.id).then(() => true, (e) => { if (e.status !== 409) throw e; return true; }))) record('run.cancel', { run: String(r.id), workflow: String(r.path ?? '').split('/').pop() });
       toast(`${going.length} 件を止めるよう頼みました`); load();
     };
-    if (!rs.length) list.replaceChildren(h('p', { class: 'muted' }, all.length ? '当てはまる実行がありません（最近の 50 件）' : 'まだ実行がありません'));
+    // (an empty list: why, and the one next step — the search taken away, or 「実行」)
+    const none = M.runsEmpty({ all: all.length, q: q.value, show: show.value, isLab });
+    if (!rs.length) list.replaceChildren(h('p', { class: 'muted' }, none.text, ' ', none.step === 'clear' ? h('button', { onclick: () => { q.value = ''; show.value = 'all'; st.runsQ = ''; st.runsShow = 'all'; load(); } }, '探すのをやめる')
+      : none.step === 'start' ? h('button', { onclick: () => { if (!isLab) st.target = from; go('start'); } }, '「実行」を開く') : null));
     else list.replaceChildren(...rs.map((r) => {
       const state = r.status === 'completed' ? r.conclusion : r.status, box = h('div', { class: 'jobs' });
       const row = h('div', { class: 'card', 'data-run': r.id },
@@ -655,7 +738,7 @@ function runs(body) {
       if (open.has(r.id)) detail(from, r, box, true);
       return row;
     }));
-    if (focus && isLab) { const c = list.querySelector(`[data-run="${focus.run}"]`); if (c) c.scrollIntoView({ block: 'start' }); else toast(`実行 ${focus.run} は最近の 25 件にありません`, true); }
+    if (focus && isLab) { const c = list.querySelector(`[data-run="${focus.run}"]`); if (c) c.scrollIntoView({ block: 'start' }); else toast(`実行 ${focus.run} は、ここに出ている最近の実行の中にありません（古いか、探す言葉で隠れています）`, true, link(`https://github.com/${from}/actions/runs/${focus.run}`, 'GitHub で開く')); }
   });
   const pick = sources.length > 1 ? h('select', { 'aria-label': 'どこの実行', onchange: (e) => { st.runsFrom = e.target.value; render(); } }, sources.map((s) => h('option', { value: s, selected: s === from ? 'selected' : null }, s === st.lab.slug ? `ラボ: ${s}` : `ホスト: ${s}`))) : null;
   body.append(h('div', { class: 'row' }, pick, q, show, h('button', { onclick: load }, '読み直す'), h('span', { class: 'muted' }, `（${settings().refresh} 秒ごと）`), stopAll), list);
@@ -664,8 +747,8 @@ function runs(body) {
 async function detail(slug, r, box, show) {
   if (!show) return box.replaceChildren();
   box.replaceChildren(h('span', { class: 'muted' }, '…'));
-  await act(async () => {
-    const [jobs, arts] = await Promise.all([st.api.jobs(slug, r.id), r.status === 'completed' ? st.api.artifacts(slug, { run: r.id }).catch(() => []) : []]);
+  await fill(box, async () => {
+    const [jobs, arts] = await Promise.all([st.api.jobs(slug, r.id), r.status === 'completed' ? st.api.artifacts(slug, { run: r.id }).catch(() => null /* said below, with GitHub's page */) : []]);
     const p = M.progress(r, jobs);
     const parts = [h('div', { class: 'bar' + (p.state === 'failure' ? ' bad' : '') }, h('i', { style: { width: `${p.pct}%` } })), h('div', { class: 'muted' }, `${p.done}/${p.total} 段 · ${M.fmtMs(p.ms)}${p.now ? ` · いま: ${p.now}` : ''}`)];
     for (const j of p.jobs) parts.push(h('div', {}, `${M.STATE_ICON[j.state] ?? '•'} ${j.name} — ${j.done}/${j.total}${j.now ? `（${j.now}）` : ''}`));
@@ -673,7 +756,7 @@ async function detail(slug, r, box, show) {
     const said = [];
     for (const j of jobs.filter((x) => x.conclusion === 'failure').slice(0, 3)) {
       const id = String(j.check_run_url ?? '').split('/').pop();
-      const an = id ? await st.api.annotations(slug, id).catch(() => []) : [];
+      const an = id ? await st.api.annotations(slug, id).catch(() => [] /* a job's notes are extra: its steps above still say where it failed */) : [];
       said.push(...an);
       if (an.length) parts.push(h('pre', {}, an.slice(0, 8).map((a) => `${a.annotation_level}: ${a.title ? a.title + ' — ' : ''}${a.message}`).join('\n')));
     }
@@ -683,7 +766,8 @@ async function detail(slug, r, box, show) {
       if (why.length) parts.push(h('div', { class: 'diagnose' }, h('h3', {}, '🩺 考えられる原因と直し方'), h('ul', { class: 'plain' }, why.map((x) => h('li', {}, h('strong', {}, x.title), h('div', { class: 'muted' }, x.fix),
         x.prefill ? h('button', { onclick: () => { st.prefill = x.prefill; go('secrets'); } }, `「秘密」で ${x.prefill} を登録`) : x.tab && x.tab !== 'runs' ? h('button', { onclick: () => go(x.tab) }, '開く') : null)))));
     }
-    if (arts.length) parts.push(artifactList(slug, r.id, arts, r.html_url));
+    if (arts === null) parts.push(h('p', { class: 'muted' }, '成果物を読めませんでした: ', link(`${r.html_url}#artifacts`, 'GitHub で見る')));
+    else if (arts.length) parts.push(artifactList(slug, r.id, arts, r.html_url));
     box.replaceChildren(...parts);
   });
 }
@@ -709,25 +793,29 @@ function start(body) {
     if (!st.labHosts.length) return;
     autoLi.hidden = false;
     autoLi.replaceChildren(h('label', {}, h('input', { type: 'radio', name: 'target', value: 'auto', checked: st.target === 'auto', onchange: () => { st.target = 'auto'; render(); } }), h('span', { class: 'grow' }, h('strong', {}, '空いている貸し手で（auto）'), ` LAB_HOSTS の ${st.labHosts.length} 個から、いま使えて残りのいちばん多いところ`)));
-  }).catch(() => { /* the variables not readable: no choice */ });
+  }).catch((e) => { if (e.status === 403) return; /* this sign-in may not read variables: no auto choice (「いまやること」 says how) */ autoLi.hidden = false; autoLi.replaceChildren(h('span', { class: 'muted' }, 'LAB_HOSTS（空いている貸し手）を読めませんでした: '), failView(e, () => render())); });
   const where = h('div', { class: 'card' }, h('h2', {}, 'どこの Actions で走らせる'),
     h('ul', { class: 'plain targets' }, [
       h('li', {}, h('label', {}, h('input', { type: 'radio', name: 'target', value: 'lab', checked: st.target === 'lab', onchange: () => { st.target = 'lab'; render(); } }), h('span', { class: 'grow' }, h('strong', {}, 'このラボ'), ` ${st.lab.slug}（${st.lab.repo.owner?.login ?? st.lab.slug.split('/')[0]} の Actions）`))),
-      ...hosts.map((x) => { const s = h('span', { class: 'muted' }, ' …'); hostUse(x).then((u) => s.replaceChildren(u.now.ok ? ` ✅ 今月 ${u.used}/${u.now.stopAt} 分` : ` ⏸ ${u.now.why[0]}`)).catch(() => s.replaceChildren(' ❔'));
+      ...hosts.map((x) => { const s = h('span', { class: 'muted' }, ' …'); hostUse(x).then((u) => s.replaceChildren(u.now.ok ? ` ✅ 今月 ${u.used}/${u.now.stopAt} 分` : ` ⏸ ${u.now.why[0]}`)).catch((e) => s.replaceChildren(` ❔ 今月の分を読めませんでした（${e.message}）`));
         return h('li', {}, h('label', {}, h('input', { type: 'radio', name: 'target', value: x.slug, checked: st.target === x.slug, onchange: () => { st.target = x.slug; render(); } }), h('span', { class: 'grow' }, h('strong', {}, `${x.slug.split('/')[0]} さんの Actions`), ` ${x.slug}`, s))); }),
       autoLi,
     ]),
     hosts.length ? null : h('p', { class: 'muted' }, '貸し手のホストは「貸し借り」で加えると、ここで選べます（その人の Actions の分で走ります）。'));
-  body.append(where);
+  body.append(where, envNote() ?? '');
   if (st.target === 'auto') return body.append(autoForm(caps), h('div', { id: 'dform' }));
   if (st.target === 'lab') { const mk = makeCard(caps); if (mk) body.append(mk); }
   if (st.target !== 'lab') return body.append(hostForm(hosts.find((x) => x.slug === st.target), caps), h('div', { id: 'dform' }));
   body.append(h('div', { class: 'card' }, h('h2', {}, 'すぐ始める'), h('ul', { class: 'plain' }, M.PRESETS.filter((p) => hasWf(p.workflow)).map((p) => {
     const c = p.needs ? caps[p.needs] : null, ok = !c || c.ok !== false;
-    return h('li', {}, h('div', { class: 'row' }, h('span', { class: 'grow' }, p.label), h('button', { class: 'primary', disabled: !ok, onclick: () => dispatchForm(body, p.workflow, p.inputs) }, '開く')), ok ? null : h('div', { class: 'warn' }, c.need));
+    return h('li', {}, h('div', { class: 'row' }, h('span', { class: 'grow' }, p.label), h('button', { class: 'primary', disabled: !ok, title: ok ? null : c.need, onclick: () => dispatchForm(body, p.workflow, p.inputs) }, '開く')),
+      ok ? null : h('div', { class: 'warn' }, c.need, ' ', h('button', { onclick: () => go('secrets') }, '「秘密」を開く')));
   }))));
-  const sel = h('select', {}, (st.lab.workflows ?? []).filter((w) => w.state === 'active').map((w) => h('option', { value: w.path }, `${w.name}（${w.path.split('/').pop()}）`)));
-  body.append(h('div', { class: 'card' }, h('h2', {}, 'ワークフローを選んで'), sel, h('div', { class: 'row' }, h('button', { onclick: () => dispatchForm(body, sel.value.split('/').pop(), {}) }, '入力を開く'))), h('div', { id: 'dform' }));
+  const active = (st.lab.workflows ?? []).filter((w) => w.state === 'active');
+  const sel = h('select', {}, active.map((w) => h('option', { value: w.path }, `${w.name}（${w.path.split('/').pop()}）`)));
+  // (none to choose: why — not read (said above), or none turned on — and where to turn them on)
+  body.append(h('div', { class: 'card' }, h('h2', {}, 'ワークフローを選んで'), active.length ? [sel, h('div', { class: 'row' }, h('button', { onclick: () => dispatchForm(body, sel.value.split('/').pop(), {}) }, '入力を開く'))]
+    : h('p', { class: 'muted' }, st.lab.envErr ? 'ワークフローを読めませんでした（上の「もう一度」）。' : '動かせるワークフローがありません（無いか、止められています）。GitHub の Actions で有効にすると、ここで選べます: ', link(`https://github.com/${st.lab.slug}/actions`, 'Actions を開く（GitHub へ）'))), h('div', { id: 'dform' }));
 }
 /** a job on a lender's host: the jobs their .lab-host.json allows, a unit for test / go / sim, started through hostrun.yml */
 function hostForm(x, caps) {
@@ -747,7 +835,7 @@ function hostForm(x, caps) {
     state.replaceChildren(h('div', { class: 'bar' + (u.used >= u.now.stopAt ? ' bad' : '') }, h('i', { style: { width: `${Math.min(100, Math.round((u.used / Math.max(1, u.now.stopAt)) * 100))}%` } })),
       `今月 ${u.used} 分 / 止まる ${u.now.stopAt} 分（${x.rules.hours} ${x.rules.timezone}${x.rules.until ? `・${x.rules.until} まで` : ''}）`, u.now.ok ? h('div', { class: 'ok' }, '✅ いま使えます') : h('div', { class: 'warn' }, u.now.why.map((w) => `⏸ ${w}`).join(' / ')));
     if (!u.now.ok) btn.disabled = true;
-  }).catch((e) => state.replaceChildren(e.message));
+  }).catch((e) => { btn.disabled = true; btn.title = '今月の分を読めないので、始められません（上の「もう一度」）'; state.replaceChildren(failView(e, () => render())); });
   return h('div', { class: 'card' }, h('h2', {}, `${x.slug} で走らせる`, h('span', { class: 'chip' }, M.ROLE_NAMES[x.role])),
     h('p', { class: 'muted' }, `ラボ（${st.lab.slug}）の hostrun が、あなたのトークン（LAB_HOST_TOKEN）でラボを ${x.slug} に送り、そこで仕事を走らせます。分は持ち主（${x.slug.split('/')[0]} さん）のもの、貸す条件の中だけ。`), state,
     ready ? null : h('div', { class: 'warn' }, c.need, ' ', h('button', { onclick: () => { st.prefill = 'LAB_HOST_TOKEN'; go('secrets'); } }, '「秘密」で登録する')),
@@ -796,9 +884,12 @@ function autoForm(caps) {
 async function dispatchForm(body, file, preset) {
   const box = $('dform') ?? body;
   box.replaceChildren(h('p', { class: 'muted' }, `${file} を読んでいます…`));
-  await act(async () => {
+  await fill(box, async () => {
     const f = await st.api.file(st.lab.slug, `.github/workflows/${file}`), d = M.dispatchInputs(f?.text ?? '');
-    if (!d.dispatch) return box.replaceChildren(h('div', { class: 'card' }, h('p', { class: 'warn' }, `${file} は手で始められません（workflow_dispatch がありません）`)));
+    // (no such file, or no workflow_dispatch: said, with GitHub's page to see or change it)
+    if (!f) return box.replaceChildren(h('div', { class: 'card' }, h('p', { class: 'warn' }, `${file} がラボにありません（消されたか、名前が変わりました）。`), link(`https://github.com/${st.lab.slug}/actions`, 'Actions を開く（GitHub へ）')));
+    if (!d.dispatch) return box.replaceChildren(h('div', { class: 'card' }, h('p', { class: 'warn' }, `${file} は手で始められません（workflow_dispatch がありません）。ファイルの on: に workflow_dispatch: を足すと、ここから始められます。`),
+      link(`https://github.com/${st.lab.slug}/blob/${st.lab.repo.default_branch}/.github/workflows/${file}`, `${file} を開く（GitHub へ）`)));
     const fields = {}, ref = h('input', { type: 'text', value: st.lab.repo.default_branch });
     const rows = d.inputs.map((i) => {
       const v = preset[i.name] ?? i.default;
@@ -810,6 +901,10 @@ async function dispatchForm(body, file, preset) {
     box.replaceChildren(h('div', { class: 'card' }, h('h2', {}, `${file} を始める`), h('label', {}, '枝（ref）'), ref, rows,
       h('div', { class: 'row' }, h('button', { class: 'primary', onclick: async () => {
         const values = Object.fromEntries(Object.entries(fields).map(([k, el]) => [k, el.type === 'checkbox' ? el.checked : el.value]));
+        // (what GitHub would refuse with a 422, said before asking: no branch, an input it needs left empty)
+        if (!ref.value.trim()) return toast(`枝（ref）が空です: ふつうは ${st.lab.repo.default_branch}`, true);
+        const missing = M.dispatchMissing(d.inputs, values);
+        if (missing.length) return toast(`入れてください: ${missing.join('・')}（このワークフローに要ります）`, true);
         const body = M.dispatchBody(d.inputs, values);
         const ok = await guarded('dispatch', { workflow: file, ref: ref.value.trim(), inputs: Object.keys(body) }, () => st.api.dispatch(st.lab.slug, file, ref.value.trim(), body), `${file} を始めました（「進み具合」で見られます）`);
         if (ok !== undefined) { st.tab = 'runs'; setTimeout(render, 2500); }
@@ -823,10 +918,10 @@ function files(body) {
   const list = h('div', {}, h('p', { class: 'muted' }, '読んでいます…'));
   body.append(h('div', { class: 'card' }, h('h2', {}, '成果物（実行が残したもの）'),
     h('p', { class: 'muted' }, 'アドオンの .mcaddon などは、実行の成果物（GitHub が 7〜90 日とっておきます）にあります。「Discord に送る」で、その実行の知らせと一緒に Discord の DM（か Webhook）へ 10 MB まで添えます。')), list);
-  act(async () => {
+  fill(list, async () => {
     const arts = await st.api.artifacts(st.lab.slug, { per: 50 }), byRun = new Map();
     for (const a of arts) { const id = a.workflow_run?.id ?? 0; if (!byRun.has(id)) byRun.set(id, []); byRun.get(id).push(a); }
-    if (!byRun.size) return list.replaceChildren(h('p', { class: 'muted' }, 'まだありません。'));
+    if (!byRun.size) return list.replaceChildren(h('p', { class: 'muted' }, 'まだありません: アドオンを試す・仕上げる実行（go など）が終わると、その .mcaddon がここに出ます。 '), h('button', { onclick: () => go('start') }, '「実行」で始める'));
     list.replaceChildren(...[...byRun].map(([id, as]) => h('div', { class: 'card' }, h('h2', {}, `実行 ${id}`, h('span', { class: 'muted' }, `${as[0].workflow_run?.head_branch ?? ''} · ${M.ago(as[0].created_at)}`)), artifactList(st.lab.slug, id, as, `https://github.com/${st.lab.slug}/actions/runs/${id}`))));
   });
 }
@@ -834,13 +929,15 @@ function files(body) {
 // ---- Discord: where the news goes, what goes along, and what Discord can do from here ----
 function discord(body) {
   const names = new Set(st.lab.secrets ?? []), known = Array.isArray(st.lab.secrets), caps = capsOf();
+  // (the secrets' names not known: ❔ below — why, and the way to more rights or 「もう一度」)
+  if (!known) body.append(envNote() ?? h('div', { class: 'card' }, h('p', { class: 'warn' }, '❔ 秘密の名前を見られません（このサインインに Secrets: Read がありません）。登録はできます。'), rescueView(R.rescue(Object.assign(new Error(''), { status: 403 }), rescueCtx()))));
   const row = (name, what, check, ph) => {
     const v = h('input', { type: 'password', autocomplete: 'off', placeholder: ph, 'aria-label': name });
     return h('li', {}, h('div', {}, known ? (names.has(name) ? '✅ ' : '・ ') : '❔ ', h('strong', {}, name), ' ', h('span', { class: 'muted' }, what)),
       h('div', { class: 'row' }, v, h('button', { onclick: async () => {
         const val = v.value.trim();
-        if (!val) return toast('値が空です', true);
-        if (check && !check(val)) return toast(`${name} の形が違います`, true);
+        if (!val) return toast('値が空です: 入れてから「登録」', true);
+        if (check && !check(val)) return toast(`${name} の形が違います: ${ph} のような値を入れてください`, true);
         const ok = await guarded('secrets.put', { name }, () => st.api.putSecret(st.lab.slug, name, val), `${name} を登録しました`);
         if (ok !== undefined) { v.value = ''; await loadEnv(st.lab); render(); }
       } }, names.has(name) ? '入れ替える' : '登録')));
@@ -858,20 +955,19 @@ function discord(body) {
   body.append(h('div', { class: 'card' }, h('h2', {}, '知らせる実行と、添えるもの'),
     h('label', {}, 'どの実行を知らせる（変数 LAB_NOTIFY）'), when, h('label', {}, '添える成果物（変数 LAB_NOTIFY_FILES）'), what, note,
     h('div', { class: 'row' }, h('button', { class: 'primary', ...gate('variables'), onclick: () => guarded('variables', { name: 'LAB_NOTIFY' }, async () => { await st.api.setVariable(st.lab.slug, 'LAB_NOTIFY', when.value); await st.api.setVariable(st.lab.slug, 'LAB_NOTIFY_FILES', what.value); return true; }, '知らせ方を保存しました') }, '知らせ方を保存'))));
-  act(async () => {
-    try {
-      const [w, f] = await Promise.all([st.api.variable(st.lab.slug, 'LAB_NOTIFY'), st.api.variable(st.lab.slug, 'LAB_NOTIFY_FILES')]);
-      when.value = M.NOTIFY_WHEN[w] ? w : 'auto'; what.value = M.NOTIFY_FILES[f] ? f : 'auto';
-      note.replaceChildren(`いま: LAB_NOTIFY=${w ?? '（なし: auto）'}・LAB_NOTIFY_FILES=${f ?? '（なし: auto）'}`);
-    } catch (e) { note.replaceChildren(`変数を読めません（トークンに Variables: Read and write が要ります）: ${e.message}`); }
+  fill(note, async () => {
+    const [w, f] = await Promise.all([st.api.variable(st.lab.slug, 'LAB_NOTIFY'), st.api.variable(st.lab.slug, 'LAB_NOTIFY_FILES')]);
+    when.value = M.NOTIFY_WHEN[w] ? w : 'auto'; what.value = M.NOTIFY_FILES[f] ? f : 'auto';
+    note.replaceChildren(`いま: LAB_NOTIFY=${w ?? '（なし: auto）'}・LAB_NOTIFY_FILES=${f ?? '（なし: auto）'}`);
   });
   const go2 = (file, preset) => { st.tab = 'start'; st.target = 'lab'; render(); dispatchForm(main(), file, preset); };
-  const btn = (label, cap, fn) => { const c = caps[cap]; return h('li', {}, h('div', { class: 'row' }, h('span', { class: 'grow' }, label), h('button', { disabled: c?.ok === false, onclick: fn }, '始める')), c?.ok === false ? h('div', { class: 'warn' }, c.need) : null); };
-  body.append(h('div', { class: 'card' }, h('h2', {}, 'Discord で'), h('ul', { class: 'plain' },
+  const btn = (label, cap, fn) => { const c = caps[cap]; return h('li', {}, h('div', { class: 'row' }, h('span', { class: 'grow' }, label), h('button', { disabled: c?.ok === false, title: c?.ok === false ? c.need : null, onclick: fn }, '始める')), c?.ok === false ? h('div', { class: 'warn' }, c.need, '（上で登録すると使えます）') : null); };
+  const noWf = !['notify.yml', 'app.yml', 'secrets.yml'].some(hasWf);
+  body.append(h('div', { class: 'card' }, h('h2', {}, 'Discord で'), noWf ? h('p', { class: 'muted' }, 'このラボには notify.yml・app.yml・secrets.yml がありません: ラボを新しくすると、ここから送れます。 ', link(`https://github.com/${st.lab.slug}/actions`, 'Actions を開く（GitHub へ）')) : null, h('ul', { class: 'plain' },
     hasWf('notify.yml') ? btn('🔔 試しに送る', 'notify', () => guarded('dispatch', { workflow: 'notify.yml' }, () => st.api.dispatch(st.lab.slug, 'notify.yml', st.lab.repo.default_branch, { run: '', message: `bds-lab: ${st.me.login} さんが管理パネルから試しに送りました` }), '送るよう頼みました（数十秒で届きます）')) : null,
     hasWf('notify.yml') ? btn('📦 いちばん新しい成果物を送る', 'notify', () => act(async () => {
       const a = (await st.api.artifacts(st.lab.slug, { per: 20 })).find((x) => !x.expired && x.workflow_run?.id);
-      if (!a) throw new Error('送れる成果物がありません');
+      if (!a) return toast('送れる成果物がまだありません: アドオンを仕上げる実行（go など）が終わると送れます', true, h('button', { onclick: () => go('start') }, '「実行」を開く'));
       await sendToDiscord(a.workflow_run.id);
     })) : null,
     hasWf('app.yml') ? btn('🎮 スマホで端末を操作（DM に画面とボタン）', 'discord', () => go2('app.yml', { mode: 'hold', hold: '60' })) : null,
@@ -883,7 +979,7 @@ function secrets(body) {
   const list = h('div', {}, h('p', { class: 'muted' }, '読んでいます…'));
   const name = h('input', { type: 'text', list: 'known', placeholder: 'MS_EMAIL', autocapitalize: 'characters', value: st.prefill ?? '' }), value = h('input', { type: 'password', autocomplete: 'new-password' });
   st.prefill = null;
-  const load = () => act(async () => {
+  const load = () => fill(list, async () => {
     const have = await st.api.secrets(st.lab.slug), names = new Set(have.map((s) => s.name)), at = new Map(have.map((s) => [s.name, s.updated_at]));
     // (when each was set: one not set again for half a year is said — a key or a password worth renewing)
     const age = (n) => { const a = M.secretAge(at.get(n)); return a.days === null ? null : h('span', { class: a.stale ? 'warn' : 'muted' }, a.stale ? ` ⚠️ ${a.days} 日前に登録（新しくするとよい）` : `（${M.ago(at.get(n))}に更新）`); };
@@ -898,8 +994,9 @@ function secrets(body) {
     h('label', {}, '名前'), name, h('label', {}, '値'), value,
     h('div', { class: 'row' }, h('button', { class: 'primary', onclick: async () => {
       const n = name.value.trim().toUpperCase();
-      if (!/^[A-Z_][A-Z0-9_]*$/.test(n) || n.startsWith('GITHUB_')) return toast('名前は英大文字・数字・_（数字から始めない、GITHUB_ で始めない）', true);
-      if (!value.value) return toast('値が空です', true);
+      // (what GitHub would refuse with a 422, said before the value is sealed and sent)
+      const bad = M.secretProblem(n, value.value);
+      if (bad) return toast(bad, true);
       const ok = await guarded('secrets.put', { name: n }, () => st.api.putSecret(st.lab.slug, n, value.value), `${n} を登録しました`);
       if (ok !== undefined) { value.value = ''; load(); loadEnv(st.lab); }
     } }, '登録する'))),
@@ -914,23 +1011,26 @@ function secrets(body) {
 function live(body) {
   const box = h('div', {}, h('p', { class: 'muted' }, '常駐している端末（app の mode hold）を探しています…'));
   body.append(box);
-  act(async () => {
+  fill(box, async () => {
+    if (!hasWf('app.yml')) return box.replaceChildren(h('div', { class: 'card' }, h('p', {}, 'このラボには app.yml がありません: 端末は app.yml で立てます。ラボを新しくすると使えます。'), link(`https://github.com/${st.lab.slug}/actions`, 'Actions を開く（GitHub へ）')));
     const rs = (await st.api.runs(st.lab.slug, { workflow: 'app.yml', status: 'in_progress', per: 10 }));
-    if (!rs.length) return box.replaceChildren(h('div', { class: 'card' }, h('p', {}, '動いている端末がありません。'), h('button', { class: 'primary', onclick: () => { st.tab = 'start'; st.target = 'lab'; render(); setTimeout(() => dispatchForm(main(), 'app.yml', { mode: 'hold', hold: '60' }), 50); } }, '端末を立てる（mode hold）')));
+    if (!rs.length) return box.replaceChildren(h('div', { class: 'card' }, h('p', {}, '動いている端末がありません。下のボタンで立てると（数分）、ここに出ます。'), h('button', { class: 'primary', onclick: () => { st.tab = 'start'; st.target = 'lab'; render(); setTimeout(() => dispatchForm(main(), 'app.yml', { mode: 'hold', hold: '60' }), 50); } }, '端末を立てる（mode hold）')));
     box.replaceChildren(h('div', { class: 'card' }, h('h2', {}, '動いている端末'), h('ul', { class: 'plain' }, rs.map((r) => h('li', { class: 'row' }, h('span', { class: 'grow' }, `#${r.id} ${r.triggering_actor?.login ?? r.actor?.login} · ${M.ago(r.created_at)}`), h('button', { class: 'primary', onclick: () => controller(body, r) }, '操作する'))))));
   });
 }
 async function controller(body, run) {
   const starter = run.triggering_actor?.login ?? run.actor?.login, mine = starter === st.me.login, isPublic = st.lab.repo.visibility !== 'private';
-  const key = await vaultKey({ cacheKey: settings().vault }).catch(() => null);
-  const issues = await act(() => st.api.issues(st.lab.slug)), issue = LF.liveIssue(issues);
+  const key = await vaultKey({ cacheKey: settings().vault }).catch(() => null /* no key set (or not one): the sealed parts say so below */);
+  let issues;
+  try { issues = await st.api.issues(st.lab.slug); } catch (e) { return body.replaceChildren(h('div', { class: 'card' }, h('h2', {}, `端末 #${run.id}`), h('p', {}, 'ライブの issue（命令と返事の置き場）を読めませんでした。'), failView(e, () => controller(body, run)))); }
+  const issue = LF.liveIssue(issues);
   const log = h('div', {}), shot = h('div', {}), since = new Date(Date.now() - 10 * 60_000).toISOString(), seen = new Set();
   let page = 'play';
   const send = async (text) => {
     if (!mine) return toast(`この端末を動かせるのは、実行を始めた ${starter} さんだけです`, true);
     if (!issue) return toast('ライブの issue がまだありません（端末が待つ状態になると作られます）', true);
     const b = await LF.commandBody(run.id, text, { isPublic, key });
-    if (b === null) return toast('公開リポジトリです: 設定に APP_CACHE_KEY（Secrets と同じ鍵）を入れると、命令を封じて送れます', true);
+    if (b === null) return toast('公開リポジトリです: 設定に APP_CACHE_KEY（Secrets と同じ鍵）を入れると、命令を封じて送れます', true, h('button', { onclick: () => go('settings') }, '「設定」を開く'));
     await act(() => st.api.comment(st.lab.slug, issue, b), `送りました: ${text.split('\n')[0]}`);
   };
   const pad = h('div', {});
@@ -942,7 +1042,9 @@ async function controller(body, run) {
     send(cmd.split(' && ').join('\n'));
   } }, label))));
   const cmdBox = h('textarea', { placeholder: 'walk forward 2\nlook right 600\nwhere' });
-  const poll = () => act(async () => {
+  // (a failed poll is said in a box of its own, emptied once a poll works again: the answers so far stay in the log)
+  const pollErr = h('div', {});
+  const poll = () => fill(pollErr, async () => {
     if (!issue) return;
     const cs = await st.api.comments(st.lab.slug, issue, since);
     for (const c of cs) {
@@ -956,24 +1058,35 @@ async function controller(body, run) {
         if (r.png) shot.replaceChildren(h('img', { class: 'screen', alt: '端末の画面', src: `data:image/png;base64,${r.png}` }));
       } else if (t) log.prepend(h('p', { class: 'muted' }, t));
     }
+    pollErr.replaceChildren();
   });
   body.replaceChildren(h('div', { class: 'card' }, h('h2', {}, `端末 #${run.id}`, h('span', { class: 'chip' }, starter), link(run.html_url, 'GitHub')),
     mine ? null : h('p', { class: 'warn' }, `命令が効くのは、この実行を始めた ${starter} さんのものだけです（見るのはできます）`),
     isPublic && !key ? h('p', { class: 'warn' }, '公開リポジトリ: 命令と返事は封じられます。設定に APP_CACHE_KEY を入れてください') : null,
     shot, pad, h('label', {}, '命令（1 行 1 つ）'), cmdBox, h('div', { class: 'row' }, h('button', { class: 'primary', onclick: () => { if (cmdBox.value.trim()) { send(cmdBox.value.trim()); cmdBox.value = ''; } } }, '送る'), h('button', { onclick: () => send('screen') }, '📷 画面'), h('button', { class: 'danger', onclick: () => confirm('端末を終わらせますか') && send('stop') }, '終わる'))),
-  h('div', { class: 'card' }, h('h2', {}, '返事'), log));
+  h('div', { class: 'card' }, h('h2', {}, '返事'), pollErr, log));
   drawPad(); poll();
   clearInterval(st.timer); st.timer = setInterval(() => { if (document.visibilityState === 'visible' && st.tab === 'live') poll(); }, 4000);
 }
 
 // ---- 貸し借り ----
 function hostCard(x, brief = false) {
-  if (x.error) return h('div', { class: 'card' }, h('h2', {}, x.slug), h('p', { class: 'bad' }, x.error));
+  // (a host not seen: why, and the next step — more rights or the App, 「もう一度」, or out of the list on 「貸し借り」)
+  const again = async () => { const i = st.hosts.findIndex((y) => y.slug === x.slug); if (i >= 0) st.hosts[i] = await loadHost(x.slug); render(); };
+  if (x.error) return h('div', { class: 'card' }, h('h2', {}, x.slug), h('p', { class: 'bad' }, x.error),
+    x.err ? rescueView(R.rescue(x.err, rescueCtx()), () => act(again)) : null, brief ? h('button', { onclick: () => go('hosts') }, '「貸し借り」で外す・直す') : null);
   const card = h('div', { class: 'card' }, h('h2', {}, x.slug, h('span', { class: 'chip' }, M.ROLE_NAMES[x.role] ?? '見るだけ'), h('span', { class: 'chip' }, x.repo.visibility), M.forkOf(x.repo) ? h('span', { class: 'chip' }, `${M.forkOf(x.repo)} のフォーク`) : null, link(x.repo.html_url, 'GitHub')));
-  if (!x.rules) { card.append(h('p', { class: 'bad' }, x.errors.join(' / '))); return card; }
+  if (!x.rules) {
+    // (no rules: read again when it failed; the lender may save them here; GitHub's page to see or fix the file)
+    card.append(x.readErr ? failView(x.readErr, () => act(again)) : h('p', { class: x.state === 'missing' ? 'muted' : 'bad' }, x.errors.join(' / ')),
+      h('div', { class: 'row' }, x.readErr ? null : h('button', { onclick: () => act(again) }, '読み直す'),
+        x.state === 'missing' && x.role === 'lender' ? link(`https://github.com/${x.slug}/new/${x.repo.default_branch}?filename=.lab-host.json`, '.lab-host.json を作る（GitHub へ）')
+          : x.state === 'bad' ? link(`https://github.com/${x.slug}/blob/${x.repo.default_branch}/.lab-host.json`, '.lab-host.json を開く（GitHub へ）') : null));
+    return card;
+  }
   const use = h('div', {}, h('p', { class: 'muted' }, '今月の分を数えています…'));
   card.append(h('p', {}, `1 か月 ${x.rules.minutesPerMonth} 分（${Math.floor(x.rules.minutesPerMonth * M.STOP_AT)} 分で止まる）・仕事 ${x.rules.jobs.join(' ')}・${x.rules.hours} ${x.rules.timezone}${x.rules.until ? `・${x.rules.until} まで` : ''}`), use);
-  act(async () => {
+  fill(use, async () => {
     const { rs, used, month, now } = await hostUse(x);
     const pct = Math.min(100, Math.round((used / Math.max(1, now.stopAt)) * 100));
     use.replaceChildren(h('div', { class: 'bar' + (pct >= 100 ? ' bad' : pct >= 75 ? ' warn' : '') }, h('i', { style: { width: `${pct}%` } })),
@@ -1024,14 +1137,15 @@ function lenderForm(x) {
 function hosts(body) {
   if (isOwner()) body.append(forksCard());
   const add = h('input', { type: 'text', placeholder: 'owner/bds-lab-host' });
-  const reload = async () => { st.hosts = await loadHosts(settings().hosts); render(); };
+  const reload = () => act(async () => { st.hosts = await loadHosts(settings().hosts); render(); });
   body.append(h('div', { class: 'card' }, h('h2', {}, '貸し借り（ホスト）'),
     h('p', { class: 'muted' }, 'ホスト = GitHub Actions の時間を貸してくれる人のリポジトリ（.lab-host.json と host.yml）。貸し手は自分の条件を変えられ、借り手は残りの分と結果を見て、「実行」からその人の Actions で走らせられます。一覧はこのアカウントの設定です（アカウントごとに別）。'),
     h('div', { class: 'row' }, h('button', { onclick: () => act(async () => {
       const found = await findHosts();
-      saveSettings({ hosts: [...settings().hosts, ...found] }); await reload();
-      toast(found.length ? `${found.length} 個見つけました` : '見つかりませんでした（最近の 40 個を見ました）');
-    }) }, '自分のホストを探す'), add, h('button', { onclick: async () => { const v = add.value.trim(); if (!M.SLUG.test(v)) return toast('owner/名前 で', true); saveSettings({ hosts: [...settings().hosts, v] }); await reload(); } }, '加える'))));
+      saveSettings({ hosts: [...new Set([...settings().hosts, ...found])] }); await reload();
+      toast(found.length ? `${found.length} 個見つけました` : '見つかりませんでした（.lab-host.json のある、最近の 40 個を見ました）: 貸し手のリポジトリを owner/名前 で右に入れて「加える」');
+    }) }, '自分のホストを探す'), add, h('button', { onclick: async () => { const v = add.value.trim(), bad = M.slugProblem(v, settings().hosts); if (bad) return toast(bad, true); saveSettings({ hosts: [...settings().hosts, v] }); await reload(); } }, '加える'))));
+  if (!st.hosts.length) body.append(h('p', { class: 'muted' }, 'まだホストがありません: 時間を貸すなら「自分のホストを探す」か、ラボの「概要」の「フォークで貸す」。借りるなら、貸し手のリポジトリ（owner/名前）を上に入れて「加える」。'));
   for (const x of st.hosts) body.append(hostCard(x), h('div', { class: 'row' }, h('button', { class: 'danger', onclick: () => { saveSettings({ hosts: settings().hosts.filter((s) => s !== x.slug) }); st.hosts = st.hosts.filter((y) => y.slug !== x.slug); render(); } }, `${x.slug} を一覧から外す`)));
 }
 
@@ -1042,14 +1156,15 @@ function forksCard() {
   // (a fork not given yet — its owner has not invited this account, or the App is not on it — says so in words)
   const delegated = (slug, fn) => async () => { try { return await fn(); } catch (e) { if (e.status === 403 || e.status === 404) throw new Error(`${slug}: まだ預かっていません（フォークの持ち主の招待を受け、ラボの App がそのフォークに入っていると、ここからできます）`); throw e; } };
   // (lending always, as the owner holding the fork's say: its .lab-host.json alone, the lender's time zone and contact kept)
-  const setAlways = (x) => delegated(x.slug, async () => { const f = await st.api.file(x.slug, '.lab-host.json').catch(() => null); await st.api.putFile(x.slug, '.lab-host.json', M.hostRulesText(M.alwaysRules(x.rules?.timezone ?? 'UTC', x.rules?.contact ?? x.owner)).text, f?.sha, 'panel: いつも貸す（ラボの持ち主が預かって）'); });
+  const setAlways = (x) => delegated(x.slug, async () => { const f = await st.api.file(x.slug, '.lab-host.json'); /* null when there is none; a failed read throws (never written without its sha) */ await st.api.putFile(x.slug, '.lab-host.json', M.hostRulesText(M.alwaysRules(x.rules?.timezone ?? 'UTC', x.rules?.contact ?? x.owner)).text, f?.sha, 'panel: いつも貸す（ラボの持ち主が預かって）'); });
   const sync = (slug) => delegated(slug, async () => { const r = await st.api.repo(slug); await st.api.syncFork(slug, r.default_branch); const w = M.forkWorkflows(await st.api.workflows(slug)); for (const id of w.enable) await st.api.enableWorkflow(slug, id); for (const id of w.disable) await st.api.disableWorkflow(slug, id); });
-  const draw = () => act(async () => {
-    const [d, inv, now] = await Promise.all([forkLendingNow({ fresh: true }), st.api.myInvitations().catch(() => null), st.api.variable(st.lab.slug, 'LAB_HOSTS').catch(() => undefined)]);
+  const draw = () => fill(box, async () => {
+    // (variable() is null when LAB_HOSTS is not set; a failed read is said here — never 「入っていない」 instead)
+    const [d, inv, now] = await Promise.all([forkLendingNow({ fresh: true }), st.api.myInvitations().catch(() => null /* an App's sign-in may not list them: GitHub's page has them */), st.api.variable(st.lab.slug, 'LAB_HOSTS').catch((e) => { if (e.status === 403) return undefined; /* this sign-in may not read variables: the forks still listed, said below */ throw e; })]);
     const listed = new Set(String(now ?? '').split(/[\s,]+/).map((x) => x.toLowerCase()));
     // (invitations from forks of this lab: their say, taken in one tap — or on GitHub when this sign-in may not)
     const mine = [];
-    for (const i of (inv ?? []).filter((x) => x.repository?.fork)) { const r = await st.api.repo(i.repository.full_name).catch(() => null); if (M.same(M.forkOf(r), st.lab.slug)) mine.push(i); }
+    for (const i of (inv ?? []).filter((x) => x.repository?.fork)) { const r = await st.api.repo(i.repository.full_name).catch(() => null /* not seen yet: GitHub's page has it */); if (M.same(M.forkOf(r), st.lab.slug)) mine.push(i); }
     const rows = d.list.map((x) => h('li', { class: 'row', 'data-fork': x.slug },
       h('span', { class: 'grow' }, link(`https://github.com/${x.slug}`, x.slug), x.admin ? h('span', { class: 'chip' }, '管理者') : null,
         x.always.ok ? h('span', { class: 'chip' }, '⏱ いつも') : h('span', { class: 'chip bad' }, x.rules ? 'いつもではない' : '条件が正しくない'),
@@ -1060,13 +1175,16 @@ function forksCard() {
       listed.has(x.slug.toLowerCase()) ? h('button', { ...gate('variables'), onclick: () => guarded('variables', { name: 'LAB_HOSTS' }, () => addLabHost(x.slug, true), `${x.slug} を LAB_HOSTS から外しました`).then(draw) }, 'LAB_HOSTS から外す')
         : h('button', { ...gate('variables'), onclick: () => guarded('variables', { name: 'LAB_HOSTS' }, () => addLabHost(x.slug), `${x.slug} を LAB_HOSTS に入れました（hostrun の auto が選びます）`).then(draw) }, 'LAB_HOSTS に入れる')));
     box.replaceChildren(
+      d.errors?.length ? h('div', { class: 'warn' }, h('ul', {}, d.errors.map((e) => h('li', {}, e))), h('button', { onclick: draw }, 'もう一度')) : null,
+      inv === null ? h('p', { class: 'muted' }, 'フォークからの招待は、このサインインでは読めません: ', link('https://github.com/notifications', 'GitHub で招待を見る')) : null,
+      now === undefined ? h('p', { class: 'warn' }, '変数 LAB_HOSTS を読めません（このサインインに Variables の権限がありません）: どのフォークが入っているかは分かりません。「準備」でトークンを作り直すか、App の権限に Variables を足してください') : null,
       mine.length ? h('div', {}, h('h3', {}, 'フォークからの招待（全権限を預かる）'), h('ul', { class: 'plain' }, mine.map((i) => h('li', { class: 'row', 'data-invite': i.repository.full_name }, h('span', { class: 'grow' }, i.repository.full_name, ' ', h('span', { class: 'muted' }, `${i.inviter?.login ?? ''} から`)),
         h('button', { class: 'primary', onclick: () => act(() => st.api.acceptInvitation(i.id).catch((e) => { if (e.status === 403 || e.status === 404) throw new Error('このサインインでは受けられません: 「GitHub で受ける」から'); throw e; }), `${i.repository.full_name} を預かりました`).then(draw) }, '受ける'),
         link(`https://github.com/${i.repository.full_name}/invitations`, 'GitHub で受ける'))))) : null,
-      d.list.length ? h('ul', { class: 'plain' }, rows) : h('p', { class: 'muted' }, 'まだフォークで貸している人はいません。'),
+      d.list.length ? h('ul', { class: 'plain' }, rows) : h('p', { class: 'muted' }, 'まだフォークで貸している人はいません: 手伝う人に、パネルの「概要」の「フォークで貸す」から貸してもらうと、ここに出ます（管理者は入るとまず貸す画面になります）。'),
       d.idle.length ? h('p', { class: 'warn' }, `まだいつも貸していない管理者: ${d.idle.join('・')}（パネルに入ると、まず貸す画面になります）`) : null,
       d.list.length ? h('div', { class: 'row' }, h('button', { onclick: () => act(async () => { for (const x of d.list) await sync(x.slug)(); }, '全部のフォークをラボに合わせました').then(draw) }, '🔄 全部合わせる'),
-        h('button', { ...gate('variables'), onclick: () => guarded('variables', { name: 'LAB_HOSTS' }, async () => { const v = await st.api.variable(st.lab.slug, 'LAB_HOSTS').catch(() => null); await st.api.setVariable(st.lab.slug, 'LAB_HOSTS', M.labHostsWith(v, d.list.filter((x) => x.always.ok || !x.admin).map((x) => x.slug))); }, '貸しているフォークを全部 LAB_HOSTS に入れました').then(draw) }, '貸しているものを全部 LAB_HOSTS に')) : null);
+        h('button', { ...gate('variables'), onclick: () => guarded('variables', { name: 'LAB_HOSTS' }, async () => { const v = await st.api.variable(st.lab.slug, 'LAB_HOSTS'); await st.api.setVariable(st.lab.slug, 'LAB_HOSTS', M.labHostsWith(v, d.list.filter((x) => x.always.ok || !x.admin).map((x) => x.slug))); }, '貸しているフォークを全部 LAB_HOSTS に入れました').then(draw) }, '貸しているものを全部 LAB_HOSTS に')) : null);
   });
   draw();
   return h('div', { class: 'card', id: 'forks' }, h('h2', {}, 'フォークで貸している人（預かっているもの）'),
@@ -1080,7 +1198,7 @@ function settingsTab(body) {
   body.append(h('div', { class: 'card' }, h('h2', {}, `${st.login} の設定（このブラウザ）`),
     h('label', {}, 'ラボのリポジトリ'), lab, h('label', {}, '読み直す間隔（秒）'), refresh,
     h('label', {}, 'APP_CACHE_KEY（公開リポジトリの端末の命令と返事を封じる・開く。Secrets と同じ値。このブラウザだけに置きます）'), vault,
-    h('div', { class: 'row' }, h('button', { class: 'primary', onclick: () => { if (!M.SLUG.test(lab.value.trim())) return toast('owner/名前 で', true); saveSettings({ lab: lab.value.trim(), refresh: Number(refresh.value) || 20, vault: vault.value }); toast('保存しました'); connect(); } }, '保存'),
+    h('div', { class: 'row' }, h('button', { class: 'primary', onclick: () => { const bad = M.slugProblem(lab.value); if (bad) return toast(bad, true); saveSettings({ lab: lab.value.trim(), refresh: Number(refresh.value) || 20, vault: vault.value }); toast('保存しました'); connect(); } }, '保存'),
       h('button', { class: 'danger', onclick: () => confirm(`${st.login} のトークンと鍵をこのブラウザから消しますか`) && signOut() }, 'このアカウントをこのブラウザから消す'))),
   h('div', { class: 'card' }, h('h2', {}, 'このブラウザのアカウント'), h('ul', { class: 'plain' }, A.list().map((e) => h('li', { class: 'row' },
     h('span', { class: 'grow' }, h('strong', {}, e.login), e.login === st.login ? h('span', { class: 'chip' }, 'いま') : null, ' ', h('span', { class: 'muted' }, `${A.cfg(e.login).lab}・ホスト ${A.cfg(e.login).hosts.length}${e.remember ? '' : '・このタブだけ'}`)),
@@ -1093,7 +1211,7 @@ function settingsTab(body) {
   // (this device: a notification when a run of the lab ends while the panel is open)
   const on = h('input', { type: 'checkbox', checked: notifyOn() });
   on.addEventListener('change', async () => {
-    if (on.checked && globalThis.Notification && globalThis.Notification.permission !== 'granted') { const p = await globalThis.Notification.requestPermission().catch(() => 'denied'); if (p !== 'granted') toast('ブラウザが知らせを許していません（パネルの中の知らせだけになります）', true); }
+    if (on.checked && globalThis.Notification && globalThis.Notification.permission !== 'granted') { const p = await globalThis.Notification.requestPermission().catch(() => 'denied' /* said just below */); if (p !== 'granted') toast('ブラウザが知らせを許していません（パネルの中の知らせだけになります）', true); }
     if (on.checked) LOCAL.setItem(NOTIFY_KEY, '1'); else LOCAL.removeItem(NOTIFY_KEY);
   });
   body.append(h('div', { class: 'card' }, h('h2', {}, 'この端末'), h('label', {}, on, ' この端末に知らせる: 実行が終わった・落ちた、参加のお願い、フォークで貸し始めた、新しい版（パネルを開いている間。タブの題に動いている数）'),

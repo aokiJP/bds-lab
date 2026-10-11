@@ -15,6 +15,9 @@ const H = await import(pathToFileURL(path.join(TOP, 'common', 'hosts.mjs')).href
 let pass = 0, fail = 0;
 const only = process.env.HOST_TEST_ONLY ? new RegExp(process.env.HOST_TEST_ONLY) : null;
 const t = async (name, fn) => { if (only && !only.test(name)) return; try { await fn(); pass++; console.log(`ok   ${name}`); } catch (e) { fail++; console.log(`FAIL ${name}\n     ${String(e.message).split('\n').join('\n     ')}\n     ${e.stack?.split('\n')[1] ?? ''}`); } };
+// (tb: a section that waits on a child process (not on this one's state) runs beside the sections after it, settled at the end)
+const bg = [];
+const tb = (name, fn) => { bg.push(t(name, fn)); };
 const eq = (a, b, m = '') => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${m} want ${JSON.stringify(b)} got ${JSON.stringify(a)}`); };
 const ok = (c, m) => { if (!c) throw new Error(m); };
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'host-offline-'));
@@ -70,7 +73,7 @@ await t('what never goes to a host: secrets, keys, the BDS zip, APKs, the app la
   ok(bad.some((b) => b.rel === 'bds/addons/y/bp/functions/setup.mcfunction:1' && /GitHub/.test(b.why)), 'a key in any text file (an .mcfunction) is found too');
   ok(!JSON.stringify(bad).includes('a'.repeat(30)) && !JSON.stringify(bad).includes('B'.repeat(36)), 'the secret itself is never printed');
 });
-await t('what is pushed: the lab as a release carries it, its own CI inert (only host.yml runs), the memory reset with the person\'s gate, the unit asked for; lint-offline passes in it', async () => {
+tb('what is pushed: the lab as a release carries it, its own CI inert (only host.yml runs), the memory reset with the person\'s gate, the unit asked for; lint-offline passes in it', async () => {
   const files = await H.packFiles('coins'), rels = files.map(([r]) => r);
   ok(rels.includes('common/core.mjs') && rels.includes('bds/vendor/bds-version.txt') && !rels.includes('bds/vendor/bedrock-server.zip'), 'the lab, the BDS version, no BDS');
   eq(rels.filter((r) => r.startsWith('.github/')), ['.github/workflows/host.yml'], 'no workflow of the lab\'s own where GitHub starts them (a push must start nothing but host.yml)');
@@ -83,7 +86,7 @@ await t('what is pushed: the lab as a release carries it, its own CI inert (only
   // the lab's own hygiene check, in exactly what a host gets (it reads the workflows: they must be there for it)
   const w = path.join(tmp, 'packed');
   for (const [r, b] of files) { const f = path.join(w, r); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, b); }
-  const l = spawnSync(process.execPath, [path.join(w, 'tests', 'lint-offline.mjs')], { cwd: w, encoding: 'utf8', timeout: 180_000 });
+  const l = await new Promise((res) => { const c = spawn(process.execPath, [path.join(w, 'tests', 'lint-offline.mjs')], { cwd: w, timeout: 180_000 }); let o = ''; c.stdout.on('data', (b) => { o += b; }); c.stderr.on('data', (b) => { o += b; }); c.on('close', (code) => res({ status: code, stdout: o, stderr: '' })); });
   ok(l.status === 0, (l.stdout + l.stderr).split('\n').filter((x) => /✘|FAIL|Error/.test(x)).slice(0, 12).join('\n'));
   fs.rmSync(w, { recursive: true, force: true });
   // what share never ships is not sent from a unit either (an .env of any name, a packed .mcaddon); a key file stops the push
@@ -371,6 +374,7 @@ await t('host ci, auto with the lab\'s App: a token minted on each LAB_HOSTS hos
   } finally { srv.kill(); }
 });
 
+await Promise.all(bg);
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${fail ? 'FAIL' : 'OK'} host-offline: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

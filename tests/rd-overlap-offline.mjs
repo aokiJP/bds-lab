@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -20,6 +20,9 @@ await (await imp('tests/fake/app/adb-server.mjs')).fakeAdbServer();
 
 let pass = 0, fail = 0;
 const t = async (name, fn) => { try { await fn(); pass++; console.log(`ok   ${name}`); } catch (e) { fail++; console.log(`FAIL ${name}\n     ${String(e.message).split('\n').join('\n     ')}\n     ${e.stack?.split('\n')[1] ?? ''}`); } };
+// (the tests of app run / debug are side by side: each has its own fake world, locks and folders; most of their time is waiting)
+const pending = [];
+const tp = (name, fn) => { pending.push(t(name, fn)); };
 const eq = (a, b, m = '') => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${m} want ${JSON.stringify(b)} got ${JSON.stringify(a)}`); };
 const ok = (c, m) => { if (!c) throw new Error(m); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -108,7 +111,7 @@ function appEnv(name, extra = {}) {
   fs.writeFileSync(state, JSON.stringify({ phase: 'home' }));
   fs.mkdirSync(path.join(sdk, 'system-images', 'android-34', 'google_apis', 'x86_64'), { recursive: true });
   const env = { ...process.env, FAKE_APP_STATE: state, FAKE_EMU_POWER: '1', APP_ADB: path.join(FAKE, 'adb'), APP_EMULATOR: path.join(FAKE, 'adb'), APP_BDS_LAB: path.join(FAKE, 'bdslab.mjs'), ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk,
-    APP_STABLE_MS: '100', APP_ADBKEY_DIR: path.join(tmp, 'adbkey'), APP_RELAY_BIN: RELAY_STUB, APP_PAD_BIN: PAD_STUB, APP_PAD_WAIT_MS: '50', APP_TIME_SCALE: '0.05', APP_TESSERACT: path.join(tmp, 'no-tesseract'), ...extra };
+    APP_STABLE_MS: '100', APP_ADBKEY_DIR: path.join(tmp, `adbkey-${name}`), APP_RUN_LOCK: path.join(tmp, `${name}.run.lock`), APP_RUNS_DIR: path.join(tmp, `${name}-out`, 'app', 'runs'), REDROID_LOCK: path.join(tmp, `${name}.device.lock`), APP_RELAY_BIN: RELAY_STUB, APP_PAD_BIN: PAD_STUB, APP_PAD_WAIT_MS: '50', APP_TIME_SCALE: '0.05', APP_TESSERACT: path.join(tmp, 'no-tesseract'), ...extra };
   for (const k of Object.keys(env)) if (/^GOOGLE_|^MS_|^GITHUB_/.test(k) || k === 'APP_DEVICE') delete env[k];
   return { env, state, S: () => JSON.parse(fs.readFileSync(state, 'utf8')) };
 }
@@ -120,9 +123,9 @@ function start(bin, args, env) {
 async function until(what, f, ms = 60_000) { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (f()) return; await sleep(100); } throw new Error(`${what}: ${ms / 1000} 秒で来ません`); }
 const bdsUp = (S) => (S.bds ?? []).some((l) => /^up\b/.test(l));
 const runs = [];
-const runDirOf = (text) => { const m = /→ (app\/runs\/\S+)/.exec(text); return m ? path.join(TOP, m[1]) : null; };
+const runDirOf = (text) => { const m = /→ (\S*app\/runs\/\S+)/.exec(text); return m ? path.join(TOP, m[1]) : null; };
 
-await t('app run: the BDS up while the device is not, the device untouched until its word; then the run on it → PASS', async () => {
+tp('app run: the BDS up while the device is not, the device untouched until its word; then the run on it → PASS', async () => {
   const apk = path.join(tmp, 'apk-a'); lastPull(apk);
   const ready = path.join(tmp, 'ready-a.json');
   const { env, state, S } = appEnv('late', { APP_DEVICE_READY_FILE: ready, APP_SERIAL: '127.0.0.1:5600', APP_LIVE_DEVICE: '1', APP_APK_DIR: apk, APP_SHOT: 'adb', APP_SNAPSHOT: '0' });
@@ -140,7 +143,7 @@ await t('app run: the BDS up while the device is not, the device untouched until
   ok(!S().calls.some((c) => /^-avd/.test(c)) && !/エミュレータを起動します/.test(r.text()), 'no emulator started');
 });
 
-await t('app run: the device\'s word says it failed → the BDS stopped, the reason said, exit 1', async () => {
+tp('app run: the device\'s word says it failed → the BDS stopped, the reason said, exit 1', async () => {
   const apk = path.join(tmp, 'apk-b'); lastPull(apk);
   const ready = path.join(tmp, 'ready-b.json');
   const { env, S } = appEnv('fail', { APP_DEVICE_READY_FILE: ready, APP_SERIAL: '127.0.0.1:5600', APP_LIVE_DEVICE: '1', APP_APK_DIR: apk, APP_SHOT: 'adb', APP_SNAPSHOT: '0' });
@@ -154,7 +157,7 @@ await t('app run: the device\'s word says it failed → the BDS stopped, the rea
   ok(!(S().calls ?? []).some((c) => /^-avd/.test(c)), 'no emulator started');
 });
 
-await t('app run: no APKs pulled yet → the device first (they come from it), then the BDS', async () => {
+tp('app run: no APKs pulled yet → the device first (they come from it), then the BDS', async () => {
   const apk = path.join(tmp, 'apk-c'), ready = path.join(tmp, 'ready-c.json');
   const { env, state, S } = appEnv('noapk', { APP_DEVICE_READY_FILE: ready, APP_SERIAL: '127.0.0.1:5600', APP_LIVE_DEVICE: '1', APP_APK_DIR: apk, APP_SHOT: 'adb', APP_SNAPSHOT: '0' });
   const r = start(process.execPath, [path.join(TOP, 'lab.mjs'), 'app', 'run', '-a', 'jsonui_demo', '--no-fetch'], env);
@@ -219,24 +222,27 @@ shFile('sudo', '[ "$1" = "-n" ] && shift\nexec "$@"\n');
 
 /** stale: APKs without .version (an older pull, or one when the device gave no version) — and not readable as APKs, so a run
  *  that read them before they are pulled again fails */
-function debugRun(name, { args = [], extra = {}, apkVersion = String(VC), stale = false } = {}) {
+async function debugRun(name, { args = [], extra = {}, apkVersion = String(VC), stale = false } = {}) {
   const rd = path.join(tmp, `rd-${name}`), data = path.join(rd, 'data');
   fs.mkdirSync(data, { recursive: true });
   if (stale) { const d = path.join(rd, 'apk'); fs.mkdirSync(d, { recursive: true }); for (const f of ['base.apk', 'split_config.arm64_v8a.apk', 'split_old.apk']) fs.writeFileSync(path.join(d, f), 'not an apk (an old pull)'); }
   else if (apkVersion) lastPull(path.join(rd, 'apk'), apkVersion);
   const { env, S } = appEnv(`debug-${name}`, { FAKE_RD: rd, FAKE_DEVICE_APKS: DEVICE_APKS, PATH: `${BIN}:${process.env.PATH}`, ...extra });
   delete env.ADB;
-  const r = spawnSync(process.execPath, [path.join(TOP, 'app', 'redroid', 'game.mjs'), 'debug', '--data', data, ...args, '--', '--no-fetch'], { cwd: TOP, env, encoding: 'utf8', timeout: 240_000 });
-  const text = r.stdout + r.stderr;
-  for (const m of text.matchAll(/→ (app\/runs\/\S+)/g)) runs.push(path.join(TOP, m[1]));
+  const c = spawn(process.execPath, [path.join(TOP, 'app', 'redroid', 'game.mjs'), 'debug', '--data', data, ...args, '--', '--no-fetch'], { cwd: TOP, env });
+  let text = ''; c.stdout.on('data', (d) => { text += d; }); c.stderr.on('data', (d) => { text += d; });
+  const timer = setTimeout(() => c.kill('SIGKILL'), 240_000);
+  const r = { status: await new Promise((res) => c.on('exit', (code) => res(code))) };
+  clearTimeout(timer);
+  for (const m of text.matchAll(/→ (\S*app\/runs\/\S+)/g)) runs.push(path.join(TOP, m[1]));
   const calls = fs.existsSync(path.join(rd, 'calls')) ? fs.readFileSync(path.join(rd, 'calls'), 'utf8').trim().split('\n') : [];
   const before = fs.existsSync(path.join(rd, 'bds-before-boot')) ? fs.readFileSync(path.join(rd, 'bds-before-boot'), 'utf8').trim() : null;
   return { status: r.status, text, S: S(), calls, before, rd };
 }
 const afterRun = (calls) => calls.slice(calls.findIndex((c) => /^docker run /.test(c)) + 1);
 
-await t('debug: app run starts at once — the BDS up before the device has booted; the device ready → PASS, then stopped', () => {
-  const r = debugRun('ok');
+tp('debug: app run starts at once — the BDS up before the device has booted; the device ready → PASS, then stopped', async () => {
+  const r = await debugRun('ok');
   ok(r.status === 0 && /app run を redroid で: PASS/.test(r.text) && /^PASS /m.test(r.text), `exit ${r.status}\n${r.text}`);
   eq(r.before, 'yes', 'the BDS was up when the device finished booting');
   ok(/前回取り出した版 912605203/.test(r.text) && /端末の準備より [\d.]+ 秒先に開始/.test(r.text), r.text);
@@ -245,53 +251,54 @@ await t('debug: app run starts at once — the BDS up before the device has boot
   ok(/^down\b/.test(r.S.bds.at(-1)), JSON.stringify(r.S.bds));
 });
 
-await t('debug: the device does not start (docker run fails after the BDS is up) → app run stops its BDS, the reason said, exit 1', () => {
-  const r = debugRun('fail', { extra: { FAKE_RUN_FAIL: '1' } });
+tp('debug: the device does not start (docker run fails after the BDS is up) → app run stops its BDS, the reason said, exit 1', async () => {
+  const r = await debugRun('fail', { extra: { FAKE_RUN_FAIL: '1' } });
   ok(r.status === 1 && /E redroid が起きません（docker run）: binder がありません/.test(r.text), `exit ${r.status}\n${r.text}`);
   ok(/端末の準備に失敗しました: redroid が起きません/.test(r.text) && /^FAIL /m.test(r.text), r.text);
   ok(r.S.bds.some((l) => /^up\b/.test(l)) && /^down\b/.test(r.S.bds.at(-1)), `the BDS was up, then stopped: ${JSON.stringify(r.S.bds)}`);
 });
 
 // (a device that never got to the title is stopped even with --keep: left up, the next run would take it as ready — review-a)
-await t('debug: the game stops at Play\'s paywall → app run ends with the reason, the device stopped; --keep too', () => {
-  const r = debugRun('paywall', { extra: { FAKE_PAYWALL: '1' } });
+tp('debug: the game stops at Play\'s paywall → app run ends with the reason, the device stopped; --keep too', async () => {
+  const r = await debugRun('paywall', { extra: { FAKE_PAYWALL: '1' } });
   ok(r.status === 1 && /ゲームがタイトルまで起動しません（ライセンス: no/.test(r.text) && /端末の準備に失敗しました: ゲームがタイトルまで/.test(r.text), `exit ${r.status}\n${r.text}`);
   ok(/^down\b/.test(r.S.bds.at(-1)), JSON.stringify(r.S.bds));
   ok(afterRun(r.calls).some((c) => /^docker rm -f/.test(c)), `stopped: ${r.calls.join(' | ')}`);
-  const k = debugRun('paywall-keep', { args: ['--keep'], extra: { FAKE_PAYWALL: '1' } });
+  const k = await debugRun('paywall-keep', { args: ['--keep'], extra: { FAKE_PAYWALL: '1' } });
   ok(k.status === 1 && /端末の準備に失敗しました/.test(k.text), `exit ${k.status}\n${k.text}`);
   ok(afterRun(k.calls).some((c) => /^docker rm -f/.test(c)), `--keep: stopped all the same (never at its title): ${k.calls.join(' | ')}`);
   ok(/^down\b/.test(k.S.bds.at(-1)), 'the BDS stopped all the same: ' + JSON.stringify(k.S.bds));
 });
 
-await t('debug: the device has another version than the APKs pulled last time → pulled again, the first run told, app run again → PASS', () => {
-  const r = debugRun('newver', { apkVersion: '1' });
+tp('debug: the device has another version than the APKs pulled last time → pulled again, the first run told, app run again → PASS', async () => {
+  const r = await debugRun('newver', { apkVersion: '1' });
   ok(r.status === 0 && /APK の版が変わりました（1 → 912605203）/.test(r.text) && /app run を redroid で: PASS/.test(r.text), `exit ${r.status}\n${r.text}`);
   ok(r.calls.filter((c) => /^adb .*pull /.test(c)).length === 2, 'base + split pulled');
   ok(r.calls.filter((c) => /^adb .*pull /.test(c)).every((c) => /\/apk\.new\//.test(c)), `pulled aside, apk/ left to the first run: ${r.calls.filter((c) => /pull/.test(c)).join(' | ')}`);
   eq(fs.readFileSync(path.join(r.rd, 'apk', '.version'), 'utf8').trim(), String(VC));
   ok(!fs.existsSync(path.join(r.rd, 'apk.new')), 'apk.new swapped in');
-  ok((r.text.match(/^(PASS|FAIL)(?= app\/runs)/mg) ?? []).join(',') === 'FAIL,PASS', 'the first run ends on the word, the second passes');
+  ok((r.text.match(/^(PASS|FAIL)(?= \S*app\/runs)/mg) ?? []).join(',') === 'FAIL,PASS', 'the first run ends on the word, the second passes');
 });
 
 // (the two runs whose BDS must wait for the device: it never comes up first, so the device boots when its looks run out — 40
 // looks, about 8 s, not 80: a BDS started early (the bug these catch) is up within a few looks, as in the first debug test)
-await t('debug: no APKs pulled yet → app run waits for the device first, pulled from it → PASS', () => {
-  const r = debugRun('first', { apkVersion: null, extra: { FAKE_BOOT_LOOKS: '40' } });
+tp('debug: no APKs pulled yet → app run waits for the device first, pulled from it → PASS', async () => {
+  const r = await debugRun('first', { apkVersion: null, extra: { FAKE_BOOT_LOOKS: '40' } });
   ok(r.status === 0 && /まだ無いので端末から取り出してから/.test(r.text) && /app run を redroid で: PASS/.test(r.text), `exit ${r.status}\n${r.text}`);
   eq(r.before, 'no', 'nothing to start the BDS with before the device');
 });
 
-await t('debug: APKs pulled before without .version → as with none: app run waits for the device, reads them only once pulled again → PASS', () => {
-  const r = debugRun('stale', { stale: true, extra: { FAKE_BOOT_LOOKS: '40' } });
+tp('debug: APKs pulled before without .version → as with none: app run waits for the device, reads them only once pulled again → PASS', async () => {
+  const r = await debugRun('stale', { stale: true, extra: { FAKE_BOOT_LOOKS: '40' } });
   ok(r.status === 0 && /前回のものは版が分からないので端末から取り出し直してから/.test(r.text) && /app run を redroid で: PASS/.test(r.text), `exit ${r.status}\n${r.text}`);
   eq(r.before, 'no', 'no BDS from the stale APKs before the device');
   ok(r.calls.filter((c) => /^adb .*pull /.test(c)).length === 2, 'base + split pulled again');
   eq(fs.readdirSync(path.join(r.rd, 'apk')).sort(), ['.version', 'base.apk', 'split_config.arm64_v8a.apk'], 'the old pull replaced');
   eq(fs.readFileSync(path.join(r.rd, 'apk', '.version'), 'utf8').trim(), String(VC));
-  ok((r.text.match(/^(PASS|FAIL)(?= app\/runs)/mg) ?? []).join(',') === 'PASS', 'one run, no "again"');
+  ok((r.text.match(/^(PASS|FAIL)(?= \S*app\/runs)/mg) ?? []).join(',') === 'PASS', 'one run, no "again"');
 });
 
+await Promise.all(pending);
 for (const d of runs.filter(Boolean)) fs.rmSync(d, { recursive: true, force: true });
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${fail ? 'FAIL' : 'PASS'} ${pass}/${pass + fail}`);

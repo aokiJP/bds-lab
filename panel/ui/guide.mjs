@@ -20,8 +20,8 @@ export function guideCard({ role, facts, go, storage, labSlug }) {
   const pct = Math.round((g.done / Math.max(1, g.total)) * 100);
   const card = h('div', { class: 'card', id: 'guide' }, h('h2', {}, g.next ? `🧭 はじめてのガイド（${g.done}/${g.total}）` : '🎉 準備は全部できました'),
     h('div', { class: 'bar' }, h('i', { style: { width: `${pct}%` } })),
-    g.next ? h('div', { class: 'next' }, h('p', {}, h('strong', {}, `次: ${g.next.title}`)), h('p', { class: 'muted' }, g.next.why), h('button', { class: 'primary', onclick: () => go(g.next.tab) }, `「${g.next.title}」へ`)) : h('p', { class: 'muted' }, 'これで一通り使えます。困ったら Ctrl（⌘）+K か右上の 🔎 で「やりたいこと」を入れてください。'),
-    h('ol', { class: 'steps' }, g.steps.map((s) => h('li', { class: s.done ? 'ok' : '', 'data-step': s.id }, `${s.done ? '✅' : '⬜'} ${s.title}`, s.done ? null : h('button', { class: 'linkish', onclick: () => go(s.tab) }, ' 開く')))),
+    g.next ? h('div', { class: 'next' }, h('p', {}, h('strong', {}, `次: ${g.next.title}`)), h('p', { class: 'muted' }, g.next.why), h('p', { class: 'warn' }, `今の様子: ${g.next.stuck}`), h('p', {}, `次の 1 手: ${g.next.act}`), h('button', { class: 'primary', onclick: () => go(g.next.tab) }, `「${g.next.title}」へ`)) : h('p', { class: 'muted' }, 'これで一通り使えます。困ったら Ctrl（⌘）+K か右上の 🔎 で「やりたいこと」を入れてください。'),
+    h('ol', { class: 'steps' }, g.steps.map((s) => h('li', { class: s.done ? 'ok' : '', 'data-step': s.id }, `${s.done ? '✅' : '⬜'} ${s.title}`, s.done ? null : h('span', { class: 'muted' }, `（${s.stuck}）`), s.done ? null : h('button', { class: 'linkish', onclick: () => go(s.tab) }, ' 開く')))),
     h('div', { class: 'row' }, h('button', { onclick: () => { storage.setItem(key, '1'); card.remove(); } }, 'ガイドを隠す'), h('span', { class: 'muted' }, '（🔎 で「はじめて」と入れるとまた出ます）')));
   return card;
 }
@@ -40,7 +40,7 @@ export function palette(ctx) {
       found = G.findIntents(input.value, { tabs: ctx.tabs(), may: ctx.may });
       sel = Math.min(sel, Math.max(0, found.length - 1));
       list.replaceChildren(...(found.length ? found.map((x, i) => h('li', {}, h('button', { class: i === sel ? 'on' : '', role: 'option', 'data-intent': x.id, onclick: () => choose(x) }, x.label)))
-        : [h('li', { class: 'muted' }, 'まだ見つかりません: 言い方を変えてみてください（例: 「止めたい」「招く」「貸す」）')]));
+        : [h('li', { class: 'muted' }, 'まだ見つかりません: 言い方を変えてみてください（例: 「止めたい」「招く」「貸す」）。「わからない」と入れると、はじめてのガイドが出ます')]));
       const t = G.findTerms(input.value);
       terms.replaceChildren(...(t.length ? [h('h3', {}, 'ことばの意味'), ...t.map((g) => h('p', {}, h('strong', {}, g.term), ': ', g.means))] : []));
     };

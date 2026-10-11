@@ -36,9 +36,9 @@ export const INCOMING = /^incoming\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.(mcaddon|mc
  *  characters (line: no line break either); not taken by the lab for an option — -- or name= at its start */
 export function textProblem(v, { max, line = false, what = '文' }) {
   const s = String(v ?? '');
-  if (s.length > max) return `${what}は ${max} 文字まで`;
-  if ((line ? /[\u0000-\u001f\u007f]/ : /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/).test(s)) return line ? `${what}は 1 行で（使えない文字があります）` : `${what}に使えない文字があります`;
-  if (/^\s*(--|[A-Za-z_][\w-]*=)/.test(s)) return `${what}は -- や「名前=」で始められません`;
+  if (s.length > max) return `${what}は ${max} 文字まで（${s.length} 文字あります）: 短くして、もう一度`;
+  if ((line ? /[\u0000-\u001f\u007f]/ : /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/).test(s)) return line ? `${what}は 1 行で書いてください（改行など使えない文字があります）: 消して、もう一度` : `${what}に使えない文字があります: 消して、もう一度`;
+  if (/^\s*(--|[A-Za-z_][\w-]*=)/.test(s)) return `${what}は -- や「名前=」で始められません: 前に言葉を足して、もう一度`;
   return '';
 }
 /** what is wrong with the name of a unit to make or take in (pure) → words; '' when nothing is. The lab's rule (UNIT) and the
@@ -47,8 +47,8 @@ export function textProblem(v, { max, line = false, what = '文' }) {
 export function unitNameProblem(name, { taking = false } = {}) {
   const n = String(name ?? '');
   if (!UNIT.test(n)) return UNIT_SAY;
-  if (!isUnitName(n)) return 'zz_ で始まる名前は「アドオン」に出ません（しまったユニットの印）: ほかの名前に';
-  return taking && n.endsWith('_') ? '取り込むときの名前は _ で終われません（ラボが外します）' : '';
+  if (!isUnitName(n)) return 'zz_ で始まる名前は「アドオン」に出ません（しまったユニットの印）: zz_ を外すか、ほかの名前に';
+  return taking && n.endsWith('_') ? '取り込むときの名前は _ で終われません（ラボが外します）: 最後の _ を消して、もう一度' : '';
 }
 /** a new unit → { inputs } for unit.yml, or { error } in words (pure) */
 export function newUnitInputs({ unit, title = '', request = '' } = {}) {
@@ -58,7 +58,7 @@ export function newUnitInputs({ unit, title = '', request = '' } = {}) {
 }
 /** test / go / sim of a unit → { inputs } for unit.yml, or { error } (pure) */
 export function runInputs({ job, unit } = {}) {
-  if (!RUN_JOBS.includes(job)) return { error: `仕事は ${RUN_JOBS.join('・')} のどれか` };
+  if (!RUN_JOBS.includes(job)) return { error: `仕事は ${RUN_JOBS.join('・')} のどれかです: 「アドオン」のボタンから始めてください` };
   const u = String(unit ?? '').trim();
   return UNIT.test(u) ? { inputs: { job, unit: u } } : { error: UNIT_SAY };
 }
@@ -133,13 +133,13 @@ export const MAX_EDIT = 1_000_000;
  *  readable as JSON (with its header); tests.txt not empty */
 export function checkEdit(file, text, unit) {
   const s = String(text ?? '');
-  if (!editableFiles(unit).includes(file)) return { ok: false, error: `${file} はここでは直せません` };
-  if (new TextEncoder().encode(s).length > MAX_EDIT) return { ok: false, error: '1 MB までのファイルだけ直せます' };
+  if (!editableFiles(unit).includes(file)) return { ok: false, error: `${file} はここでは直せません: 一覧にあるファイルを選んでください` };
+  if (new TextEncoder().encode(s).length > MAX_EDIT) return { ok: false, error: '1 MB までのファイルだけ直せます: 短くして、もう一度' };
   if (/(^|\/)manifest\.json$/.test(file)) {
-    let j; try { j = JSON.parse(s.replace(/^﻿/, '')); } catch (e) { return { ok: false, error: `${file} が JSON として読めません（${e.message}）` }; }
-    if (!j || typeof j !== 'object' || Array.isArray(j) || !j.header || typeof j.header !== 'object') return { ok: false, error: `${file} に header がありません` };
+    let j; try { j = JSON.parse(s.replace(/^﻿/, '')); } catch (e) { return { ok: false, error: `${file} が JSON として読めません（${e.message}）: かっこ・カンマ・引用符を確かめて、もう一度` }; }
+    if (!j || typeof j !== 'object' || Array.isArray(j) || !j.header || typeof j.header !== 'object') return { ok: false, error: `${file} に header がありません: "header": { … } を足して、もう一度` };
   }
-  if (file === 'tests.txt' && !s.trim()) return { ok: false, error: 'tests.txt が空です（試験が 1 つも無くなります）' };
+  if (file === 'tests.txt' && !s.trim()) return { ok: false, error: 'tests.txt が空です（試験が 1 つも無くなります）: `## 名前` の節を 1 つは書いてください' };
   return { ok: true, error: '' };
 }
 /** a text's line break (pure): its first one — \r\n, \r or \n (none: \n) */
@@ -160,10 +160,10 @@ const dropIncoming = (api, slug, branch) => api.call('DELETE', `/repos/${slug}/g
  *  → GitHub's answer to the file */
 export async function putIncoming(api, slug, { path, message }, content, base = 'main') {
   const branch = INCOMING.test(String(path ?? '')) ? incomingBranch(path) : null;
-  if (!branch) throw new Error('このファイルの名前は使えません');
-  if (!content) throw new Error('ファイルが読めませんでした');
+  if (!branch) throw new Error('このファイルの名前は使えません: 名前を英数字にして、選び直してください');
+  if (!content) throw new Error('ファイルが読めませんでした: ファイルを選び直して、もう一度');
   const sha = (await api.call('GET', `/repos/${slug}/git/ref/${enc(`heads/${base}`)}`))?.object?.sha;
-  if (!sha) throw new Error(`既定の枝 ${base} の先頭が読めません`);
+  if (!sha) throw new Error(`既定の枝 ${base} の先頭が読めません: 枝が消えていないか GitHub で見て、「読み直す」から、もう一度`);
   // (GitHub's refusal said in words where its own are terse: a branch a ruleset will not let be made, a pack too large)
   const why = (e) => { const r = refusal(e.status, e.message); return r.kind ? Object.assign(new Error(`${r.say}（${String(e.message).replace(/\s+/g, ' ').trim()}）`), { status: e.status }) : e; };
   try { await api.call('POST', `/repos/${slug}/git/refs`, { ref: `refs/heads/${branch}`, sha }); } catch (e) { throw why(e); }
@@ -180,8 +180,8 @@ export async function importUnit(api, slug, plan, content, dispatch, base = 'mai
  *  (over 1 MB) is refused: saving the empty text would wipe it */
 export async function readUnitFile(api, slug, path) {
   let j; try { j = await api.call('GET', `/repos/${slug}/contents/${enc(path)}`); } catch (e) { if (e.status === 404) return null; throw e; }
-  if (!j || Array.isArray(j) || j.type !== 'file') throw new Error(`${path} はファイルではありません`);
-  if (j.encoding !== 'base64') throw new Error(`${path} は大きすぎて、ここでは直せません（1 MB まで）`);
+  if (!j || Array.isArray(j) || j.type !== 'file') throw new Error(`${path} はファイルではありません: 別のファイルを選んでください`);
+  if (j.encoding !== 'base64') throw new Error(`${path} は大きすぎて、ここでは直せません（1 MB まで）: GitHub の画面で直してください`);
   return { text: fromB64(j.content), sha: j.sha };
 }
 /** a unit's file saved as a commit on the default branch, over the sha it was read at → { sha (the new one), commit (its
@@ -194,6 +194,6 @@ export async function saveUnitFile(api, slug, path, text, sha, message) {
     if (e.status !== 409 && e.status !== 422) throw e;
     const r = refusal(e.status, e.message);
     if (r.kind === 'stale') throw new Error(r.say);
-    throw Object.assign(new Error(`${String(e.message).replace(/\s+/g, ' ').trim()} — ${r.kind === 'protected' ? r.say : '既定の枝が守られているかもしれません（PR が要ります）'}`), { status: e.status });
+    throw Object.assign(new Error(`${String(e.message).replace(/\s+/g, ' ').trim()} — ${r.kind === 'protected' ? `${r.say}: 変えた中身を写してから、GitHub で PR を作って入れてください` : '既定の枝が守られているかもしれません（PR が要ります）: 変えた中身を写してから、GitHub で PR を作って入れてください'}`), { status: e.status });
   }
 }

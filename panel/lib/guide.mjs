@@ -96,20 +96,21 @@ export const findTerms = (query, limit = 3) => { const q = norm(query); return q
 /** the next steps for this person's role (pure) → { steps: [{ id, title, why, done, tab }], done, total, next }. role: owner |
  *  admin | writer | lender | stranger; facts: what the panel knows (pages, app, auth, discord, ran, lenders, lending, members) */
 export function guideSteps(role, f = {}) {
-  const S = (id, title, why, done, tab) => ({ id, title, why, done: Boolean(done), tab });
+  // (stuck: why this one is not done yet, in a line; act: the one thing to press — the screen shows both beside the step)
+  const S = (id, title, why, done, tab, stuck = '', act = '') => ({ id, title, why, done: Boolean(done), tab, stuck: done ? '' : stuck || 'まだ終わっていません', act: done ? '' : act || `「${HELP[tab]?.title ?? tab}」を開く` });
   const lab = [
     S('signin', 'サインインする', 'あなたが誰かを GitHub が決めます。できることは GitHub の権限のとおりです。', true, 'settings'),
-    S('pages', 'パネルを公開する（Pages）', 'このパネルをいつでも開けるように、GitHub Pages に置きます。', f.pages, 'setup'),
-    S('app', 'GitHub App を作る', 'みんなが「GitHub でサインイン」だけで入れるようにし、ワークフローが個人のトークンなしで動くようにします。', f.app, 'setup'),
-    S('auth', 'サインインのサービスを置く', '「GitHub でサインイン」を仕上げる小さなサービスです（Cloudflare なら数クリック）。', f.auth, 'setup'),
-    S('discord', 'Discord につなぐ', '実行が終わったら、結果と .mcaddon がスマホに届くようにします。', f.discord, 'discord'),
-    S('run', '最初の実行を始める', '「実行」の「すぐ始める」か「アイデアからアドオンを作る」で、1 回動かしてみます。', f.ran, 'start'),
-    S('lenders', '貸し手を見つける', 'ほかの人の Actions の時間を借りると、たくさん並べて試せます（管理者はいつも貸します）。', f.lenders, 'hosts'),
+    S('pages', 'パネルを公開する（Pages）', 'このパネルをいつでも開けるように、GitHub Pages に置きます。', f.pages, 'setup', 'GitHub Pages がまだ有効ではありません（パネルの置き場がありません）', '「準備」の「GitHub Pages」の行のボタンを押す'),
+    S('app', 'GitHub App を作る', 'みんなが「GitHub でサインイン」だけで入れるようにし、ワークフローが個人のトークンなしで動くようにします。', f.app, 'setup', 'まだ App がありません（変数 APP_SLUG が見つかりません）', '「準備」の「GitHub App」の行で「App を作る」を押す'),
+    S('auth', 'サインインのサービスを置く', '「GitHub でサインイン」を仕上げる小さなサービスです（Cloudflare なら数クリック）。', f.auth, 'setup', f.app ? 'サインインのサービスの URL がまだありません' : 'サービスは App の鍵で動くので、先に「GitHub App を作る」が要ります', f.app ? '「準備」の「サインインのサービス」の行で、置くか URL を入れる' : '先に「GitHub App を作る」を終える'),
+    S('discord', 'Discord につなぐ', '実行が終わったら、結果と .mcaddon がスマホに届くようにします。', f.discord, 'discord', 'Discord の Webhook かボットがまだ登録されていません', '「Discord」で Webhook の URL を登録して「試しに送る」を押す'),
+    S('run', '最初の実行を始める', '「実行」の「すぐ始める」か「アイデアからアドオンを作る」で、1 回動かしてみます。', f.ran, 'start', 'まだ 1 回も実行していません（読めなかったときもここに出ます）', '「実行」の「すぐ始める」を押す'),
+    S('lenders', '貸し手を見つける', 'ほかの人の Actions の時間を借りると、たくさん並べて試せます（管理者はいつも貸します）。', f.lenders, 'hosts', '借りる先（貸し手）がまだありません', '「貸し借り」で貸し手を加える（貸してくれる人に、フォークで貸してもらう）'),
   ];
-  const steps = role === 'owner' || role === 'admin' ? (role === 'admin' ? [lab[0], S('lend', '時間を貸す（管理者の決まり）', '自分のフォークで、ずっと貸します。', f.lending, 'overview'), ...lab.slice(4, 6)] : lab)
-    : role === 'writer' ? [lab[0], lab[5], S('watch', '進み具合を見る', '「進み具合」で、落ちたら原因と直し方を言葉で見られます。', f.watched, 'runs'), lab[4]]
-      : [S('fork', 'ラボをフォークする', 'ラボの写しを自分のアカウントに作ります（public・無料）。', f.fork, 'overview'), S('lend', 'フォークで貸す', 'ボタン 1 つで、ずっと貸す設定にします。', f.lending, 'overview'),
-        ...(role === 'stranger' ? [S('join', '参加をお願いする（したいなら）', '持ち主に、ラボへの参加をお願いできます。', f.asked, 'overview')] : [])];
+  const steps = role === 'owner' || role === 'admin' ? (role === 'admin' ? [lab[0], S('lend', '時間を貸す（管理者の決まり）', '自分のフォークで、ずっと貸します。', f.lending, 'overview', 'まだ時間を貸していません', '「概要」の「フォークで貸す」を押す'), ...lab.slice(4, 6)] : lab)
+    : role === 'writer' ? [lab[0], lab[5], S('watch', '進み具合を見る', '「進み具合」で、落ちたら原因と直し方を言葉で見られます。', f.watched, 'runs', 'まだ「進み具合」を開いていません', '「進み具合」を開く'), lab[4]]
+      : [S('fork', 'ラボをフォークする', 'ラボの写しを自分のアカウントに作ります（public・無料）。', f.fork, 'overview', 'まだ自分のフォークがありません', '「概要」の「ラボをフォークする」を押す'), S('lend', 'フォークで貸す', 'ボタン 1 つで、ずっと貸す設定にします。', f.lending, 'overview', 'まだ貸す設定になっていません（フォークが先に要ります）', '「概要」の「フォークで貸す」を押す'),
+        ...(role === 'stranger' ? [S('join', '参加をお願いする（したいなら）', '持ち主に、ラボへの参加をお願いできます。', f.asked, 'overview', 'まだお願いしていません', '「概要」の「参加をお願いする」を押す')] : [])];
   const done = steps.filter((x) => x.done).length;
   return { steps, done, total: steps.length, next: steps.find((x) => !x.done) ?? null };
 }
