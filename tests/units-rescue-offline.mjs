@@ -69,6 +69,10 @@ const settle = async () => { for (let i = 0; i < 10; i++) await new Promise((r) 
 
 const U = await imp('panel/lib/units.mjs'), W = await imp('panel/lib/workspace.mjs');
 
+// (the page's own hook, as panel.js sets it: lib/rescue.mjs's words and its next step under every failure drawn in place)
+const D = await imp('panel/ui/dom.mjs'), RS = await imp('panel/lib/rescue.mjs');
+D.setOnFail((e, retry) => { const r = RS.rescue(e, { lab: 'o/lab', owner: 'o' }), a = r.action; return D.h('span', { class: 'muted' }, `${r.why}。${r.next} `, a?.link ? D.link(a.link, a.label) : retry && a?.kind ? D.h('button', { onclick: () => retry() }, a.label) : null); });
+
 await t('typed input that is wrong says what to do next (not just what is wrong)', () => {
   const next = /(もう一度|ください|してから|外す|消して|直して)/;
   const cases = [W.newUnitInputs({ unit: 'ok_name', title: 'x'.repeat(81) }).error, W.newUnitInputs({ unit: 'ok_name', request: 'x'.repeat(2001) }).error,
@@ -94,7 +98,7 @@ await t('the 「アドオン」 tab: a list that cannot be read says what to do 
   // the units themselves unreadable (403): the words, the next step, and 「もう一度」 reads again
   const api0 = fakeApi({ files: LAB, fail: { 'contents/bds/addons': err(403, 'Resource not accessible by integration') } }), b0 = new E('div');
   await UI.unitsTab(b0, ctxOf(api0));
-  const bad0 = b0.all((e) => e.tagName === 'P' && e.className === 'bad')[0];
+  const bad0 = b0.all((e) => e.className === 'bad')[0];
   ok(bad0 && /Resource not accessible/.test(bad0.textContent) && !/読んでいます/.test(b0.textContent), b0.textContent);
   const n0 = api0.calls.length;
   ok(b0.links().some((l) => /^https:\/\/github\.com\//.test(l)), `403 offers GitHub's page: ${b0.links()}`);
@@ -169,7 +173,7 @@ await t('the 「配布」 tab: a failed read has a next step, an off button says
   const UR = await imp('panel/ui/releases.mjs');
   const api = fakeApi({ fail: { releases: err(404, 'Not Found') } }), b = new E('div');
   await UR.releasesTab(b, ctxOf(api));
-  ok(b.all((e) => e.tagName === 'P' && e.className === 'bad').length === 1 && b.links().some((l) => /^https:\/\/github\.com\//.test(l)) && !/読んでいます/.test(b.textContent), b.textContent);
+  ok(b.all((e) => e.className === 'bad').length === 1 && b.links().some((l) => /^https:\/\/github\.com\//.test(l)) && !/読んでいます/.test(b.textContent), b.textContent);
   const c1 = ctxOf(fakeApi(), { lab: { slug: 'o/lab', workflows: [] } }), b1 = new E('div'); await UR.releasesTab(b1, c1);
   ok(/notify\.yml がありません: 「概要」でラボを新しくする/.test(b1.textContent), b1.textContent);
   const went = [], c2 = ctxOf(fakeApi(), { caps: { notify: { ok: false, need: '秘密 DISCORD_BOT_TOKEN' } }, go: (x) => went.push(x) }), b2 = new E('div'); await UR.releasesTab(b2, c2);
@@ -187,7 +191,7 @@ await t('wayOut: GitHub\'s words kept, the next step under them (no secret, no a
   const ctx = ctxOf(fakeApi());
   for (const e of [err(401, 'Bad credentials'), err(403, 'nope'), err(404, 'Not Found'), err(409, 'x'), err(422, 'x'), err(500, 'x'), new Error('Failed to fetch'), 'odd']) {
     const v = wayOut(e, ctx, () => {});
-    ok(v.all((x) => x.className === 'bad').length === 1 && v.all((x) => x.className === 'muted')[0].textContent.length > 5, `a next step for ${e?.status ?? e}`);
+    ok([v, ...v.all(() => true)].filter((x) => x.className === 'bad').length === 1 && v.all((x) => x.className === 'muted')[0].textContent.length > 5, `a next step for ${e?.status ?? e}`);
     for (const l of v.links()) ok(/^https:\/\/(github\.com|api\.github\.com)\//.test(l), l);
   }
 });

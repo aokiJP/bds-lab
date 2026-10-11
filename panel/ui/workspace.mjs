@@ -2,20 +2,17 @@
 // changed — each by GitHub alone: the files through the contents API, the lab's own work by unit.yml on GitHub Actions
 // (lib/workspace.mjs: its inputs; common/unitci.mjs runs them). Each change goes through the lab's policy once:
 // guarded('dispatch', …) — allowed for this role, asked again when the policy wants, kept in the audit log.
-import { h, toast, link } from './dom.mjs';
+import { h, toast, link, failView } from './dom.mjs';
 import * as W from '../lib/workspace.mjs';
 import * as U from '../lib/units.mjs';
 import { fmtBytes } from '../lib/model.mjs';
-import { rescue } from '../lib/rescue.mjs';
 
 /** a failure drawn in place (a list that could not be read, a file that could not be opened): GitHub's words as they came
  *  and, under them, what to do — lib/rescue.mjs's next step, with its GitHub page as a link or 「もう一度」 as a button
  *  (retry: what that button does; none: no button, the words alone). Never an empty box */
-export function wayOut(e, ctx, retry = null) {
-  const slug = ctx?.lab?.slug, r = rescue(e, { lab: slug, owner: String(slug ?? '').split('/')[0] });
-  const a = r.action, step = a?.link ? link(a.link, a.label) : retry && (a?.kind === 'retry' || a?.kind === 'reload') ? h('button', { onclick: retry }, a.label) : null;
-  return h('div', {}, h('p', { class: 'bad', role: 'alert' }, e?.message || r.why), h('p', { class: 'muted' }, r.next, step ? [' ', step] : null));
-}
+// (the page's own way out — failView: the same words and next step as every other failure, with this sign-in's context: the
+// App or a token; ctx is not needed for it)
+export function wayOut(e, _ctx, retry = null) { return failView(e, retry); }
 
 /** ctx, the same for every card here (ui/units.mjs passes its own on): {
  *    api (lib/gh.mjs), lab: { slug, repo: { default_branch }, workflows? (GitHub's list: unit.yml looked for in it) },

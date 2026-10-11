@@ -80,7 +80,7 @@ const canLab = () => Boolean(st.lab && (st.lab.role === 'admin' || st.lab.role =
 // (no dead end: every failure's notice says what happened and offers the next step — lib/rescue.mjs: more rights, sign in
 // again, wait for the rate limit, try again, read again)
 const rescueCtx = () => ({ owner: st.lab?.repo?.owner?.login ?? st.lab?.slug?.split('/')[0], isOrg: st.lab?.repo?.owner?.type === 'Organization', appSlug: CONFIG.appSlug, signedInWithApp: A.session(st.login)?.kind === 'oauth', lab: st.lab?.slug, online: navigator.onLine });
-const rescueView = (r, retry) => h('span', {}, r.why === r.next ? null : h('span', {}, `${r.why}。${r.next} `),
+const rescueView = (r, retry) => h('span', { class: 'muted' }, r.why === r.next ? null : h('span', {}, `${r.why}。${r.next} `),
   r.action?.link ? link(r.action.link, r.action.label)
     : r.action?.kind === 'retry' && retry ? h('button', { onclick: () => retry() }, r.action.label)
       : r.action?.kind === 'signin' ? h('button', { onclick: () => renderSignIn('', { login: st.login }) }, r.action.label)

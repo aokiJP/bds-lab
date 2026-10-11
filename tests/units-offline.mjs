@@ -550,7 +550,7 @@ await t('the 「アドオン」 tab (fake DOM, fake GitHub): a card per unit —
   // the units not readable: why, in place of the list (and a toast)
   const b7 = new E('div');
   ok(await UI.unitsTab(b7, ctxOf(fakeGitHub({ files: LAB, fail: { '/repos/o/lab/contents/bds/addons': 403 } }).api).ctx) === undefined, 'nothing shown');
-  ok(/権限がありません/.test(b7.all((e) => e.tagName === 'P' && e.className === 'bad')[0]?.textContent) && !/読んでいます/.test(b7.textContent) && /権限がありません/.test(toast.textContent), b7.textContent);
+  ok(/権限がありません/.test(b7.all((e) => e.className === 'bad')[0]?.textContent) && !/読んでいます/.test(b7.textContent) && /権限がありません/.test(toast.textContent), b7.textContent);
 });
 
 await t('the cards (fake DOM, fake GitHub): 新しく作る starts unit.yml with its inputs (a name taken refused first); 取り込む reads the file, puts its bytes on lab-incoming/<name> as base64 and starts unit.yml, through guarded once (a name taken refused first); the editor reads with its sha, saves, saves again over the new one, refuses a broken manifest, keeps a file\'s \\r\\n, and 保存して試験 runs the test', async () => {
@@ -675,7 +675,7 @@ await t('the 「配布」 tab (fake DOM, fake GitHub): the releases newest first
   // not readable: why, in place of the list
   const b5 = new E('div');
   await UR.releasesTab(b5, ctxOf(fakeGitHub({ fail: { '/repos/o/lab/releases': 404 } }).api).ctx);
-  ok(/見つからない/.test(b5.all((e) => e.tagName === 'P' && e.className === 'bad')[0]?.textContent) && !/読んでいます/.test(b5.textContent), b5.textContent);
+  ok(/見つからない/.test(b5.all((e) => e.className === 'bad')[0]?.textContent) && !/読んでいます/.test(b5.textContent), b5.textContent);
 });
 
 await t('the new files: text never parsed as HTML, no eval, no address but GitHub\'s; the Actions side spawns with no shell, the panel side imports nothing of node', () => {
