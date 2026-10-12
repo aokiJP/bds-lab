@@ -14,7 +14,7 @@ const eq = (a, b, m = '') => { if (JSON.stringify(a) !== JSON.stringify(b)) thro
 const ok = (c, m) => { if (!c) throw new Error(m); };
 
 const ENV = { GITHUB_TOKEN: 'tok-not-printed', GITHUB_REPOSITORY: 'o/lab' };
-const run = (id, conclusion, title, at = '2026-10-10T01:02:03Z') => ({ id, status: 'completed', conclusion, display_title: title, updated_at: at, actor: { login: 'secret-person' } });
+const run = (id, conclusion, title, at = '2026-10-10T01:02:03Z') => ({ id, status: 'completed', conclusion, display_title: title, event: 'push', updated_at: at, actor: { login: 'secret-person' } });
 const mkFetch = ({ priv = false, fail = [] } = {}) => {
   const seen = [];
   const f = async (url, opts) => {
@@ -22,7 +22,7 @@ const mkFetch = ({ priv = false, fail = [] } = {}) => {
     const u = url.replace('https://api.github.com/repos/o/lab', '');
     if (fail.some((x) => u.includes(x))) return { ok: false, status: 500, json: async () => ({}) };
     const J = (o) => ({ ok: true, status: 200, json: async () => o });
-    if (u === '') return J({ private: priv });
+    if (u === '') return J({ private: priv, default_branch: 'main' });
     if (u.startsWith('/actions/workflows/verify.yml')) return J({ workflow_runs: [run(1, 'failure', 'verify'), run(2, 'success', 'verify')] });
     if (u.startsWith('/actions/workflows/unit.yml')) return J({ workflow_runs: [run(3, 'success', 'unit test ruby'), run(4, 'failure', 'unit test ruby'), run(5, 'failure', 'unit test <b>x</b>'), run(6, 'failure', 'unit build gem'), run(7, 'failure', 'unit test amber')] });
     if (u.startsWith('/releases/latest')) return J({ tag_name: 'v1.2.3', published_at: '2026-10-01T00:00:00Z', author: { login: 'secret-person' } });
@@ -43,6 +43,30 @@ await t('collect: verify, last test of each unit, release, connect', async () =>
   ok(f.seen.every((s) => s.opts.headers.authorization === 'Bearer tok-not-printed'));
   const j = JSON.stringify(d);
   ok(!/secret-person|LEAKY|tok-not/.test(j), j);
+});
+await t('collect: verify only on the default branch, push/schedule; cancelled is skipped', async () => {
+  const f = mkFetch(); await S.collect(f, ENV);
+  ok(f.seen.some((x) => /verify\.yml\/runs\?.*&branch=main/.test(x.url)), 'branch');
+  const g = async (url, o) => /verify\.yml/.test(url) ? { ok: true, status: 200, json: async () => ({ workflow_runs: [{ ...run(1, 'failure', 'v'), event: 'pull_request' }, run(2, 'cancelled', 'v'), run(3, 'success', 'v')] }) } : mkFetch()(url, o);
+  eq((await S.collect(g, ENV)).verify.state, 'ok');
+  eq(S.verdict(run(1, 'skipped', 'x')), 'skip'); eq(S.verdict(run(1, 'timed_out', 'x')), 'bad'); eq(S.verdict(run(1, 'startup_failure', 'x')), 'bad');
+});
+await t('collect: units read 3 pages of 100, only titles starting "unit test "', async () => {
+  const urls = [];
+  const g = async (url, o) => {
+    if (!/unit\.yml/.test(url)) return mkFetch()(url, o);
+    urls.push(url); const pg = Number(/&page=(\d+)/.exec(url)[1]);
+    const rs = Array.from({ length: 100 }, (_, i) => run(1000 + i, 'success', 'unit build x'));
+    if (pg === 3) rs[0] = run(5, 'failure', 'unit test late');
+    return { ok: true, status: 200, json: async () => ({ workflow_runs: rs }) };
+  };
+  const d = await S.collect(g, ENV);
+  ok(urls.length === 3 && urls.every((u) => /per_page=100/.test(u)), urls.join('\n'));
+  eq(d.units, { late: { state: 'bad', at: '2026-10-10T01:02:03.000Z' } });
+});
+await t('buildHtml: times in UTC and Japan time', async () => {
+  const h = S.buildHtml({ repo: 'o/lab', at: '2026-10-11T00:00:00.000Z' });
+  ok(h.includes('2026-10-11 00:00 UTC') && h.includes('日本時間 2026-10-11 09:00'), h);
 });
 await t('collect: a failed read leaves that part empty, the rest stays', async () => {
   const d = await S.collect(mkFetch({ fail: ['releases', 'connect.yml'] }), ENV);
