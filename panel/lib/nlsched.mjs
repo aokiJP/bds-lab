@@ -58,7 +58,10 @@ function hourOf(part, h) {
  *  (「毎週月曜 09:00（Asia/Tokyo）に verify.yml」). ask: what is not known, as a question — then job is null and jobs empty */
 export function parse(text, opts = {}) {
   const raw = String(text ?? '').trim();
-  let s = normalize(raw);
+  // (ai-make's request in 「…」 『…』 or "…" — taken from the sentence as written, before normalize turns its numerals into digits)
+  const quoted = raw.match(/「([^」]*)」|『([^』]*)』|["＂]([^"＂]*)["＂]|“([^”]*)”/);
+  const request = quoted ? (quoted[1] ?? quoted[2] ?? quoted[3] ?? quoted[4]).trim() : null;
+  let s = normalize(quoted ? raw.replace(quoted[0], ' ') : raw);
   const got = [], none = (ask) => ({ job: null, jobs: [], said: got.join('、'), ask });
   if (!s) return none('いつ・何を予約しますか（例: 毎週月曜の朝 9 時に verify）');
 
@@ -73,10 +76,6 @@ export function parse(text, opts = {}) {
   // ---- what: the workflow (and its inputs) ----
   const wfs = (opts.workflows ?? []).map(wfOf).filter((w) => /\.ya?ml$/.test(w.file));
   let workflow = null, inputs = {};
-  // (ai-make's request in 「…」 or "…" — taken out before anything else is read in it)
-  const quoted = s.match(/「([^」]*)」|"([^"]*)"|“([^”]*)”/);
-  if (quoted) s = s.replace(quoted[0], ' ');
-  const request = quoted ? (quoted[1] ?? quoted[2] ?? quoted[3]).trim() : null;
   const unitM = s.match(/(?<![A-Za-z0-9_-])(?:unit(?:\.ya?ml)?|ユニット)(?![A-Za-z0-9_-])\s*(?:の\s*)?((?:[A-Za-z][A-Za-z0-9_]*|試験|テスト|シム|仕上げ)(?:\s*(?:を|の)?\s*(?:[A-Za-z][A-Za-z0-9_]*|試験|テスト|シム|仕上げ))?)?/i);
   if (unitM && (!wfs.length || wfs.some((w) => w.base === 'unit'))) {
     workflow = wfs.find((w) => w.base === 'unit')?.file ?? 'unit.yml';
@@ -139,13 +138,15 @@ export function parse(text, opts = {}) {
   // (毎朝 / 毎晩 say the part of the day when the time does not)
   const dayPart = s.match(/毎(朝|晩|夜|夕)/)?.[1];
   if (tm.length > 1) return none(`時刻が ${tm.length} つあります（1 つずつ予約します）`);
-  let at = null;
+  let at = null, midnight = false;
   if (tm.length) {
     const [all, p1, hh, half, mm1, mm2, p2] = tm[0];
     const part = (p1 ?? p2 ?? (dayPart === '夕' ? '夕方' : dayPart) ?? '').toLowerCase() || null;
     const h = hourOf(part, Number(hh)), mi = half ? 30 : Number(mm1 ?? mm2 ?? 0);
     if (h === null || mi > 59) return none(`「${all.trim()}」は何時ですか（0〜23 時か、午前・午後をつけて）`);
     if (mi !== 0) return none(`予約は 1 時間に 1 回なので、分は 00 だけです（${pad(h)}:00 か ${pad((h + 1) % 24)}:00 のどちらにしますか）`);
+    // (24 時 and 夜 12 時 are the night between two days: with a weekday it is not told which one — asked; every day, 0:00 is it)
+    midnight = h === 0 && ((Number(hh) === 24 && !part) || (Number(hh) === 12 && ['夜', '晩', '深夜', '夜中'].includes(part)));
     at = `${pad(h)}:00`;
   } else if (new RegExp(`${PART}`).test(s) && hours === null) return none('何時ですか（例: 朝 9 時・夜 10 時）');
 
@@ -161,8 +162,9 @@ export function parse(text, opts = {}) {
     return none('毎日ですか、毎週ですか（例: 毎日・平日・毎週月曜・3 時間ごと）');
   }
   const order = [...days].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
+  if (midnight && every === 'week') { const d = order[0]; return none(`${WD[d]}曜の 0:00（${WD[(d + 6) % 7]}曜の夜中）と、${WD[(d + 1) % 7]}曜の 0:00（${WD[d]}曜の夜中）のどちらですか`); }
   const when = every === 'hour' ? S.describe({ every, hours, timezone: tz })
-    : every === 'day' ? `毎日${at ? ` ${at}` : ''}（${tz}）`
+    : every === 'day' ? `毎日${at ? ` ${at}` : ''}${midnight ? '（夜中 0:00）' : ''}（${tz}）`
       : `${kind === '平日' && order.length === 5 ? '平日（月〜金）' : kind === '週末' && order.length === 2 ? '週末（土・日）' : `毎週${order.map((d) => WD[d]).join('・')}曜 `}${at ?? ''}（${tz}）`;
   got.unshift(when);
   if (every !== 'hour' && !at) return none('何時ですか（例: 朝 9 時・夜 10 時・21 時）');

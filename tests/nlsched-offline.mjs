@@ -42,7 +42,13 @@ const TABLE = [
   ['ユニット ruby の試験を毎晩11時', { workflow: 'unit.yml', inputs: { job: 'test', unit: 'ruby' }, every: 'day', at: '23:00' }],
   ['毎日 4 時に unit sim lamp', { workflow: 'unit.yml', inputs: { job: 'sim', unit: 'lamp' }, every: 'day', at: '04:00' }],
   ['ai-make を毎日 3 時に「光る剣を作る」', { workflow: 'ai-make.yml', inputs: { request: '光る剣を作る' }, every: 'day', at: '03:00' }],
+  ['毎日 朝 9 時に ai-make「一緒に十個の剣を作る」', { workflow: 'ai-make.yml', inputs: { request: '一緒に十個の剣を作る' }, every: 'day', at: '09:00' }],
+  ['毎日 24 時に verify', { workflow: 'verify.yml', every: 'day', at: '00:00', said: '毎日 00:00（夜中 0:00）（Asia/Tokyo）に verify.yml' }],
+  ['毎日 夜 12 時に verify', { workflow: 'verify.yml', every: 'day', at: '00:00' }],
   // asked, never guessed
+  ['毎週月曜 24 時に verify', { ask: /月曜の 0:00（日曜の夜中）と、火曜の 0:00（月曜の夜中）のどちらですか/ }],
+  ['平日の夜 12 時に verify', { ask: /月曜の 0:00（日曜の夜中）と、火曜の 0:00（月曜の夜中）/ }],
+  ['週末 深夜 12 時に verify', { ask: /土曜の 0:00（金曜の夜中）と、日曜の 0:00（土曜の夜中）/ }],
   ['毎日十時半に verify', { ask: /分は 00 だけ.*10:00 か 11:00/ }],
   ['毎日 9:30 に verify', { ask: /分は 00 だけ/ }],
   ['毎朝 verify', { ask: /何時ですか/ }],
