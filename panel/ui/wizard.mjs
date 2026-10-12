@@ -1,5 +1,5 @@
 // wizard (the screen of lib/wizard.mjs): 「何がしたい？」 — one question at a time with big buttons, 「戻る」 and 「最初から」;
-// at the end the tab to go to and the id of the element to look at. Where it is stays in sessionStorage (ctx.storage), so a
+// at the end the tab to go to and the heading of the place to look at (its id only goes to ctx.go, never to the person). Where it is stays in sessionStorage (ctx.storage), so a
 // redraw of the page does not lose it. ctx: { tabs(), may(action), go(tab), storage, labSlug? }
 import { h } from './dom.mjs';
 import * as W from '../lib/wizard.mjs';
@@ -28,7 +28,7 @@ export function wizardCard(ctx) {
     show(h('h2', {}, '🧭 ここへ行きましょう'),
       to.why ? h('p', { class: 'warn', role: 'alert', 'data-why': '1' }, `${to.why} かわりに、こちらへ。`) : null,
       h('p', {}, to.say),
-      to.focus ? h('p', { class: 'muted' }, `開いたら、「#${to.focus}」の場所を見てください。`) : null,
+      to.where ? h('p', { class: 'muted' }, `開いたら、「${to.where}」の場所を見てください。`) : null,
       h('button', { class: 'primary big', 'data-go': to.tab, onclick: () => ctx.go(to.tab, to.focus) }, `「${to.name}」のタブへ行く`), nav);
   };
   draw();
