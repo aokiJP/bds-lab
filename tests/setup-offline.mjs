@@ -343,7 +343,7 @@ await t('checks, Pages on another source (its fix switches it to the workflow) o
     const c = byKey(await S.checks({ api: g.api, lab: LAB(), config: {}, panelUrl: 'https://o.github.io/lab/' }));
     // (what this token may not read is no dead end: each such row offers the token with everything in, and says what to do)
     const tok = S.tokenUrl('o'), q = new URL(tok).searchParams;
-    ok(tok.startsWith('https://github.com/settings/personal-access-tokens/new?') && q.get('target_name') === 'o' && ['actions', 'contents', 'secrets', 'variables', 'issues', 'pages', 'administration'].every((k) => q.get(k) === 'write') && q.get('pull_requests') === 'read', tok);
+    ok(tok.startsWith('https://github.com/settings/personal-access-tokens/new?') && q.get('target_name') === 'o' && ['actions', 'contents', 'secrets', 'variables', 'issues', 'pages', 'administration'].every((k) => q.get(k) === 'write') && q.get('pull_requests') === 'read' && q.get('actions_variables') === 'write', tok);
     ok(!new URL(S.tokenUrl('bad owner!')).searchParams.has('target_name'), 'an owner that is no login is not written in');
     ok(c.pages.ok === null && /読めません/.test(c.pages.need) && c.pages.fix?.link === tok && /入り直して/.test(c.pages.need), JSON.stringify(c.pages));
     ok(c.app.ok === null && /Variables: Read/.test(c.app.need) && c.app.fix?.link === tok && /トークンを作り直す/.test(c.app.fix.label), JSON.stringify(c.app));

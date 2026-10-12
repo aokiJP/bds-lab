@@ -83,10 +83,11 @@ export async function storeApp(api, lab, conv, { random = (n) => globalThis.cryp
 
 /** the link that puts the App on an account's repositories (the lab's owner, or a lender for their host); null for a slug
  *  GitHub would not give */
-/** GitHub's fine-grained token page with everything the panel uses written in (pure; GitHub ignores what it does not take):
+/** GitHub's fine-grained token page with everything the panel uses written in (pure; GitHub ignores what it does not take —
+ *  Variables went missing as `variables` alone: its permission's own name, actions_variables, too):
  *  the way out of every 「このトークンでは読めない・できない」 — only the repositories are left to pick */
 export function tokenUrl(owner) {
-  const q = new URLSearchParams({ name: 'bds-lab panel', description: 'bds-lab の管理パネル（このブラウザだけ）', ...(LOGIN.test(String(owner ?? '')) ? { target_name: owner } : {}), expires_in: '90', metadata: 'read', actions: 'write', contents: 'write', secrets: 'write', variables: 'write', issues: 'write', pages: 'write', administration: 'write', pull_requests: 'read' });
+  const q = new URLSearchParams({ name: 'bds-lab panel', description: 'bds-lab の管理パネル（このブラウザだけ）', ...(LOGIN.test(String(owner ?? '')) ? { target_name: owner } : {}), expires_in: '90', metadata: 'read', actions: 'write', contents: 'write', secrets: 'write', actions_variables: 'write', variables: 'write', issues: 'write', pages: 'write', administration: 'write', pull_requests: 'read' });
   return `https://github.com/settings/personal-access-tokens/new?${q}`;
 }
 /** what to do when this sign-in may not read or do something (pure): a token → make one with everything in and sign in with
