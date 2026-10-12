@@ -134,11 +134,38 @@ const sleeper = (ms) => new Promise((r) => setTimeout(r, ms));
  *  (when given), auth-deploy.yml started and waited for, the address its run left (the notice 「auth-url」, the root of an
  *  https origin only) kept in the variable LAB_AUTH_URL, and pages.yml started so the page learns it → the address. me: the
  *  login of the person starting it (the run waited for is theirs). sleep / every / timeoutMs: tests */
+/** what is wrong with Cloudflare's token and account as typed (pure): words, or null */
+export function cfProblem(cf) {
+  if (!String(cf?.token ?? '') || /\s/.test(cf.token) || String(cf.token).length < 20) return 'Cloudflare の API トークンの形が違います（「Edit Cloudflare Workers」のテンプレートで作った、空白のない長い文字列）';
+  if (!/^[0-9a-f]{32}$/i.test(String(cf?.account ?? ''))) return 'Cloudflare のアカウント ID は 32 文字の 16 進数です（Cloudflare の画面の右側「Account ID」）';
+  return null;
+}
+/** the App's installation page with the lab already chosen (pure): GitHub's suggested_target_id (the lab's owner) and
+ *  repository_ids[] (the lab) — the person presses Install alone; without the ids, the plain page */
+export function installLink(appSlug, ownerId, repoId) {
+  const base = installUrl(appSlug);
+  if (!base || !Number.isInteger(ownerId) || !Number.isInteger(repoId)) return base;
+  return `https://github.com/apps/${appSlug}/installations/new/permissions?suggested_target_id=${ownerId}&repository_ids[]=${repoId}`;
+}
+/** the next step of 「全自動で準備する」 from the checks (pure): what the panel does itself (run a row's fix), the two GitHub
+ *  pages only a person can press (make the App, install it), done, or where it stops and why. installed: the person came
+ *  back from installing (the token's sign-in cannot see the installation: taken as done) */
+export function autoNext(cs, { installed = false } = {}) {
+  const by = Object.fromEntries((cs ?? []).map((c) => [c.key, c]));
+  const runnable = (c) => c && c.ok !== true && typeof c.fix?.run === 'function' && !(c.fix.inputs ?? []).length;
+  if (by.pages && by.pages.ok !== true) return runnable(by.pages) ? { kind: 'run', key: 'pages' } : { kind: 'stop', key: 'pages', why: by.pages.need };
+  if (by.app && by.app.ok === null) return { kind: 'stop', key: 'app', why: by.app.need };
+  if (by.app && by.app.ok === false) return by.app.fix?.manifest ? { kind: 'app' } : { kind: 'stop', key: 'app', why: by.app.need };
+  if (by.installed && by.installed.ok !== true && !installed) return { kind: 'install' };
+  if (by.deploy && by.deploy.ok !== true && runnable(by.deploy)) return { kind: 'run', key: 'deploy' };
+  if (by.deploy && by.deploy.ok === true && by.deploy.fix?.run && !(by.auth?.ok === true)) return { kind: 'run', key: 'deploy' };
+  if (by.auth && by.auth.ok !== true && runnable(by.auth)) return { kind: 'run', key: 'auth' };
+  return { kind: 'done', left: (cs ?? []).filter((c) => c.ok === false && !c.key.startsWith('host:')).map((c) => c.label) };
+}
 export async function deployAuth(api, slug, { ref = 'main', cf = null, me, sleep = sleeper, every = 10_000, timeoutMs = 15 * 60_000, onStep = () => {} } = {}) {
   if (!LOGIN.test(String(me ?? ''))) throw new Error('始める人（GitHub のログイン名）が分かりません: サインインし直してください');
   if (cf) {
-    if (!String(cf.token ?? '') || /\s/.test(cf.token) || String(cf.token).length < 20) throw new Error('Cloudflare の API トークンの形が違います');
-    if (!/^[0-9a-f]{32}$/i.test(String(cf.account ?? ''))) throw new Error('Cloudflare のアカウント ID は 32 文字の 16 進数です');
+    const bad = cfProblem(cf); if (bad) throw new Error(bad);
     await api.putSecret(slug, 'CLOUDFLARE_API_TOKEN', cf.token);
     await api.putSecret(slug, 'CLOUDFLARE_ACCOUNT_ID', cf.account);
     onStep('Cloudflare の秘密を封じて登録しました');
@@ -211,6 +238,7 @@ export async function checks(ctx) {
   if (v.APP_ID === undefined && !config.appSlug) c('app', appLabel, null, noRight(signedInWithApp ? '変数を読めません（App に Variables: Read が要ります）' : '変数を読めません（このトークンに Variables: Read and write が要ります）'), fixMore);
   else if ((v.APP_ID || v.APP_ID === undefined) && appSlug) c('app', appLabel, true);
   else c('app', appLabel, false, 'まだありません: 1 回のクリックで作れます（鍵は秘密に、id は変数に、ここで自動で入ります）', makeApp);
+  out.at(-1).slug = appSlug;   // (for 「全自動で準備する」: the App to install)
 
   // ---- the App on the lab: what decides who may do what, without anyone's personal token ----
   let inst = null, instWhy = '';

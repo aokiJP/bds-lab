@@ -398,7 +398,8 @@ await t('the 「準備」 tab: the list for anyone; fixes for the lab\'s adminis
     await form.fire('submit');
     const kept = JSON.parse(base.storage.getItem('bdslab.setup.manifest'));
     eq([kept.state, kept.lab], [form.attrs.action.split('state=')[1], 'o/lab'], 'the state kept in this tab as the form goes');
-    ok(body.all((e) => e.tagName === 'BUTTON' && /Pages を有効に/.test(e.textContent)).length === 1 && body.all((e) => e.tagName === 'INPUT' && e.attrs.type === 'password').length === 0, 'Pages\' button; no Cloudflare field before the App');
+    const ul = body.all((e) => e.tagName === 'UL')[0];
+    ok(ul.all((e) => e.tagName === 'BUTTON' && /Pages を有効に/.test(e.textContent)).length === 1 && ul.all((e) => e.tagName === 'INPUT' && e.attrs.type === 'password').length === 0, 'Pages\' button; no Cloudflare field before the App');
     // someone who is not the lab's administrator: the list and the links, no button, no form
     const ro = new E('div');
     await UI.setupTab(ro, { ...base, lab: LAB({ role: 'write' }), ...nav() });
@@ -448,7 +449,7 @@ await t('the 「準備」 tab: the list for anyone; fixes for the lab\'s adminis
     await UI.setupTab(later, { ...base, lab: LAB({ secrets: ['APP_PRIVATE_KEY', 'APP_CLIENT_SECRET', 'AUTH_STATE_SECRET'] }), ...nav(), wait: QUICK });
     const a = later.all((e) => e.tagName === 'A' && e.attrs.href === 'https://github.com/apps/lab-o/installations/new');
     ok(a.length >= 2 && a.every((x) => x.attrs.rel === 'noopener noreferrer'), 'the install links');
-    const pw = later.all((e) => e.tagName === 'INPUT' && e.attrs.type === 'password');
+    const pw = later.all((e) => e.tagName === 'UL')[0].all((e) => e.tagName === 'INPUT' && e.attrs.type === 'password');
     eq(pw.length, 1, 'Cloudflare\'s token as a password field');
     eq(pw[0].attrs.autocomplete, 'off', 'not offered to the browser\'s password manager');
     const acct = later.all((e) => e.tagName === 'INPUT' && e.attrs.type === 'text' && /CLOUDFLARE_ACCOUNT_ID/.test(e.attrs['aria-label']))[0];
@@ -466,7 +467,8 @@ await t('the 「準備」 tab and the policy: a fix only for a GitHub administra
   try {
     const nav = (search = '', hash = '#setup') => ({ location: { search, hash, pathname: '/lab/' }, history: { replaceState: () => {} } });
     const base = { api: f.api, lab: LAB(), hosts: [], me: { login: 'o' }, config: {}, panelUrl: 'https://o.github.io/lab/', signedInWithApp: false, fetchImpl: f.fetchImpl, storage: AC.memoryStorage() };
-    const buttons = (b) => b.all((e) => e.tagName === 'BUTTON' && e.textContent !== 'コピー'), rowOf = (b, k) => b.all((e) => e.attrs['data-check'] === k)[0];
+    // (the checks' own buttons: 「全自動で準備する」 above them is its own card, tried below)
+    const buttons = (b) => (b.all((e) => e.tagName === 'UL')[0] ?? b).all((e) => e.tagName === 'BUTTON' && e.textContent !== 'コピー'), rowOf = (b, k) => b.all((e) => e.attrs['data-check'] === k)[0];
     // an administrator whose role may start workflows only: Pages' button (it starts pages.yml); not the App (secrets and
     // variables) nor the service's address (a variable): why, in place of them
     const dispatchOnly = P.checkPolicy({ roles: { admin: ['dispatch'], write: [] } }).policy;
@@ -475,7 +477,7 @@ await t('the 「準備」 tab and the policy: a fix only for a GitHub administra
     eq(buttons(b1).map((x) => x.textContent), ['Pages を有効に（GitHub Actions で）']);
     ok(!b1.all((e) => e.tagName === 'FORM').length, 'no App form');
     ok(/役割「admin」には、ポリシー（\.github\/bds-lab-panel\.json の roles）が「秘密を登録する・変数を変える」を許していません/.test(rowOf(b1, 'app').textContent), rowOf(b1, 'app').textContent);
-    ok(/「変数を変える」を許していません/.test(rowOf(b1, 'auth').textContent) && !b1.all((e) => e.tagName === 'INPUT').length, rowOf(b1, 'auth').textContent);
+    ok(/「変数を変える」を許していません/.test(rowOf(b1, 'auth').textContent) && !b1.all((e) => e.tagName === 'INPUT').length, rowOf(b1, 'auth').textContent);   // (and 「全自動で準備する」 offers no Cloudflare field to a role that may not put secrets)
     // a policy that allows nothing (or a broken file): no button, no form, no field
     for (const policy of [P.checkPolicy({ roles: { admin: [] } }).policy, P.LOCKED_POLICY]) {
       const b = new E('div');
@@ -507,6 +509,53 @@ await t('the 「準備」 tab and the policy: a fix only for a GitHub administra
     await UI.setupTab(b2, { ...base, ...nav('?code=c0dea&state=ok1'), policy: keep, role: 'admin' });
     ok(/App lab-o を作り/.test(b2.textContent) && f.st.vars.get('APP_SLUG') === 'lab-o', b2.textContent);
   } finally { f.close(); }
+});
+
+await t('全自動で準備する: the next step from the checks (pure), the lab chosen on the App\'s install page, Cloudflare\'s fields checked before anything is sent; on the tab: Pages turned on by itself, then the App\'s form sent to GitHub, the stage kept for the way back; back from GitHub: the install page with the lab chosen (fake DOM, fake GitHub)', async () => {
+  const R = (key, ok, fix = null, extra = {}) => ({ key, label: key, ok, need: ok === true ? '' : `${key} needed`, fix, ...extra });
+  const run = { run: async () => 'done' };
+  eq(S.autoNext([R('pages', false, run), R('app', false, { manifest: true })]), { kind: 'run', key: 'pages' }, 'Pages first');
+  eq(S.autoNext([R('pages', true), R('app', false, { manifest: true })]), { kind: 'app' }, 'then the App');
+  eq(S.autoNext([R('pages', true), R('app', null)]).kind, 'stop', 'variables not readable: stop, with why');
+  eq(S.autoNext([R('pages', true), R('app', true), R('installed', null)]), { kind: 'install' }, 'then install it');
+  eq(S.autoNext([R('pages', true), R('app', true), R('installed', null), R('deploy', true, run), R('auth', false)], { installed: true }), { kind: 'run', key: 'deploy' }, 'back from installing: the service, Cloudflare\'s keys in');
+  eq(S.autoNext([R('pages', true), R('app', true), R('installed', true), R('deploy', false, { ...run, inputs: [{ name: 'token' }] }), R('auth', false)]).kind, 'done', 'no Cloudflare keys: done, the rest said');
+  ok(S.autoNext([R('pages', true), R('app', true), R('installed', true), R('auth', false)]).left.includes('auth'), 'what is left is named');
+  eq(S.autoNext([R('pages', false, { link: 'https://github.com/o/lab/settings/pages' })]).kind, 'stop', 'Pages that only GitHub\'s page turns on: stop');
+  eq(S.installLink('lab-o', 11, 22), 'https://github.com/apps/lab-o/installations/new/permissions?suggested_target_id=11&repository_ids[]=22');
+  eq(S.installLink('lab-o'), 'https://github.com/apps/lab-o/installations/new', 'no ids: the plain page');
+  eq(S.installLink('Bad Slug!', 1, 2), null);
+  ok(/トークンの形/.test(S.cfProblem({ token: 'short', account: CF_ACCOUNT })) && /32 文字/.test(S.cfProblem({ token: CF_TOKEN, account: 'x' })) && S.cfProblem({ token: CF_TOKEN, account: CF_ACCOUNT }) === null, 'Cloudflare\'s fields checked');
+
+  const { E } = fakeDom();
+  const UI = await imp('panel/ui/setup.mjs');
+  const f = await fakeGitHub({});
+  try {
+    const store = AC.memoryStorage(), went = [], submitted = [];
+    globalThis.document.body.append = (x) => { x.requestSubmit = () => { x.fire('submit'); submitted.push(x.attrs.action); }; };
+    const ctx = { api: f.api, lab: LAB({ repo: { default_branch: 'main', owner: { login: 'o', type: 'User', id: 11 }, id: 22 } }), hosts: [], me: { login: 'o' }, config: {}, panelUrl: 'https://o.github.io/lab/', signedInWithApp: false, fetchImpl: f.fetchImpl, storage: store,
+      location: { search: '', hash: '#setup', pathname: '/lab/', assign: (u) => went.push(u) }, history: { replaceState() {} } };
+    const body = new E('div');
+    await UI.setupTab(body, ctx);
+    const go = body.all((e) => e.tagName === 'BUTTON' && e.textContent === '全自動で準備する')[0];
+    ok(go, 'the button for the lab\'s administrator');
+    const [tok, acct] = body.all((e) => e.tagName === 'INPUT' && /Cloudflare/.test(e.attrs['aria-label'] ?? ''));
+    tok.value = 'short'; acct.value = 'x';
+    await go.click();
+    ok(!f.st.secrets.size && !store.getItem('bdslab.setup.auto'), 'a wrong Cloudflare token: nothing sent, nothing started');
+    tok.value = CF_TOKEN; acct.value = CF_ACCOUNT;
+    await go.click();
+    ok(f.open('CLOUDFLARE_API_TOKEN') === CF_TOKEN && f.open('CLOUDFLARE_ACCOUNT_ID') === CF_ACCOUNT && tok.value === '' && acct.value === '', 'Cloudflare\'s keys sealed and sent, the fields emptied');
+    ok(f.st.pages?.build_type === 'workflow', `Pages turned on by itself: ${JSON.stringify(f.st.pages)}`);
+    ok(submitted.length === 1 && /^https:\/\/github\.com\/settings\/apps\/new\?state=/.test(submitted[0]) && JSON.parse(store.getItem('bdslab.setup.auto')).stage === 'app' && store.getItem('bdslab.setup.manifest'), `then the App's form to GitHub, its state and the stage kept: ${submitted}`);
+    ok(/Create GitHub App/.test(body.textContent), 'what to press on GitHub, said');
+    // back from GitHub with the App made (its slug in the variables): the install page, the lab chosen
+    f.st.vars.set('APP_ID', '5'); f.st.vars.set('APP_SLUG', 'lab-o'); f.st.vars.set('APP_CLIENT_ID', 'Iv1.x');
+    ctx.lab.secrets = ['APP_PRIVATE_KEY', 'APP_CLIENT_SECRET', 'AUTH_STATE_SECRET', 'CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID'];
+    await UI.setupTab(new E('div'), ctx);
+    eq(went, ['https://github.com/apps/lab-o/installations/new/permissions?suggested_target_id=11&repository_ids[]=22'], 'to the install page with the lab chosen');
+    eq(JSON.parse(store.getItem('bdslab.setup.auto')).stage, 'installed');
+  } finally { f.close(); delete globalThis.document.body.append; }
 });
 
 await t('a failure\'s notice offers the way out the page gives it (setOnFail: e.g. more rights), nothing when it gives none or it throws', async () => {

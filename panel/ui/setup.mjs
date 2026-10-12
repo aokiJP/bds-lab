@@ -22,7 +22,7 @@ export function setupTab(body, ctx) {
   body.append(h('div', { class: 'card' }, h('h2', {}, `準備と診断（${ctx.lab.slug}）`),
     h('p', { class: 'muted' }, admin ? 'サインインと許可の準備を、上から順に確かめます。⚠️ の行のボタンで、このパネルから直せます（秘密はこのブラウザで封じてから GitHub へ。値は残しません）。'
       : '見るだけです: 直すのはラボの管理者です（GitHub が管理者にだけ許します）。貸し手に渡すリンクは誰でも使えます。'),
-    back, list));
+    back, admin ? autoCard(ctx, () => draw()) : null, list));
   // (a check that could not be made at all: the words of why and the way on, with 「もう一度」 — never the waiting line for good)
   const draw = async () => {
     try { const cs = await S.checks(ctx); list.replaceChildren(...cs.map((c) => row(ctx, c))); return cs; } catch (e) {
@@ -30,7 +30,94 @@ export function setupTab(body, ctx) {
       return undefined;
     }
   };
-  return comeBack(ctx, back).then(draw);
+  return comeBack(ctx, back).then(draw).then(async (cs) => { if (cs && autoOn(ctx)) await autoRun(ctx, draw); return cs; });
+}
+
+// ---- 「全自動で準備する」: everything the panel may do itself, in order, the person pressing only GitHub's two buttons (make the
+// App, install it); the run goes on by itself when the tab comes back from GitHub (its stage kept in this tab) ----
+const AUTO_KEY = 'bdslab.setup.auto';
+const autoGet = (ctx) => { try { const a = JSON.parse((ctx.storage ?? globalThis.sessionStorage).getItem(AUTO_KEY) ?? 'null'); return a?.lab === ctx.lab.slug && Date.now() - Number(a.at) < 3_600_000 ? a : null; } catch { return null; /* not ours: no run going on */ } };
+const autoSet = (ctx, v) => { const st = ctx.storage ?? globalThis.sessionStorage; if (v) st.setItem(AUTO_KEY, JSON.stringify({ ...v, lab: ctx.lab.slug, at: Date.now() })); else st.removeItem(AUTO_KEY); };
+const autoOn = (ctx) => Boolean(autoGet(ctx));
+let autoSay = null;
+function autoCard(ctx, draw) {
+  const token = h('input', { type: 'password', autocomplete: 'off', placeholder: '（なくてもよい）', 'aria-label': 'Cloudflare の API トークン' });
+  const account = h('input', { type: 'text', autocomplete: 'off', placeholder: '0123456789abcdef0123456789abcdef', 'aria-label': 'Cloudflare のアカウント ID' });
+  const say = h('div', { class: 'muted', role: 'status' });
+  autoSay = say;
+  const go = h('button', { class: 'primary', onclick: async () => {
+    const cf = { token: token.value.trim(), account: account.value.trim() };
+    if ((cf.token || cf.account) && S.cfProblem(cf)) return toast(S.cfProblem(cf), true);
+    go.disabled = true;
+    const ok = await act(async () => {
+      if (cf.token) { await ctx.api.putSecret(ctx.lab.slug, 'CLOUDFLARE_API_TOKEN', cf.token); await ctx.api.putSecret(ctx.lab.slug, 'CLOUDFLARE_ACCOUNT_ID', cf.account); ctx.lab.secrets = [...new Set([...(ctx.lab.secrets ?? []), 'CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID'])]; say.replaceChildren('Cloudflare の鍵を封じて登録しました'); }
+      return true;
+    });
+    // (what was typed leaves the page: sealed and sent, or refused)
+    token.value = ''; account.value = '';
+    go.disabled = false;
+    if (!ok) return;
+    autoSet(ctx, { stage: 'go' });
+    await autoRun(ctx, draw);
+  } }, '全自動で準備する');
+  // (a role the policy does not let put secrets: no Cloudflare field — what it could not send)
+  const cfOk = !notAllowed(ctx, { needs: ['secrets.put'] });
+  return h('div', { class: 'card' }, h('h3', {}, '⚡ 全自動で準備する'),
+    h('p', { class: 'muted' }, 'このボタンを押すと、パネルができることを上から順に全部やります。あなたが押すのは GitHub の画面の 2 つだけ（「Create GitHub App」と「Install」）。戻ってくると続きを自動でやります。'),
+    cfOk ? [h('p', { class: 'muted' }, 'サインインのサービスも置くなら、Cloudflare の API トークン（テンプレート「Edit Cloudflare Workers」）とアカウント ID を入れてください。なければ空のままで、あとから入れられます。'),
+      h('label', {}, 'Cloudflare の API トークン'), token, h('label', {}, 'Cloudflare のアカウント ID'), account] : null,
+    h('div', { class: 'row' }, go), say);
+}
+/** one step after another until GitHub needs the person (it leaves the page) or nothing is left; at most 8 steps a visit */
+let autoBusy = false;
+async function autoRun(ctx, draw) {
+  // (one run at a time: the tab drawn again while one goes on — after the App's keys are kept — does not start a second)
+  if (autoBusy) return;
+  autoBusy = true;
+  try { await autoSteps(ctx, draw); } finally { autoBusy = false; }
+}
+async function autoSteps(ctx, draw) {
+  const say = (t) => { autoSay?.replaceChildren(t); };
+  for (let i = 0; i < 8; i++) {
+    const a = autoGet(ctx); if (!a) return;
+    const cs = await draw();
+    if (!cs) { say('準備の様子を読めませんでした: 上の「もう一度」から'); return; }
+    const next = S.autoNext(cs, { installed: a.stage === 'installed' });
+    if (next.kind === 'run') {
+      const c = cs.find((x) => x.key === next.key), no = notAllowed(ctx, c.fix);
+      if (no) { autoSet(ctx, null); say(`止まりました: ${c.label} — ${no}`); return; }
+      say(`${c.label}: やっています…`);
+      const msg = await act(() => c.fix.run({}, { onStep: (t) => say(`${c.label}: ${t}`) }));
+      if (msg === undefined) { autoSet(ctx, null); say(`止まりました: ${c.label}（上の知らせに理由と次の 1 手）。直してから、もう一度「全自動で準備する」`); return; }
+      ctx.record?.(`setup.${c.key}`, { auto: true });
+      if (next.key === 'deploy' || next.key === 'auth') { autoSet(ctx, null); say(`✅ ${msg}。数分でページが新しくなり、「GitHub でサインイン」が使えます`); return; }
+      continue;
+    }
+    if (next.kind === 'app') {
+      const no = notAllowed(ctx, { needs: S.APP_NEEDS });
+      if (no) { autoSet(ctx, null); say(`止まりました: App を作れません — ${no}`); return; }
+      say('GitHub の画面へ: 「Create GitHub App」を押してください（戻ってくると続きます）');
+      autoSet(ctx, { stage: 'app' });
+      const f = appForm(ctx); f.hidden = true; globalThis.document.body.append(f);
+      // (requestSubmit: the form's own submit — its state kept for the way back — then to GitHub)
+      if (typeof f.requestSubmit === 'function') f.requestSubmit(); else { f.dispatchEvent?.(new globalThis.Event('submit')); f.submit?.(); }
+      return;
+    }
+    if (next.kind === 'install') {
+      const appSlug = cs.find((c) => c.key === 'app')?.slug ?? ctx.config?.appSlug;
+      const to = S.installLink(appSlug, ctx.lab.repo?.owner?.id, ctx.lab.repo?.id);
+      if (!to) { autoSet(ctx, { stage: 'installed' }); continue; }
+      say('GitHub の画面へ: ラボを選んである「Install」を押してください（戻ってくると続きます）');
+      autoSet(ctx, { stage: 'installed' });
+      (ctx.location ?? globalThis.location).assign(to);
+      return;
+    }
+    if (next.kind === 'stop') { autoSet(ctx, null); say(`止まりました: ${next.why ?? next.key}（その行の案内から）`); return; }
+    autoSet(ctx, null);
+    say(next.left?.length ? `✅ パネルでできることは終わりました。残り: ${next.left.join('・')}（それぞれの行の案内から）` : '✅ 準備はすべて終わりました');
+    return;
+  }
+  say('同じことを繰り返したので止めました: 下の ⚠️ の行を見てください'); autoSet(ctx, null);
 }
 
 const roleName = (r) => (typeof r === 'string' ? r : r?.name ?? (r?.names?.length ? `${r.names.join(' か ')}（チームが読めません）` : 'なし'));
