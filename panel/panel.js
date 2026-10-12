@@ -50,6 +50,9 @@ const FRAMED = (() => { try { return window.top !== window.self; } catch { retur
 // ---- first of all: GitHub's ways back, out of the address at once (not in the history, a bookmark or a shared link) ----
 // (the App made in 「準備」: ?code=; a sign-in: #bdslab-auth= — taken only when this tab began it: its nonce)
 const APP_RETURN = FRAMED ? null : takeAppReturn({ storage: TAB });
+// (back from installing the App — GitHub's setup_url, ?installation_id=…&setup_action=install: no #fragment allowed there — to
+// 「準備」, where 「全自動で準備する」 goes on; the numbers out of the address)
+if (!FRAMED && /[?&]setup_action=/.test(location.search)) history.replaceState(null, '', `${location.pathname}#setup`);
 const SIGNIN = 'bdslab.panel.signin';
 const PENDING = (() => { try { const p = JSON.parse(TAB.getItem(SIGNIN) ?? 'null'); return p && Date.now() - Number(p.at) < 15 * 60_000 ? p : null; } catch { return null; } })();
 const HANDOFF = FRAMED ? null : S.takeHandoff(location.hash, { nonce: PENDING?.nonce ?? null });
