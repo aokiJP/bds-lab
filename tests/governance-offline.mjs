@@ -65,7 +65,7 @@ await t('the policy file checked: errors in words; a file that does not check ou
 await t('can: GitHub first — whatever a policy says, nothing past what the person\'s GitHub role on that repository could be allowed; a policy only narrows (pure)', () => {
   const everything = P.checkPolicy({ roles: { admin: ['*'], maintain: ['*'], write: ['*'], triage: ['*'], read: ['*'] } }).policy;
   eq(allowed(everything, 'read'), ['audit.read'], 'a reader given everything: only reading (GitHub lets a reader read issues)');
-  eq(allowed(everything, 'triage'), ['audit.read']);
+  eq(allowed(everything, 'triage'), ['audit.read', 'issues'], 'a triager: reading, and an Issue (GitHub lets them open and label issues)');
   eq(allowed(everything, 'write'), P.ACTIONS.filter((a) => a !== 'lend' && a !== 'members'), 'a writer given everything: not a host\'s admin, not the lab\'s members');
   for (const a of P.ACTIONS) ok(P.GITHUB_ROLES.includes(P.GITHUB_NEEDS[a]), `${a}: GitHub's least role said`);
   const narrow = P.checkPolicy({ roles: { admin: ['dispatch'], write: [] } }).policy;

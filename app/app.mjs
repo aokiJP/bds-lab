@@ -140,7 +140,7 @@ const HELP = `app: 本物の Minecraft アプリをエミュレータで動か�
         ゲームを人のように: walk look jump sprint sneak attack mine use place slot inventory drop cmd stick release、
         続けて move turn mine|use on|off、サーバーに聞いて where items face lookat goto。画面の動画 clip [秒]。
         app.txt の手順もそのまま（chat、tap text、until text、press、mouse、perf…、steps << で続けて）
-  notify [--run <番号> [--force] | --text <文>]   （notify ワークフローの中で）終わった実行を Discord の DM（または LAB_NOTIFY_WEBHOOK）に
+  notify [--run <番号> [--force] | --text <文>] [--kind <種類>]   （notify ワークフローの中で）終わった実行を Discord の DM（または LAB_NOTIFY_WEBHOOK）に
         知らせる。成果物（.mcaddon など: 変数 LAB_NOTIFY_FILES）も 10 MB まで添える。--force: LAB_NOTIFY によらず
   hold [--minutes <分>]      （ワークフローの中で）端末を動かしたまま live の命令を待つ。秘密 DISCORD_BOT_TOKEN と DISCORD_USER_ID が
         あれば Discord の DM にも画面とボタン（歩く・見る・壊す・使う・持ち物・A/B・チャット…）: 押すたびにその後の画面が戻る
@@ -2445,7 +2445,7 @@ async function secretsAskCmd(args) {
  *  With the run's deliverables attached (lib/runfiles.mjs: LAB_NOTIFY_FILES, LAB_NOTIFY_MAX_MB) — only of a run of this
  *  repository's own code: a fork's pull request runs here too, and its files are not the person's to be handed */
 async function notifyCmd(args) {
-  const o = parse(args, { opts: ['--run', '--text'], flags: ['--force'] });
+  const o = parse(args, { opts: ['--run', '--text', '--kind'], flags: ['--force'] });
   const dc = Dc.config(), hook = String(process.env.LAB_NOTIFY_WEBHOOK ?? '').trim();
   if (dc.missing && !hook) { out('通知先がありません（DISCORD_BOT_TOKEN + DISCORD_USER_ID、または LAB_NOTIFY_WEBHOOK を Secrets に）: 何も送りません'); return; }
   let msg, files = { attach: [] };
@@ -2468,7 +2468,7 @@ async function notifyCmd(args) {
     if (!own) out(`成果物は添えません（${run.head_repository.full_name} の変更から: このリポジトリのコードではありません）`);
     else if (lent) out('成果物は添えません（貸し手のランナーで作ったもの: 配るものは自分の Actions で作り直してください）');
     msg = RM.runMessage({ run, jobs, annotations, panel: RM.panelRunUrl(RM.panelUrl(repo, process.env), repo, id), files });
-  } else msg = { content: o.opts['--text'] || 'bds-lab: Discord への通知の試し', buttons: [] };
+  } else msg = { content: o.opts['--text'] || 'bds-lab: Discord への通知の試し', buttons: [], ok: !['failed', 'connect', 'secrets'].includes(o.opts['--kind']) };
   const att = files.attach.map((f) => ({ name: f.name, data: f.data }));
   if (!dc.missing) {
     const b = Dc.bot({ token: dc.token, userId: dc.userId });
@@ -2478,10 +2478,15 @@ async function notifyCmd(args) {
     return;
   }
   const { notify } = await import(pathToFileURL(path.join(TOP, 'common', 'notify.mjs')).href);
+  // (a channel's webhook: the people who asked for this kind of message in .github/bds-lab-notify.json — the panel's 「通知の設定」 —
+  // called by their Discord id; --kind, else a run's: failed or passed. A file that is not there or not right calls no one)
+  const kind = o.opts['--kind'] || (msg.ok === false ? 'failed' : o.opts['--run'] ? 'passed' : '');
+  let calls = [];
+  if (kind) try { const NP = await import(pathToFileURL(path.join(TOP, 'panel', 'lib', 'notifyprefs.mjs')).href); calls = NP.mentions(NP.parsePrefs(fs.readFileSync(process.env.LAB_NOTIFY_PREFS || path.join(TOP, NP.NOTIFY_FILE), 'utf8')), kind); } catch { /* none set, or not right: no one called */ }
   // (the webhook's helper puts its own ✅ / ⚠️ in front: the first line without the run's icon)
   // (and without Discord's **bold**: Slack, ntfy and a plain JSON hook would show the stars)
   const [first, ...rest] = msg.content.replace(/\*\*/g, '').split('\n');
-  const sent = await notify(first.replace(/^\S+\s/, ''), [...rest, ...msg.buttons.map((x) => x.url)], { ok: msg.ok !== false, out, files: att });
+  const sent = await notify(first.replace(/^\S+\s/, ''), [...(calls.length ? [calls.join(' ')] : []), ...rest, ...msg.buttons.map((x) => x.url)], { ok: msg.ok !== false, out, files: att });
   if (!sent) fail('LAB_NOTIFY_WEBHOOK に送れませんでした');
   out(`OK Webhook に送りました${att.length && /discord(app)?\.com\/api\/webhooks/.test(hook) ? `（${att.map((f) => f.name).join('・')}）` : ''}`);
 }

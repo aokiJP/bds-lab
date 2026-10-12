@@ -6,7 +6,9 @@ import { h, failView } from './dom.mjs';
 import * as N from '../lib/notifyprefs.mjs';
 
 const said = (text, e) => Object.assign(new Error(text), { status: e?.status, reset: e?.reset });
-const staleSha = (e) => e?.status === 409 || (e?.status === 422 && /sha/i.test(e?.message ?? ''));
+// (a change made elsewhere: GitHub's 409 "is at <sha> but expected <sha>" or a 422 about the sha — not a protected branch's or a
+// ruleset's 409 "Repository rule violations": that one is said as it is, reading again would never get past it)
+const staleSha = (e) => (e?.status === 409 || e?.status === 422) && !/rule/i.test(e?.message ?? '') && /\bsha\b|but expected|does not match/i.test(e?.message ?? '');
 
 /** ctx: { api (file, putFile), lab: { slug, role }, me: { login }, members? (logins to list besides the file's), may(action),
  *  guarded(action, detail, fn, done) } → an element that fills itself */
@@ -47,6 +49,12 @@ export function notifyPrefsCard(ctx) {
         h('input', { type: 'checkbox', 'data-kind': k, checked: kinds.includes(k), disabled: Boolean(t), 'aria-label': `${login}: ${N.KIND_WORDS[k]}`,
           onchange: (ev) => { const on = ev.target.checked; try { return save(N.setPref(st.prefs, own ?? login, k, on), `${login} ${N.KIND_WORDS[k]} ${on ? '入' : '切'}`, { user: login, kind: k, on }); } catch (e) { ev.target.checked = !on; box.append(failView(e)); return undefined; } } }),
         ' ', N.KIND_WORDS[k], ' ')),
+      // (their Discord user id: the Webhook's message calls them by it — <@id> — for the kinds ticked; empty: not called)
+      (() => {
+        const id = h('input', { type: 'text', inputmode: 'numeric', 'data-discord': login, value: has?.discord ?? '', placeholder: 'Discord のユーザー ID（数字）', 'aria-label': `${login}: Discord のユーザー ID`, disabled: Boolean(t) });
+        const keep = () => { const v = id.value.trim(); try { return save(N.setPref(st.prefs, own ?? login, null, false, v || null), `${login} の Discord の ID を${v ? '入れる' : '消す'}`, { user: login, discord: v ? 'set' : 'removed' }); } catch (e) { box.append(failView(e)); return undefined; } };
+        return h('span', { class: 'row' }, ' ', id, h('button', { type: 'button', disabled: Boolean(t), title: t ?? 'Discord で開発者モードを入れ、自分の名前を右クリック →「ユーザー ID をコピー」', onclick: keep }, 'ID を記録'));
+      })(),
       has ? null : h('span', { class: 'muted' }, ' まだ選んでいません（いまは初めの設定: ' + N.DEFAULT_KINDS.map((k) => N.KIND_WORDS[k]).join('・') + '）'),
       t ? h('p', { class: 'muted' }, t) : null);
   };

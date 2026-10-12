@@ -1,0 +1,37 @@
+name: weekly
+# 📰 the lab's week in one Discord message (`node lab.mjs weekly --send`, common/weekly.mjs): runs, how many passed (and last
+# week's), the minutes used, what failed most, new releases, the lenders' minutes. Sent the way notify.yml sends: the Discord
+# bot's direct message (DISCORD_BOT_TOKEN + DISCORD_USER_ID), else LAB_NOTIFY_WEBHOOK; neither (or LAB_NOTIFY off): only shown
+# in the run. Monday morning in Tokyo, or by hand.
+on:
+  schedule:
+    - cron: '7 23 * * 0'   # Monday 08:07 in Tokyo
+  workflow_dispatch:
+permissions: { contents: read, actions: read }
+concurrency:
+  group: weekly
+  cancel-in-progress: false
+jobs:
+  weekly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version: 22 }
+      - name: 週報
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LAB_HOSTS: ${{ vars.LAB_HOSTS }}
+          LAB_TZ: ${{ vars.LAB_TZ || 'Asia/Tokyo' }}
+        run: node lab.mjs weekly --dry --text-out "$RUNNER_TEMP/weekly.txt"
+      - name: Discord に送る
+        if: vars.LAB_NOTIFY != 'off'
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_USER_ID: ${{ secrets.DISCORD_USER_ID }}
+          LAB_NOTIFY_WEBHOOK: ${{ secrets.LAB_NOTIFY_WEBHOOK }}
+        run: |
+          if [ -z "$DISCORD_BOT_TOKEN$LAB_NOTIFY_WEBHOOK" ]; then echo "W Discord がまだつながっていません（「🔗 連携」の Discord か、秘密 LAB_NOTIFY_WEBHOOK）: 週報は上の行だけです"; exit 0; fi
+          node lab.mjs app notify --kind weekly --text "$(cat "$RUNNER_TEMP/weekly.txt")"

@@ -34,6 +34,12 @@ await t('summarize: a missing secret → where (job, step number, step name), wh
 
 await t('summarize: the BDS not fetched (by the words or by the failed step\'s name) comes before the test it stopped', () => {
   eq(FS.summarize({ run: run('failure'), jobs: [job('test', 'failure', [['Fetch BDS', 'failure'], ['Run tests', 'skipped']])] }).cause, 'bds');
+  // (a test's own words — an until that timed out, a watchdog, a server that stopped — are the test's, not GitHub's time limit or the download)
+  eq(FS.summarize({ run: run('failure'), jobs: [job('test', 'failure', [['Run tests', 'failure']])], annotations: [an('FAIL until Fishing contest over: timed out after 240000 ms')] }).cause, 'test');
+  eq(FS.summarize({ run: run('failure'), jobs: [job('test', 'failure', [['Run tests', 'failure']])], annotations: [an('[Watchdog] script timeout in main.js')] }).cause, 'test');
+  eq(FS.summarize({ run: run('failure'), jobs: [job('test', 'failure', [['Run tests', 'failure']])], annotations: [an('bedrock-server stopped unexpectedly')] }).cause, 'test');
+  eq(FS.summarize({ run: run('failure'), jobs: [job('x', 'failure', [['Build', 'failure']])], annotations: [an('The job running on runner GitHub Actions 3 has exceeded the maximum execution time of 30 minutes.')] }).cause, 'timeout');
+  eq(FS.summarize({ run: run('failure'), jobs: [job('x', 'failure', [['Get', 'failure']])], annotations: [an('could not download bedrock-server-1.26.zip: 404')] }).cause, 'bds');
   const s = FS.summarize({ run: run('failure'), jobs: [job('go', 'failure', [['go', 'failure']])], annotations: [an('GET https://www.minecraft.net/bedrockdedicatedserver/bin-linux/bedrock-server-1.21.zip 404')] });
   eq(s.cause, 'bds'); ok(/BDS/.test(s.why) && /upkeep/.test(s.next), s.next);
 });

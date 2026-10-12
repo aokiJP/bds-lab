@@ -15,7 +15,8 @@ const ok = (c, m) => { if (!c) throw new Error(m); };
 
 const NOW = Date.parse('2026-10-12T12:00:00Z');
 let id = 1;
-const run = (name, at, conclusion = 'success', extra = {}) => ({ id: id++, name, status: 'completed', conclusion, run_started_at: at, created_at: at, ...extra });
+// (as GitHub gives them: name is the workflow's own name, the run-name "unit <job> <unit>" its display_title)
+const run = (name, at, conclusion = 'success', extra = {}) => ({ id: id++, name: 'unit', display_title: name, status: 'completed', conclusion, run_started_at: at, created_at: at, ...extra });
 
 await t('run names: only "unit test|go <unit>" (pure)', () => {
   eq(T.parseName('unit test ruby'), { job: 'test', unit: 'ruby' });
@@ -42,6 +43,10 @@ await t('days, rate, last pass and streak per unit; the rest left out (pure)', (
   eq([gel.pass, gel.fail, gel.rate, gel.lastPass, gel.streak], [0, 1, 0, '2026-09-01', 0], 'last pass outside the window still shown');
   eq(T.history([], { now: NOW }).units, []);
   eq(T.history(null, { now: NOW }).units, []);
+  // (days on the person's calendar: 23:30 UTC on the 11th is the 12th in Tokyo — today's column, not yesterday's)
+  const late = T.history([run('unit test ruby', '2026-10-11T23:30:00Z')], { days: 2, now: NOW, tz: 'Asia/Tokyo' }).units[0];
+  eq(late.days.map((d) => [d.date, d.pass]), [['2026-10-11', 0], ['2026-10-12', 1]]); eq(late.lastPass, '2026-10-12');
+  eq(T.history([run('unit test ruby', '2026-10-11T23:30:00Z')], { days: 2, now: NOW }).units[0].days.map((d) => d.pass), [1, 0], 'UTC when no zone is given');
   eq(T.history(runs, { days: 1, now: NOW }).units.find((u) => u.unit === 'ruby').rate, 1);
   eq(T.history([run('unit test q', '2026-01-01T00:00:00Z')], { now: NOW }).units[0].rate, null, 'no run in the window: no rate');
 });
@@ -64,13 +69,14 @@ function fakeDom() {
 const tick = () => new Promise((r) => setTimeout(r, 5));
 fakeDom();
 const U = await imp('panel/ui/testhist.mjs');
-const fakeApi = (runs, seen = []) => ({ runs: async (slug, o) => { seen.push([slug, o]); if (runs instanceof Error) throw runs; return runs; }, call: async (m, a, b) => { ok(!fakeCheck(m, a, b), 'a write'); } });
+// (GitHub's list of a workflow's runs, page by page, as ui/stats.mjs readRuns asks for them)
+const fakeApi = (runs, seen = []) => ({ call: async (m, a, b) => { ok(!fakeCheck(m, a, b), 'a write'); ok(m === 'GET', 'reads only'); seen.push(a); if (runs instanceof Error) throw runs; return { workflow_runs: /[?&]page=1(&|$)/.test(a) ? runs : [] }; } });
 
 await t('the card: reads unit.yml, draws bars with ✓ ✗ words and a table', async () => {
   const seen = [], runs = [run('unit test ruby', '2026-10-12T01:00:00Z'), run('unit test ruby', '2026-10-11T01:00:00Z', 'failure')];
-  const card = U.testHistCard({ api: fakeApi(runs, seen), lab: { slug: 'o/lab' }, now: NOW });
+  const card = U.testHistCard({ api: fakeApi(runs, seen), lab: { slug: 'o/lab' }, now: NOW, tz: 'UTC' });
   await tick();
-  eq(seen, [['o/lab', { workflow: 'unit.yml', per: 100 }]]);
+  ok(seen.length === 1 && seen[0].startsWith('/repos/o/lab/actions/workflows/unit.yml/runs?') && /created=%3E%3D\d{4}-\d\d-\d\d/.test(seen[0]), JSON.stringify(seen));
   const svgs = card.all((e) => e.tagName === 'svg');
   eq(svgs.length, 1);
   ok(svgs[0].attrs['aria-label'].includes('✓1') && svgs[0].attrs['aria-label'].includes('✗1'), 'label');
@@ -83,10 +89,10 @@ await t('the card: reads unit.yml, draws bars with ✓ ✗ words and a table', a
 });
 
 await t('no runs: a plain sentence; unreadable: failView with an alert', async () => {
-  const a = U.testHistCard({ api: fakeApi([]), lab: { slug: 'o/lab' }, now: NOW });
+  const a = U.testHistCard({ api: fakeApi([]), lab: { slug: 'o/lab' }, now: NOW, tz: 'UTC' });
   await tick();
   ok(a.textContent.includes('まだありません'), a.textContent);
-  const b = U.testHistCard({ api: fakeApi(new Error('読めませんでした (403)')), lab: { slug: 'o/lab' }, now: NOW });
+  const b = U.testHistCard({ api: fakeApi(new Error('読めませんでした (403)')), lab: { slug: 'o/lab' }, now: NOW, tz: 'UTC' });
   await tick();
   eq(b.all((e) => e.attrs.role === 'alert').length, 1);
   ok(b.textContent.includes('403'), 'the words of the failure');

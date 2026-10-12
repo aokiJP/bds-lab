@@ -88,7 +88,8 @@ await t('the card: a member sees and changes only their own row; an administrato
     },
   };
   const ctx = (o = {}) => ({ api, lab: { slug: 'o/lab', role: 'write' }, me: { login: 'alice' }, members: ['alice', 'bob'], may: (a) => P.ACTIONS.includes(a) && a === 'variables',
-    guarded: async (action, detail, fn, done) => { guards.push({ action, detail }); try { const r = await fn(); if (done) DOM.toast(done); return r; } catch (e) { DOM.toast(e.message, true); return undefined; } }, ...o });
+    // (as the panel's: an action the policy does not know is refused before anything is sent)
+    guarded: async (action, detail, fn, done) => { guards.push({ action, detail }); if (!P.can(P.DEFAULT_POLICY, 'write', action)) { DOM.toast('許されていません', true); return undefined; } try { const r = await fn(); if (done) DOM.toast(done); return r; } catch (e) { DOM.toast(e.message, true); return undefined; } }, ...o });
   const flush = () => new Promise((r) => setTimeout(r, 0));
   const boxes = (c, kind) => c.all((e) => e.attrs['data-kind'] === kind);
   const rows = (c) => c.all((e) => e.attrs['data-login'] !== undefined).map((e) => e.attrs['data-login']);
@@ -108,6 +109,23 @@ await t('the card: a member sees and changes only their own row; an administrato
   const cb2 = boxes(card, 'passed')[0]; cb2.checked = true; await cb2.fire('change'); await flush();
   ok(/別の人が先に/.test(toast.kids.at(-1).textContent) || toast.kids.some((k) => /別の人が先に|does not match/.test(k.textContent)), 'told');
   eq(N.parsePrefs(files[N.NOTIFY_FILE].text).members.bob.kinds, ['passed'], 'nothing written over it');
+
+  // a protected branch's 409 is no change made elsewhere: said as it is, not "read again and try once more"
+  const rule = { ...api, async putFile() { throw Object.assign(new Error('GitHub: 409 Repository rule violations found'), { status: 409 }); } };
+  card = UI.notifyPrefsCard(ctx({ api: rule })); await flush();
+  const cb3 = boxes(card, 'release')[0]; cb3.checked = !cb3.checked; await cb3.fire('change'); await flush();
+  ok(/rule violations/.test(toast.kids.at(-1).textContent) && !/別の人が先に/.test(toast.kids.at(-1).textContent), toast.kids.at(-1).textContent);
+
+  // their Discord user id: kept in the file (no other switch moved); a wrong one refused in words, nothing written
+  card = UI.notifyPrefsCard(ctx()); await flush();
+  const idBox = card.all((e) => e.attrs['data-discord'] === 'alice')[0], save = card.all((e) => e.tagName === 'BUTTON' && /ID を記録/.test(e.textContent))[0];
+  const kindsBefore = N.kindsOf(N.parsePrefs(files[N.NOTIFY_FILE].text), 'alice');
+  idBox.value = '123456789012345678'; await save.fire('click'); await flush();
+  const now = N.parsePrefs(files[N.NOTIFY_FILE].text);
+  eq(now.members.alice.discord, '123456789012345678'); eq(N.kindsOf(now, 'alice'), kindsBefore, 'the switches untouched');
+  ok(N.mentions(now, kindsBefore[0]).includes('<@123456789012345678>'), 'called for what they ticked');
+  const n0 = puts.length; idBox.value = 'abc'; await save.fire('click'); await flush();
+  eq(puts.length, n0, 'a wrong id: nothing written'); ok(/ユーザー ID/.test(card.textContent), 'said why');
 
   card = UI.notifyPrefsCard(ctx({ lab: { slug: 'o/lab', role: 'admin' } })); await flush();
   ok(rows(card).includes('bob') && rows(card).includes('alice'), 'an administrator sees all');

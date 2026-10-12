@@ -40,8 +40,22 @@ await t('how: GitHub token page, 連携 service, unknown', () => {
   for (const s of C.SERVICES) for (const n of s.secrets) ok(W.howTo(n).say.includes('連携'), n);
 });
 await t('bad input is harmless', () => { eq(W.ageOf(null, { now: NOW }), []); eq(W.ageOf([null, {}, { name: 5 }], { now: NOW }), []); });
+// (the panel's own api, lib/gh.mjs, over a fake GitHub: every request checked by ghrules' fakeCheck — this card only reads)
+const fakeGh = async (answer) => {
+  const G = await imp('panel/lib/gh.mjs'), { fakeCheck } = await imp('panel/lib/ghrules.mjs'), seen = [];
+  const fetchImpl = async (url, init = {}) => {
+    const u = new URL(url), method = init.method ?? 'GET', bad = fakeCheck(method, u.pathname, init.body ? JSON.parse(init.body) : undefined);
+    seen.push(`${method} ${u.pathname}`);
+    const [status, body] = bad ? [422, { message: bad.message }] : answer(method, u.pathname);
+    return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  };
+  return { api: G.gh({ token: 't', fetchImpl }), seen };
+};
 await t('the card shows only old ones, with the way on, and only github.com links', async () => {
-  const el = UI.secretWatchCard({ api: { secrets: async () => SECRETS }, lab: { slug: 'o/lab' }, now: NOW });
+  const f = await fakeGh((m, p) => (m === 'GET' && p === '/repos/o/lab/actions/secrets' ? [200, { total_count: SECRETS.length, secrets: SECRETS }] : [404, { message: 'Not Found' }]));
+  const el = UI.secretWatchCard({ api: f.api, lab: { slug: 'o/lab' }, now: NOW });
+  await new Promise((r) => setTimeout(r, 20));
+  eq(f.seen, ['GET /repos/o/lab/actions/secrets'], 'reads the secrets\' names and dates only');
   await new Promise((r) => setTimeout(r, 0));
   const s = text(el);
   ok(s.includes('DISCORD_BOT_TOKEN') && s.includes('GH_PAT') && s.includes('ODD'), s);
@@ -49,9 +63,10 @@ await t('the card shows only old ones, with the way on, and only github.com link
   for (const a of find(el, (n) => n.tag === 'a')) ok(a.attrs.href.startsWith('https://github.com/'), a.attrs.href);
 });
 await t('a refused read is told, not blank', async () => {
-  const el = UI.secretWatchCard({ api: { secrets: async () => { throw new Error('この権限では読めません'); } }, lab: { slug: 'o/lab' }, now: NOW });
-  await new Promise((r) => setTimeout(r, 0));
-  ok(text(el).includes('この権限では読めません'), text(el));
+  const f = await fakeGh(() => [403, { message: 'Resource not accessible by integration' }]);
+  const el = UI.secretWatchCard({ api: f.api, lab: { slug: 'o/lab' }, now: NOW });
+  await new Promise((r) => setTimeout(r, 20));
+  ok(/権限がありません/.test(text(el)) && /Resource not accessible/.test(text(el)), text(el));
 });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

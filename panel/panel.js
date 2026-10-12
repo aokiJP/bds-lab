@@ -40,6 +40,14 @@ import * as IB from './lib/inbox.mjs';
 import { bellButton, toggleInbox } from './ui/inbox.mjs';
 import { bulkCard } from './ui/bulk.mjs';
 import { progressCard } from './ui/progress.mjs';
+import { failsumCard } from './ui/failsum.mjs';
+import { runIssueCard } from './ui/runissue.mjs';
+import { runCompareCard } from './ui/runcompare.mjs';
+import { testHistCard } from './ui/testhist.mjs';
+import { secretWatchCard } from './ui/secretwatch.mjs';
+import { connectDailyCard } from './ui/connectdaily.mjs';
+import { weeklyCard } from './ui/weekly.mjs';
+import { notifyPrefsCard } from './ui/notifyprefs.mjs';
 
 // ---- the browser's storage (one that refuses it — a private window may — still works for the tab) ----
 const storage = (name) => { try { const s = window[name]; s.setItem('bdslab.probe', '1'); s.removeItem('bdslab.probe'); return s; } catch { return memoryStorage(); } };
@@ -374,6 +382,8 @@ function render() {
   // (an AI run's progress cards read GitHub on their own: stopped when the page is drawn anew)
   for (const c of st.progress?.values() ?? []) c.stop();
   st.progress = new Map();
+  // (a finished run's cards — why it failed, an Issue of it — read GitHub once: kept while this page is shown)
+  st.runCards = new Map();
   renderWho();
   const tabs = TABS.filter(([k]) => (k === 'audit' ? may('audit.read') : canLab() || ['overview', 'hosts', 'settings'].includes(k)));
   if (!tabs.some(([k]) => k === st.tab)) st.tab = tabs[0][0];
@@ -388,6 +398,8 @@ const every = (fn) => { clearInterval(st.timer); st.timer = setInterval(() => { 
 // ---- 準備 (ui/setup.mjs) and 監査 (ui/audit.mjs) ----
 // ---- 連携 (ui/connect.mjs): Discord・Cloudflare・Microsoft・Google Play・AI, each checked for real by connect.yml ----
 function connectView(body) {
+  // (the daily check of every service set up — connect.yml on schedule — above the services themselves)
+  body.append(connectDailyCard({ api: st.api, lab: st.lab }));
   connectTab(body, { api: st.api, lab: { slug: st.lab.slug, repo: st.lab.repo, role: st.lab.role, secrets: st.lab.secrets, workflows: st.lab.workflows }, me: st.me, policy: st.policy, role: st.role,
     guarded, reload: async () => { await loadEnv(st.lab); if (st.tab === 'connect') render(); }, record: (action, detail) => record(action, detail) });
 }
@@ -413,7 +425,15 @@ function schedule(body) {
     dispatchInputs: (f) => st.api.file(st.lab.slug, `.github/workflows/${f}`).then((x) => M.dispatchInputs(x?.text ?? '')) });
 }
 // ---- 統計 (ui/stats.mjs): the lab's runs and its lenders' as charts, each with its numbers as a table ----
-function stats(body) { statsTab(body, { api: st.api, lab: st.lab, hosts: st.hosts, find: (name) => { st.runsQ = name; st.runsShow = 'all'; go('runs'); } }); }
+function stats(body) {
+  statsTab(body, { api: st.api, lab: st.lab, hosts: st.hosts, find: (name) => { st.runsQ = name; st.runsShow = 'all'; go('runs'); } });
+  // (each unit's tests day by day; two runs side by side, read when opened; this week in one message for Discord)
+  const inside = h('div', {}), compare = h('details', { class: 'card', id: 'runcompare' }, h('summary', {}, '⚖️ 2 つの実行を比べる'), inside);
+  let opened = false;
+  compare.addEventListener('toggle', () => { if (!compare.open || opened) return; opened = true; fill(inside, async () => inside.replaceChildren(runCompareCard({ api: st.api, lab: st.lab }, { runs: await st.api.runs(st.lab.slug, { per: 50 }) }))); });
+  body.append(testHistCard({ api: st.api, lab: st.lab }), compare,
+    weeklyCard({ api: st.api, lab: st.lab, hosts: st.hosts, me: st.me, policy: st.policy, role: st.role, gate, guarded, go, dispatch: dispatchRaw, caps: capsOf() }));
+}
 // ---- 健康度 (ui/health.mjs, on 「概要」): the lab's health as a number, what would raise it, and the report for a company ----
 // (the 「準備」 checks it counts ask GitHub some ten times: read again at most every 5 minutes)
 let setupMemo = null;
@@ -763,13 +783,19 @@ async function detail(slug, r, box, show) {
   await fill(box, async () => {
     const [jobs, arts] = await Promise.all([st.api.jobs(slug, r.id), r.status === 'completed' ? st.api.artifacts(slug, { run: r.id }).catch(() => null /* said below, with GitHub's page */) : []]);
     const p = M.progress(r, jobs);
+    // (a failed run of the lab: why, in three lines, and an Issue of it — made once a run, kept across the list's refreshes)
+    let why = null;
+    if (slug === st.lab?.slug && r.status === 'completed' && !['success', 'skipped', 'neutral'].includes(r.conclusion)) {
+      why = st.runCards?.get(r.id) ?? h('div', {}, failsumCard({ api: st.api, lab: st.lab, slug, go }, r), runIssueCard({ api: st.api, lab: st.lab, me: st.me, policy: st.policy, role: st.role, guarded, record }, r));
+      st.runCards?.set(r.id, why);
+    }
     // (an AI run of the lab: its five stages, what is left and the way to the release — one card a run, read on its own)
     let pc = null;
     if (slug === st.lab?.slug && String(r.path ?? '').endsWith('/ai-make.yml')) {
       pc = st.progress?.get(r.id) ?? progressCard({ api: st.api, lab: st.lab, me: st.me, policy: st.policy, role: st.role, guarded, record }, r);
       st.progress?.set(r.id, pc);
     }
-    const parts = [pc, h('div', { class: 'bar' + (p.state === 'failure' ? ' bad' : '') }, h('i', { style: { width: `${p.pct}%` } })), h('div', { class: 'muted' }, `${p.done}/${p.total} 段 · ${M.fmtMs(p.ms)}${p.now ? ` · いま: ${p.now}` : ''}`)];
+    const parts = [pc, why, h('div', { class: 'bar' + (p.state === 'failure' ? ' bad' : '') }, h('i', { style: { width: `${p.pct}%` } })), h('div', { class: 'muted' }, `${p.done}/${p.total} 段 · ${M.fmtMs(p.ms)}${p.now ? ` · いま: ${p.now}` : ''}`)];
     for (const j of p.jobs) parts.push(h('div', {}, `${M.STATE_ICON[j.state] ?? '•'} ${j.name} — ${j.done}/${j.total}${j.now ? `（${j.now}）` : ''}`));
     // (a failed job's own words: its check run's annotations)
     const said = [];
@@ -995,6 +1021,8 @@ function discord(body) {
 
 // ---- 秘密 ----
 function secrets(body) {
+  // (secrets not set again for long: which, and how to renew each — names and dates only, never a value)
+  body.append(secretWatchCard({ api: st.api, lab: st.lab }));
   const list = h('div', {}, h('p', { class: 'muted' }, '読んでいます…'));
   const name = h('input', { type: 'text', list: 'known', placeholder: 'MS_EMAIL', autocapitalize: 'characters', value: st.prefill ?? '' }), value = h('input', { type: 'password', autocomplete: 'new-password' });
   st.prefill = null;
@@ -1236,6 +1264,8 @@ function settingsTab(body) {
   body.append(h('div', { class: 'card' }, h('h2', {}, 'この端末'), h('label', {}, on, ' この端末に知らせる: 実行が終わった・落ちた、参加のお願い、フォークで貸し始めた、新しい版（パネルを開いている間。タブの題に動いている数）'),
     h('p', { class: 'muted' }, '知らせたことは、上の 🔔「お知らせ」にも残ります（開いていなかった間のことも、次に開いたときに）。'),
     h('p', { class: 'muted' }, 'スマホではブラウザのメニューの「ホーム画面に追加」で、アプリのように開けます（iPhone はこうすると知らせが届きます）。一度開いたパネルは、ネットがなくても開けます。'), h('p', { class: 'muted' }, `キー: ${KEYS_HELP}`)));
+  // (the lab's Discord messages: who is told of what — .github/bds-lab-notify.json, shared by everyone in the lab)
+  if (st.lab) body.append(notifyPrefsCard({ api: st.api, lab: st.lab, me: st.me, policy: st.policy, role: st.role, may, guarded, record }));
   body.append(debugCard(), glossaryCard());
 }
 /** 「デバッグ」: this page's version, its errors and the last GitHub calls; a report to paste (tokens taken out) */

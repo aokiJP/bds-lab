@@ -7,7 +7,8 @@ export const marker = (id) => `<!-- bds-lab-run:${id} -->`;
 const SECRET = /(gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/g; // (the same shape as lib/drafts.mjs looksSecret)
 /** a text with anything secret-looking hidden (pure) */
 export const hide = (text) => String(text ?? '').replace(SECRET, '(伏せました)');
-const one = (text, n) => { const s = hide(text).replace(/\s+/g, ' ').trim(); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
+// (an @name or @org/team in a run's title or a note would make GitHub tell that person: a zero-width space after the @)
+const one = (text, n) => { const s = hide(text).replace(/\s+/g, ' ').trim().replace(/@(?=[\w-])/g, '@\u200b'); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
 const bad = (c) => ['failure', 'timed_out', 'cancelled', 'startup_failure', 'action_required'].includes(c);
 const WORD = { failure: '失敗', timed_out: '時間切れ', cancelled: '取り消し', startup_failure: '始められませんでした', action_required: '確認待ち' };
 
@@ -53,6 +54,12 @@ export async function openOrCreate(api, slug, run) {
   if (!bad(run.conclusion)) throw new Error('この実行は落ちていないので、Issue は作りません');
   const had = await findIssue(api, slug, run.id);
   if (had) return { issue: had, existed: true };
+  return createIssue(api, slug, run);
+}
+/** a new Issue for a failed run (the write alone: findIssue first, outside any guard — reading is no write) → { issue, existed: false } */
+export async function createIssue(api, slug, run) {
+  if (!run?.id) throw new Error('実行が選ばれていません');
+  if (!bad(run.conclusion)) throw new Error('この実行は落ちていないので、Issue は作りません');
   const jobs = await api.jobs(slug, run.id);
   const notes = [];
   for (const j of jobs.filter((x) => bad(x.conclusion)).slice(0, 5)) { try { const a = await api.annotations(slug, j.id); if (Array.isArray(a)) notes.push(...a); } catch { /* none for this job */ } }

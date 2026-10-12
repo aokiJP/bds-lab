@@ -23,7 +23,8 @@ export const CAUSES = Object.freeze([
   {
     id: 'timeout', label: '時間切れ',
     test: ({ run, jobs, text }) => run.conclusion === 'timed_out' || jobs.some((j) => j.conclusion === 'timed_out' || (j.steps ?? []).some((s) => s.conclusion === 'timed_out'))
-      || /timed? ?out|maximum execution time|timeout-minutes|has exceeded the maximum/i.test(text),
+      // (GitHub's own words only: a test's "timeout" or a watchdog's "script timeout" is the test's, not the job's)
+      || /has exceeded the maximum execution time|The job running on runner [^\n]{0,80} has exceeded|The operation was canceled[^\n]{0,40}timeout-minutes/i.test(text),
     why: () => '決めた時間をこえても終わらなかったので、GitHub が止めました（時間切れ）',
     next: () => '仕事を小さく分けるか、貸し手の Actions で走らせてください。たまたま遅かっただけなら「やり直す」',
   },
@@ -41,7 +42,8 @@ export const CAUSES = Object.freeze([
   },
   {
     id: 'bds', label: 'BDS を取れない',
-    test: ({ text, steps }) => /bedrock-server|minecraft\.net|\bBDS\b[^\n]{0,40}(?:download|fetch|404|取れ|取得|見つから)|(?:download|fetch)[^\n]{0,40}\bBDS\b/i.test(text)
+    // (taking it: a download of bedrock-server, minecraft.net — not "bedrock-server stopped" in a test's words)
+    test: ({ text, steps }) => /(?:download|fetch|get|取れ|取得)[^\n]{0,40}bedrock-server|bedrock-server[^\n]{0,20}(?:zip|download)|minecraft\.net|\bBDS\b[^\n]{0,40}(?:download|fetch|404|取れ|取得|見つから)|(?:download|fetch)[^\n]{0,40}\bBDS\b/i.test(text)
       || steps.some((s) => /\b(?:bds|bedrock)\b|サーバーを取/i.test(s.name) && /download|fetch|get|setup|取|入れ|install/i.test(s.name)),
     why: () => 'Minecraft のサーバー（BDS）を取ってこられませんでした（配布元の不調か、配り方が変わった）',
     next: () => 'しばらく待って「やり直す」。それでもだめなら「実行」で upkeep（新しい Minecraft に合わせる）を走らせてください',

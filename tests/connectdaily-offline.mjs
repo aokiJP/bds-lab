@@ -128,6 +128,17 @@ await t('the message really goes through common/notify.mjs to the webhook (a fak
   const lines = [];
   const x = await CD.dailyCmd([], { env: { ANTHROPIC_API_KEY: ANT }, out: (l) => lines.push(l), fetchImpl: async () => { throw Object.assign(new Error('x'), { cause: { code: 'ENOTFOUND' } }); }, notifyImpl: async () => true });
   eq(x, false); ok(lines.some((l) => /^E connect-daily ai: /.test(l)), lines.join('\n'));
+  // (--text-out: the message alone in a file for `app notify --text` — written only when one is broken, never a value)
+  const fsm = await import('node:fs'), os = await import('node:os'), dir = fsm.mkdtempSync(path.join(os.tmpdir(), 'daily-')), file = path.join(dir, 'daily.txt');
+  try {
+    const y = await CD.dailyCmd(['--no-notify', '--text-out', file], { env: { ANTHROPIC_API_KEY: ANT }, out: () => {}, fetchImpl: async () => { throw Object.assign(new Error('x'), { cause: { code: 'ENOTFOUND' } }); }, notifyImpl: async () => { throw new Error('--no-notify: nothing sent'); } });
+    const text = fsm.readFileSync(file, 'utf8');
+    ok(y === false && /AI/.test(text) && !text.includes(ANT), text);
+    fsm.rmSync(file);
+    eq(await CD.dailyCmd(['--text-out', file], { env: {}, out: () => {} }), true);
+    ok(!fsm.existsSync(file), 'nothing broken: no file');
+    eq(await CD.dailyCmd(['--text-out'], { env: {}, out: () => {} }), false, 'no file named: the usage');
+  } finally { fsm.rmSync(dir, { recursive: true, force: true }); }
 });
 
 // ---- the panel's side ----

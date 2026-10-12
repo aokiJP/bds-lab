@@ -169,6 +169,13 @@ await t('CLI: no token or repository → exit 1 with the way; GitHub refusing �
     ok(c.r && /新しい 500 件だけを読みました/.test(c.text) && /実行 500 回/.test(c.text), c.text);
     eq(f.seen.filter((s) => s.u.includes('/actions/runs?')).length, CLI.MAX_PAGES, 'stops at MAX_PAGES');
   } finally { f.close(); }
+  // (--text-out: the message alone in a file for `app notify --text`, the bot's direct message or the webhook — as notify.yml)
+  f = await fakeGitHub();
+  const fsm = await import('node:fs'), os = await import('node:os'), dir = fsm.mkdtempSync(path.join(os.tmpdir(), 'weekly-')), file = path.join(dir, 'w.txt');
+  try {
+    const c = await cli(f, ['--dry', '--text-out', file]), text = fsm.readFileSync(file, 'utf8');
+    ok(c.r && text.trim().length > 0 && c.text.includes(text.trim().split('\n')[0]) && !text.includes(TOKEN), text);
+  } finally { f.close(); fsm.rmSync(dir, { recursive: true, force: true }); }
   const net = await CLI.weeklyCmd(['--dry'], { out: () => {}, now: NOW, env: { GITHUB_REPOSITORY: 'o/lab', GITHUB_TOKEN: TOKEN }, fetchImpl: async () => { throw Object.assign(new Error('x'), { cause: { code: 'ENOTFOUND' } }); } });
   eq(net, false, 'no network: exit 1');
   const help = await cli(null, ['--help']);

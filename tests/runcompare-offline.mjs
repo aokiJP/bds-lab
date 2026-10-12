@@ -66,6 +66,9 @@ await t('two runs compared: jobs side by side, steps that differ, slower biggest
   const d = R.compareRuns(a, [job('x', 0, 1), job('y', 0, 1)], b, [job('x', 0, 2), job('y', 0, 9)]);
   eq(d.slower.map((s) => s.name), ['y', 'x']);
   eq(d.slower.map((s) => s.deltaMs), [480_000, 60_000]);
+  // (the same step name twice in a job: both compared — the second one by its turn)
+  const twice = R.compareRuns(a, [job('t', 0, 3, 'success', [step('Run', 0, 1), step('Run', 1, 2)])], b, [job('t', 0, 9, 'failure', [step('Run', 0, 1), step('Run', 1, 8, 'failure')])]);
+  eq(twice.jobs[0].steps.map((s) => [s.name, s.changed]), [['Run', false], ['Run（2 回目）', true]]);
 });
 
 await t('faster or under a second slower is not "slower"; the same commit says so; odd input does not throw (pure)', () => {

@@ -47,7 +47,7 @@ export async function weeklyCmd(args = [], { out = console.log, env = process.en
   const say = (s) => out(clean(scrub(s, secrets)));
   const opt = (k) => { const i = a.indexOf(k); return i >= 0 && i + 1 < a.length ? a[i + 1] : ''; };
   if (a.includes('help') || a.includes('--help')) {
-    say('usage: node lab.mjs weekly [--dry | --send] [--tz <Asia/Tokyo など>] [--hosts <owner/repo,…>]   （1 週間の実行・通った割合・使った分・よく落ちたもの・新しいリリース・貸し手の分を 1 通に。--send で LAB_NOTIFY_WEBHOOK へ）');
+    say('usage: node lab.mjs weekly [--dry | --send] [--text-out <ファイル>] [--tz <Asia/Tokyo など>] [--hosts <owner/repo,…>]   （1 週間の実行・通った割合・使った分・よく落ちたもの・新しいリリース・貸し手の分を 1 通に。--send で LAB_NOTIFY_WEBHOOK へ）');
     return true;
   }
   const sending = a.includes('--send') && !a.includes('--dry');
@@ -71,6 +71,10 @@ export async function weeklyCmd(args = [], { out = console.log, env = process.en
   try { r = report({ runs: lab.runs, releases: Array.isArray(releases) ? releases : [], now: at, hosts: theirs, tz: opt('--tz') || env.LAB_TZ || 'UTC', slug: repo, partial: lab.partial }); }
   catch (e) { say(`ERR weekly: 週報を作れません（${e.message}）`); return false; }
   for (const l of r.text.split('\n')) say(l);
+  // (the message alone in a file: the workflow hands it to `app notify --text`, which sends it the lab's way — the Discord bot's
+  // direct message first, else the webhook — as notify.yml does)
+  const file = opt('--text-out');
+  if (file) { try { (await import('node:fs')).writeFileSync(file, r.text + '\n'); } catch (e) { say(`ERR weekly: ${file} に書けません（${e.message}）`); return false; } }
   if (!sending) { say(`（${r.text.length} 文字。送っていません: 送るのは --send）`); return true; }
   if (!hook) { say('W weekly: LAB_NOTIFY_WEBHOOK がないので送りません（Secrets に Discord の Webhook URL を入れるか、管理パネルの「Discord に送る」で notify.yml から）'); return true; }
   const [first, ...rest] = r.text.split('\n');

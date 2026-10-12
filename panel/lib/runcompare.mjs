@@ -48,7 +48,8 @@ export function defaults(runs) {
 }
 
 const side = (j) => (j ? { conclusion: j.conclusion ?? j.status ?? null, ms: spanMs(j) } : null);
-const byName = (xs) => { const m = new Map(); for (const x of list(xs)) if (typeof x.name === 'string' && !m.has(x.name)) m.set(x.name, x); return m; };
+// (a name met again in the same job — the same "Run …" twice — is that name with its turn: 「Run …（2 回目）」, so both are compared)
+const byName = (xs) => { const m = new Map(), seen = new Map(); for (const x of list(xs)) if (typeof x.name === 'string') { const n = (seen.get(x.name) ?? 0) + 1; seen.set(x.name, n); m.set(n === 1 ? x.name : `${x.name}（${n} 回目）`, x); } return m; };
 // (the names of a and b in the order a had them, then the ones only b has)
 const names = (ma, mb) => [...ma.keys(), ...[...mb.keys()].filter((k) => !ma.has(k))];
 const differs = (x, y) => (x?.conclusion ?? null) !== (y?.conclusion ?? null) || (x === null) !== (y === null);

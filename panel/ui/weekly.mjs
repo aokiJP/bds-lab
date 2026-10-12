@@ -5,6 +5,7 @@ import { h, failView } from './dom.mjs';
 import * as W from '../lib/weekly.mjs';
 import { readRuns, PER_PAGE, MAX_PAGES, MAX_HOSTS } from './stats.mjs';
 import { listReleases } from '../lib/releases.mjs';
+import { localZone } from '../lib/stats.mjs';
 import { hasWorkflow } from '../lib/workspace.mjs';
 
 /** ctx: { api, lab: { slug, workflows? (notify.yml looked for in it) }, hosts? (as panel.js reads them: [{ slug, repo, error }]),
@@ -34,7 +35,7 @@ export function weeklyCard(ctx) {
       const now = ctx.now ?? Date.now(), since = new Date(now - 2 * W.WEEK_MS - 86_400_000).toISOString().slice(0, 10);
       const [runs, releases, ...theirs] = await Promise.all([readRuns(ctx.api, slug, { since }), listReleases(ctx.api, slug),
         ...hosts.map((x) => readRuns(ctx.api, x.slug, { workflow: 'host.yml', since }).catch(() => null))]);
-      rep = W.report({ runs, releases, now, tz: ctx.tz, slug, partial: runs.length >= PER_PAGE * MAX_PAGES, hosts: hosts.map((x, i) => ({ slug: x.slug, runs: theirs[i] })) });
+      rep = W.report({ runs, releases, now, tz: ctx.tz ?? localZone(), slug, partial: runs.length >= PER_PAGE * MAX_PAGES, hosts: hosts.map((x, i) => ({ slug: x.slug, runs: theirs[i] })) });
       say.replaceChildren(`この 7 日（${rep.numbers.days[0]}〜${rep.numbers.days[1]}）の週報の下書きです。このまま Discord に送られます（${rep.text.length} 文字）。`);
       out.replaceChildren(h('pre', { 'aria-label': '週報の下書き' }, rep.text));
       if (!why) { send.disabled = false; send.removeAttribute('title'); } else send.setAttribute('title', why);

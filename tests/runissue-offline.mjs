@@ -51,6 +51,8 @@ await t('issueBody: marker, summary, failed job and step, annotation, run link; 
   const e = R.issueBody({ id: 1, conclusion: 'failure' }, [], []);
   ok(/見つかりませんでした/.test(e.body) && /注釈はありません/.test(e.body), e.body);
   ok(R.issueBody(RUN, [], Array.from({ length: 25 }, () => ({ message: 'm' }))).body.includes('ほか 5 件'));
+  const at = R.issueBody({ ...RUN, display_title: 'fix for @alice and @org/team' }, [], [{ message: 'ping @bob' }]);
+  ok(!/@[\w-]/.test(at.body) && !/@[\w-]/.test(at.title) && at.title.includes('@\u200balice') && at.body.includes('@\u200bbob'), 'no one is called by an @ in a title or a note');
 });
 
 await t('findIssue: found by its marker among the labelled issues (a pull request is skipped); none gives null', async () => {
@@ -104,12 +106,15 @@ await t('runIssueCard: one click goes through ctx.guarded("issues") (a policy ac
   const { toast } = fakeDom(), UI = await imp('panel/ui/runissue.mjs'), f = await fakeGitHub();
   try {
     const calls = [];
-    const guarded = async (action, detail, fn, done) => { calls.push([action, detail]); ok(action === 'issues', 'action'); try { const r = await fn(); if (done) toast.append(globalThis.document.createTextNode(done)); return r; } catch (e) { toast.append(globalThis.document.createTextNode(e.message)); return undefined; } };
+    // (as the panel's: an action the policy does not know — or a writer may not do — is refused before anything is sent)
+    const P = await imp('panel/lib/policy.mjs');
+    const guarded = async (action, detail, fn, done) => { calls.push([action, detail]); ok(action === 'issues', 'action'); if (!P.can(P.DEFAULT_POLICY, 'write', action)) { toast.append(globalThis.document.createTextNode('許されていません')); return undefined; } try { const r = await fn(); if (done) toast.append(globalThis.document.createTextNode(done)); return r; } catch (e) { toast.append(globalThis.document.createTextNode(e.message)); return undefined; } };
     const c = UI.runIssueCard({ api: f.api, lab: { slug: 'o/lab' }, guarded }, RUN);
     await btn(c, /失敗から Issue/).click(); await tick();
     eq(calls, [['issues', { run: 77 }]]); ok(/作りました/.test(c.textContent) && c.all((e) => e.attrs.href === 'https://github.com/o/lab/issues/101').length === 1, c.textContent);
     await btn(c, /失敗から Issue/).click(); await tick();
     ok(/もうあります/.test(c.textContent), c.textContent); eq(f.st.posts.length, 1);
+    eq(calls.length, 1, 'the one already there is only read: not guarded, not in the audit log');
   } finally { f.close(); }
 });
 

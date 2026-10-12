@@ -13,8 +13,13 @@ export function runIssueCard(ctx, run) {
   const go = h('button', {
     class: 'primary', disabled: !failed, title: why,
     onclick: async () => {
-      const work = () => R.openOrCreate(api, lab.slug, run);
-      const r = ctx.guarded ? await ctx.guarded('issues', { run: run.id }, work, '調べました') : await act(work, '調べました');
+      if (!failed) return;
+      // (the one already made is only read — no guard, no audit entry; only a new Issue goes through the guard)
+      const had = await act(() => R.findIssue(api, lab.slug, run.id));
+      if (had === undefined) return;
+      if (had) return show({ issue: had, existed: true });
+      const work = () => R.createIssue(api, lab.slug, run);
+      const r = ctx.guarded ? await ctx.guarded('issues', { run: run.id }, work, 'Issue を作りました') : await act(work, 'Issue を作りました');
       if (r === undefined) return;
       show(r);
     },

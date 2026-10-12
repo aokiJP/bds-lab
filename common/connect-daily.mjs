@@ -66,7 +66,8 @@ async function checkOne(service, { env, fetchImpl }) {
  *  → true when none is broken (none there: true, said so). opts: env, out, fetchImpl (the services), notifyImpl
  *  (common/notify.mjs notify), now (tests) */
 export async function dailyCmd(args = [], { env = process.env, out = console.log, fetchImpl = fetch, notifyImpl = notify, now = () => new Date() } = {}) {
-  if (args.some((a) => a !== '--no-notify')) { out('使い方: node lab.mjs connect-daily [--no-notify]（GitHub の Actions の connect.yml で毎日。結果は注釈 connect-daily）'); return false; }
+  const ti = args.indexOf('--text-out'), textOut = ti >= 0 ? args[ti + 1] ?? '' : null;
+  if (args.some((a, i) => a !== '--no-notify' && !(i === ti || (ti >= 0 && i === ti + 1))) || textOut === '') { out('使い方: node lab.mjs connect-daily [--no-notify] [--text-out <ファイル>]（GitHub の Actions の connect.yml で毎日。結果は注釈 connect-daily。--text-out: だめなものがあるとき、知らせる文をそのファイルに）'); return false; }
   const inCi = env.GITHUB_ACTIONS === 'true';
   // (every secret of every service, and the webhook's address, hidden before anything is asked)
   const secrets = [...Object.values(C.SECRETS).flat(), 'LAB_NOTIFY_WEBHOOK'].map((k) => String(env[k] ?? '')).filter(Boolean);
@@ -82,6 +83,13 @@ export async function dailyCmd(args = [], { env = process.env, out = console.log
   for (const s of sum.bad) out(`::warning title=${prop(`連携の不調 ${NAMES[s]}`)}::${data(sum.services[s].problem)}`);
   if (!services.length) out('OK connect-daily: 連携の秘密がまだ 1 つも入っていません（確かめるものはありません）');
   for (const s of sum.checked) out(`${sum.services[s].ok ? 'OK' : 'E'} connect-daily ${s}${sum.services[s].ok ? '' : `: ${sum.services[s].problem}`}`);
+  // (the message alone in a file when one is broken: the workflow hands it to `app notify --text` — the bot's direct message
+  // first, else the webhook, as notify.yml does)
+  if (textOut && sum.bad.length) {
+    const runUrl = env.GITHUB_REPOSITORY && env.GITHUB_RUN_ID ? `https://github.com/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}` : '';
+    const m = message(sum, { runUrl });
+    (await import('node:fs')).writeFileSync(textOut, C.scrub([m.title, ...m.lines].join('\n'), secrets) + '\n');
+  }
   if (sum.bad.length && !args.includes('--no-notify') && env.LAB_NOTIFY_WEBHOOK && String(env.LAB_NOTIFY ?? '').toLowerCase() !== 'off') {
     const runUrl = env.GITHUB_REPOSITORY && env.GITHUB_RUN_ID ? `https://github.com/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}` : '';
     const m = message(sum, { runUrl });
