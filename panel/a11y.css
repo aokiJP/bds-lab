@@ -1,0 +1,37 @@
+/* bds-lab panel: 見やすさ (panel/lib/a11y.mjs, ui/a11y.mjs) — each switch is a class on <html>, chosen in 「設定」 and kept in this
+   browser. Loaded after panel.css: it only lays its own values over panel.css's variables and sizes.
+   tests/a11y-offline.mjs reads the colours below and checks each pair of text and background (WCAG AA 4.5:1 at least; 7:1 aimed). */
+
+/* 大きな字: text 1.25 times (15px → 18.75px), and the smaller sizes with it; bigger buttons and boxes to press */
+html.a11y-big body { font-size: 18.75px; }
+html.a11y-big header#top h1, html.a11y-big .card h2 { font-size: 20px; }
+html.a11y-big .card h3 { font-size: 18px; }
+html.a11y-big label, html.a11y-big #who, html.a11y-big table, html.a11y-big .jobs, html.a11y-big textarea,
+html.a11y-big .pad button, html.a11y-big #who select { font-size: 16px; }
+html.a11y-big .chip, html.a11y-big pre { font-size: 15px; }
+html.a11y-big button, html.a11y-big .btn { min-height: 52px; padding: 10px 16px; }
+html.a11y-big #who button, html.a11y-big #who select { min-height: 44px; }
+html.a11y-big .pad button { min-height: 60px; }
+html.a11y-big input[type=checkbox], html.a11y-big input[type=radio] { width: 28px; height: 28px; }
+html.a11y-big ul.targets label { font-size: 18.75px; }
+html.a11y-big #palette input { font-size: 21px; }
+
+/* はっきりした色: text against its background 7:1 or more where it can (never under 4.5:1), borders 3:1 or more */
+html.a11y-contrast { --bg: #ffffff; --card: #ffffff; --fg: #000000; --muted: #343a46; --line: #5c6370; --accent: #0a3d91; --ok: #0b5a2a; --warn: #6b3a00; --bad: #a00d0d; --chip: #e6ebf5; --on-accent: #ffffff; --on-bad: #ffffff; }
+@media (prefers-color-scheme: dark) {
+  html.a11y-contrast { --bg: #000000; --card: #0b0e13; --fg: #ffffff; --muted: #d0d6e0; --line: #8a94a6; --accent: #a8c8ff; --ok: #7fe0a3; --warn: #ffd08a; --bad: #ffa3a3; --chip: #1b2330; --on-accent: #000000; --on-bad: #000000; }
+}
+html.a11y-contrast button.primary, html.a11y-contrast button.on { color: var(--on-accent); }
+html.a11y-contrast #toast div.bad { color: var(--on-bad); }
+html.a11y-contrast button, html.a11y-contrast .btn, html.a11y-contrast .card, html.a11y-contrast input, html.a11y-contrast select, html.a11y-contrast textarea { border-color: var(--line); }
+/* (a button that cannot be pressed stays readable: a dashed border says so, not a faded colour) */
+html.a11y-contrast button:disabled { opacity: 1; border-style: dashed; color: var(--muted); }
+html.a11y-contrast :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+/* 動きを減らす: no animation, no transition, no smooth scrolling */
+html.a11y-calm, html.a11y-calm *, html.a11y-calm *::before, html.a11y-calm *::after {
+  animation: none !important; transition: none !important; scroll-behavior: auto !important;
+}
+
+/* リンクに下線: every link (and the buttons that look like links) underlined */
+html.a11y-links a, html.a11y-links button.linkish { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
