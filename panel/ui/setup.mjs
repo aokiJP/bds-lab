@@ -70,7 +70,7 @@ function autoCard(ctx, draw) {
       h('p', { class: 'muted' }, 'サインインのサービスも置くなら、Cloudflare の API トークン（テンプレート「Edit Cloudflare Workers」）とアカウント ID を入れてください。なければ空のままで、あとから入れられます。'),
       h('details', {}, h('summary', {}, 'Cloudflare を持っていないとき（無料・5 分）'),
         h('ol', {},
-          h('li', {}, 'dash.cloudflare.com を開き「Sign up」: メールアドレスとパスワードだけで、無料で作れます（カードは要りません）。届いたメールで確かめます。'),
+          h('li', {}, 'dash.cloudflare.com を開き「Sign up」→「Sign up with GitHub」: いま GitHub に入っていれば、GitHub の確認を 1 回押すだけで、無料で作れます（カードもパスワードも要りません）。'),
           h('li', {}, '左の「Workers & Pages」を一度開きます（はじめての人は、ここで workers.dev の名前を決めます: 好きな英小文字で）。'),
           h('li', {}, '右上の人の形 → 「My Profile」→「API Tokens」→「Create Token」→ テンプレート「Edit Cloudflare Workers」の「Use template」→ そのまま下の「Continue to summary」→「Create Token」。出てきた長い文字列を写して、下の「API トークン」に。'),
           h('li', {}, '「Workers & Pages」の画面の右側にある「Account ID」（32 文字）を写して、下の「アカウント ID」に。')),
