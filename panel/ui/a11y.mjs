@@ -37,7 +37,7 @@ export function a11yCard(ctx = {}) {
     if (same()) return;
     st.now = { ...st.draft };
     apply(doc, st.now);
-    if (!A.save(storage, st.now)) box.append(failView(new Error('このブラウザには残せませんでした（保存の場所がいっぱいか、断られました）。このページを開いている間だけ効きます。ブラウザの保存の設定を見直して、もう一度「今すぐ見る」を押してください')));
+    if (!A.save(storage, st.now, device())) box.append(failView(new Error('このブラウザには残せませんでした（保存の場所がいっぱいか、断られました）。このページを開いている間だけ効きます。ブラウザの保存の設定を見直して、もう一度「今すぐ見る」を押してください')));
     else toast('見え方を変えました（このブラウザに残します）');
     drawTail();
   }

@@ -43,9 +43,13 @@ export function chosen(storage) {
   try { return Object.keys(clean(JSON.parse(storage?.getItem(STORAGE_KEY) ?? 'null'))).length > 0; } catch { return false; }
 }
 
-/** keep the choice in this browser → true; false when the storage is full or refuses (the choice still holds for this page) */
-export function save(storage, prefs) {
-  try { storage.setItem(STORAGE_KEY, JSON.stringify(clean(prefs))); return true; } catch { return false; }
+/** keep the choice in this browser → true; false when the storage is full or refuses (the choice still holds for this page).
+ *  base (fromMedia(...)): only what differs from it is kept, so the rest goes on following the device (a reduce-motion
+ *  turned on later still gives calm); no base: every known switch given is kept */
+export function save(storage, prefs, base) {
+  let keep = clean(prefs);
+  if (base !== undefined) { const b = { ...defaults(), ...clean(base) }; keep = Object.fromEntries(Object.entries(keep).filter(([k, v]) => v !== b[k])); }
+  try { storage.setItem(STORAGE_KEY, JSON.stringify(keep)); return true; } catch { return false; }
 }
 
 /** forget the choice (back to the device's settings) → true when gone */

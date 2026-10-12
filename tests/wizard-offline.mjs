@@ -57,7 +57,7 @@ await t('resolve: allowed goes straight; not allowed gives the reason and anothe
   eq(r.tab, 'overview'); ok(r.why && r.from === 'idea', 'why');
   const noSecret = { tabs: () => TABS, may: (a) => a !== 'secrets.put' };
   const s = W.resolve('secret', noSecret);
-  eq(s.tab, 'connect'); ok(/secrets\.put/.test(s.why), 'names the action');
+  eq(s.tab, 'connect'); ok(s.why.includes(P.ACTION_WORDS['secrets.put']), 'names the action in words');
   eq(W.resolve('guide', { tabs: () => [], may: () => true }).tab, undefined);
   ok(W.resolve('guide', { tabs: () => [], may: () => true }).why, 'nothing: a reason');
 });
@@ -72,7 +72,7 @@ await t('card: one question at a time, back, restart, state in storage, go', () 
   btn(card, 'data-act', 'back').click();
   ok(/何がしたいですか/.test(card.text) && !btn(card, 'data-act', 'back'), 'back at root');
   btn(card, 'data-choice', 'make').click(); btn(card, 'data-choice', 'idea').click();
-  ok(/アイデアからアドオン/.test(card.text) && /#make/.test(card.text), 'leaf with focus');
+  ok(/アイデアからアドオン/.test(card.text) && card.text.includes('「💡 アイデアからアドオンを作る」の場所'), 'leaf with focus');
   btn(card, 'data-go', 'start').click();
   eq(went, [['start', 'make']]);
   btn(card, 'data-act', 'restart').click();
@@ -84,6 +84,29 @@ await t('card: one question at a time, back, restart, state in storage, go', () 
   ok(/何がしたいですか/.test(U.wizardCard(ctx).text), 'bad value');
   storage.setItem('bdslab.panel.wizard.o/lab', '["zzz"]');
   ok(/何がしたいですか/.test(U.wizardCard(ctx).text), 'unknown id');
+});
+await t('words only: no action name (secrets.put) or HTML id (#make) is shown to the person', () => {
+  const names = P.ACTIONS, ids = Object.values(W.LEAVES).map((l) => l.focus).filter(Boolean);
+  const shows = (text) => [...names.filter((a) => text.includes(a)), ...ids.filter((id) => text.includes(`#${id}`))];
+  for (const [key, leaf] of Object.entries(W.LEAVES)) {
+    if (leaf.focus) ok(leaf.where && !/#|^[a-z]+$/.test(leaf.where), `${key}: a heading in words`);
+    for (const ctx of [{ tabs: () => TABS, may: () => true }, { tabs: () => TABS, may: () => false }, { tabs: () => ['overview'], may: () => false }]) {
+      const r = W.resolve(key, ctx);
+      eq(shows(`${r.why ?? ''}${r.say ?? ''}${r.where ?? ''}`), [], `${key} resolved`);
+    }
+  }
+  const s = W.resolve('secret', { tabs: () => TABS, may: (a) => a !== 'secrets.put' });
+  ok(s.why.includes('「秘密を登録する」'), s.why);
+  eq(W.resolve('idea', { tabs: () => TABS, may: () => true }).where, '💡 アイデアからアドオンを作る');
+  // the heading named is the one the page shows (panel.js 「#make」, ui/guide.mjs 「#guide」)
+  const heads = src + fs.readFileSync(path.join(TOP, 'panel/ui/guide.mjs'), 'utf8');
+  for (const l of Object.values(W.LEAVES)) if (l.where) ok(heads.includes(`'${l.where}`) || heads.includes(`\`${l.where}`), `heading on the page: ${l.where}`);
+  // the card, at every leaf, for a role that may do all and one that may do nothing
+  for (const may of [() => true, () => false]) for (const p of [['make', 'idea'], ['fix', 'secret'], ['share', 'invite'], ['make', 'import']]) {
+    const storage = store(); storage.setItem('bdslab.panel.wizard.', JSON.stringify(p));
+    const text = U.wizardCard({ tabs: () => TABS, may, storage, go() {} }).text;
+    eq(shows(text), [], `${p.join('/')} card`);
+  }
 });
 await t('card: a place the role cannot use shows why and the other way (no dead button)', () => {
   const storage = store(), went = [];

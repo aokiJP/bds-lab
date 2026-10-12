@@ -154,17 +154,38 @@ await t('the card: four switches, 「今すぐ見る」 pressable only after a c
   eq(set.has('a11y-big'), false, 'not yet: only after 「今すぐ見る」');
   btn('show').click();
   ok(set.has('a11y-big') && set.has('a11y-calm'), `applied: ${[...set]}`);
-  eq(JSON.parse(storage.getItem('bdslab.panel.a11y')), { big: true, contrast: false, calm: true, links: false }, 'kept');
+  eq(JSON.parse(storage.getItem('bdslab.panel.a11y')), { big: true }, 'kept: only what differs from the device (calm still follows it)');
   ok(/見え方を変えました/.test(toast.textContent), 'told');
   ok(btn('show').disabled && !btn('reset').disabled, 'shown: nothing more to show; now it can go back');
 
   // a second card (the page opened again) reads the choice back
   const again = UI.a11yCard({ storage, document: globalThis.document, matchMedia: media([]) });
-  eq(again.all((e) => e.attrs['data-a11y-key'] !== undefined).map((b) => b.checked), [true, false, true, false], 'kept over a reload');
+  eq(again.all((e) => e.attrs['data-a11y-key'] !== undefined).map((b) => b.checked), [true, false, false, false], 'kept over a reload; calm follows the device (now off)');
 
   btn('reset').click();
   eq(storage.getItem('bdslab.panel.a11y'), null, 'forgotten'); ok(!set.has('a11y-big') && set.has('a11y-calm'), `back to the device: ${[...set]}`);
   eq(boxes().map((b) => b.checked), [false, false, true, false], 'redrawn'); ok(btn('reset').disabled, 'nothing chosen again');
+});
+
+await t('save with the device as base: only the differences are kept, so a device setting turned on later still counts', async () => {
+  const s = memoryStorage(), none = A.fromMedia(media([])), calm = A.fromMedia(media(['(prefers-reduced-motion: reduce)']));
+  ok(A.save(s, { ...none, big: true }, none), 'saved');
+  eq(JSON.parse(s.getItem(A.STORAGE_KEY)), { big: true }, 'only big');
+  eq(A.load(s, calm), { big: true, contrast: false, calm: true, links: false }, 'reduce motion turned on later → calm');
+  ok(A.save(s, { ...calm, calm: false }, calm) && A.load(s, calm).calm === false, 'turning calm off against the device is kept');
+  ok(A.save(s, calm, calm) && !A.chosen(s), 'the same as the device: nothing chosen');
+  // the card: one switch chosen with no device setting, then the device asks for less motion → calm on <html>
+  const { set } = fakeDom();
+  const UI = await imp('panel/ui/a11y.mjs');
+  const storage = memoryStorage();
+  const card = UI.a11yCard({ storage, document: globalThis.document, matchMedia: media([]) });
+  const big = card.all((e) => e.attrs['data-a11y-key'] === 'big')[0]; big.checked = true; big.fire('change');
+  card.all((e) => e.attrs['data-a11y-do'] === 'show')[0].click();
+  ok(set.has('a11y-big') && !set.has('a11y-calm'), `chosen: ${[...set]}`);
+  UI.apply(globalThis.document, A.load(storage, A.fromMedia(media(['(prefers-reduced-motion: reduce)']))));
+  ok(set.has('a11y-big') && set.has('a11y-calm'), `the device now reduces motion: ${[...set]}`);
+  const again = UI.a11yCard({ storage, document: globalThis.document, matchMedia: media(['(prefers-reduced-motion: reduce)']) });
+  eq(again.all((e) => e.attrs['data-a11y-key'] !== undefined).map((b) => b.checked), [true, false, true, false], 'the card shows calm on');
 });
 
 await t('the card: a storage that refuses still shows it for the page, and says why with the next step (fake DOM)', async () => {

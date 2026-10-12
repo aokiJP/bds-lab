@@ -4,12 +4,14 @@
 // the tab is not there for this person (no lab, or the policy does not allow it), the reason and another way.
 
 import { HELP } from './guide.mjs';
+import { ACTION_WORDS } from './policy.mjs';
 const NAME = (tab) => HELP[tab]?.title ?? tab;
 
-// (a leaf: { tab, focus?, say, need?, alt? } — need: the policy action the place is for; alt: the leaf's key in LEAVES to
-// go to instead when this one cannot be used)
+// (a leaf: { tab, focus?, where?, say, need?, alt? } — focus: the id of the element to open at (for the page, never shown);
+// where: the heading of that element as the person sees it; need: the policy action the place is for; alt: the leaf's key in
+// LEAVES to go to instead when this one cannot be used)
 export const LEAVES = Object.freeze({
-  idea: { tab: 'start', focus: 'make', say: '「実行」の「アイデアからアドオンを作る」に、作りたいものを書いてください。AI が作って、試験まで確かめます。', need: 'dispatch', alt: 'guide' },
+  idea: { tab: 'start', focus: 'make', where: '💡 アイデアからアドオンを作る', say: '「実行」の「アイデアからアドオンを作る」に、作りたいものを書いてください。AI が作って、試験まで確かめます。', need: 'dispatch', alt: 'guide' },
   import: { tab: 'units', say: '「アドオン」で人の .mcaddon / .zip を取り込みます。取り込むと、試験もそこからできます。', alt: 'guide' },
   fresh: { tab: 'units', say: '「アドオン」で新しいアドオンを作ります。名前を決めると、土台の一式ができます。', alt: 'guide' },
   failed: { tab: 'runs', say: '「進み具合」で落ちた実行の「詳しく」を開くと、原因と直し方が言葉で出ます。', alt: 'guide' },
@@ -19,7 +21,7 @@ export const LEAVES = Object.freeze({
   notify: { tab: 'discord', say: '「Discord」で、実行が終わったときの知らせを送る先を決めます。まず「試しに送る」で確かめると安心です。', alt: 'guide' },
   invite: { tab: 'members', say: '「メンバー」で、一緒に使う人を招きます。招かれた人が受けると入れます。', need: 'members', alt: 'guide' },
   connect: { tab: 'connect', say: '「連携」で、Discord などをつなぎ直します。', alt: 'guide' },
-  guide: { tab: 'overview', focus: 'guide', say: '「概要」の「はじめてのガイド」が、次にやることを順に教えてくれます。', alt: null },
+  guide: { tab: 'overview', focus: 'guide', where: '🧭 はじめてのガイド', say: '「概要」の「はじめてのガイド」が、次にやることを順に教えてくれます。', alt: null },
 });
 
 // (a question: { ask, options: [{ id, label, next }] } — next: a question's key in ASKS, or a leaf's key in LEAVES with leaf: true)
@@ -60,7 +62,7 @@ export function next(path = []) {
 }
 
 /** a leaf → where to go for this person. ctx: { tabs: () => tab keys shown now, may: (action) => bool }
- *  → { tab, focus, say, key } or { tab, focus, say, key, why, from } when the first place cannot be used and another is offered
+ *  → { tab, name, focus, where, say, key } or { …, why, from } when the first place cannot be used and another is offered
  *  or { why } alone when nothing can be */
 export function resolve(key, ctx) {
   const seen = new Set();
@@ -71,10 +73,10 @@ export function resolve(key, ctx) {
     if (!leaf) break;
     const shown = ctx.tabs().includes(leaf.tab);
     const allowed = !leaf.need || ctx.may(leaf.need);
-    if (shown && allowed) return { tab: leaf.tab, name: NAME(leaf.tab), focus: leaf.focus ?? null, say: leaf.say, key: k, ...(why ? { why, from } : {}) };
+    if (shown && allowed) return { tab: leaf.tab, name: NAME(leaf.tab), focus: leaf.focus ?? null, where: leaf.where ?? null, say: leaf.say, key: k, ...(why ? { why, from } : {}) };
     if (!why) {
       from = key;
-      why = !shown ? `この画面には「${NAME(leaf.tab)}」のタブがありません（ラボにつながっていないか、あなたの役割では開けません）。` : `あなたの役割では「${leaf.need}」の操作ができません（管理者に、ポリシーで許してもらってください）。`;
+      why = !shown ? `この画面には「${NAME(leaf.tab)}」のタブがありません（ラボにつながっていないか、あなたの役割では開けません）。` : `あなたの役割では「${ACTION_WORDS[leaf.need] ?? 'この操作をする'}」ことができません（管理者に、ポリシーで許してもらってください）。`;
     }
     k = leaf.alt;
   }
