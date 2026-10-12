@@ -256,5 +256,19 @@ await t('the policy and GitHub\'s role: a role that may not put secrets or start
   } finally { f.close(); }
 });
 
+await t('the panel reads what common/connect.mjs really says (the same notice line, end to end): Discord\'s bot and invite, a problem, the AI\'s two keys', async () => {
+  const L = await imp('common/connect.mjs');
+  const said = (service, r) => { const line = L.noticeLine(service, { service, ...r }); return C.parseResult(line.slice(line.indexOf('::', 2) + 2)); };
+  const d = said('discord', L.discordResult({ bot: true, username: 'labbot', id: '123456789012345678' }, { id: '123456789012345678' }, ''));
+  ok(d.ok === false && /USER_ID|ユーザー ID/.test(d.text + (d.next?.say ?? '')) || d.ok, JSON.stringify(d));
+  ok(/^https:\/\/discord\.com\//.test(d.next?.url ?? ''), `the invite as the next step's link: ${JSON.stringify(d)}`);
+  const good = said('discord', L.discordResult({ bot: true, username: 'labbot', id: '123456789012345678' }, { id: '123456789012345678' }, '123456789012345678'));
+  ok(good.ok && /labbot/.test(good.text) && /^https:\/\/discord\.com\//.test(good.next?.url ?? ''), JSON.stringify(good));
+  const bad = said('discord', L.discordResult({ bot: false }, null, ''));
+  ok(!bad.ok && /ボットのもの/.test(bad.text), JSON.stringify(bad));
+  const ai = said('ai', { ok: false, anthropic: { ok: true }, openai: { ok: false, problem: 'キーが違います' } });
+  ok(!ai.ok && /キーが違います/.test(ai.text), JSON.stringify(ai));
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

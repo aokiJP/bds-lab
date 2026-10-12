@@ -86,10 +86,15 @@ export function status(secrets, checked = {}) {
 export function parseResult(msg) {
   let j = null; try { j = JSON.parse(String(msg ?? '')); } catch { /* not JSON */ }
   if (!j || typeof j !== 'object' || typeof j.ok !== 'boolean') return { ok: false, text: '確かめの答えを読めません（実行の記録を GitHub で見てください）', next: null };
-  const who = [j.who, j.id].filter((x) => x !== undefined && x !== null && x !== '').map((x) => String(x).slice(0, 80)).join('・');
-  const text = j.ok ? `つながりました${who ? `（${who}）` : ''}` : `つながりません: ${String(j.why ?? '理由は分かりません').slice(0, 200)}`;
-  const n = j.next && typeof j.next === 'object' ? { say: String(j.next.say ?? '').slice(0, 200), url: safeLink(j.next.url) } : null;
-  return { ok: j.ok, text, next: n && (n.say || n.url) ? n : null };
+  // (common/connect.mjs's words: bot / appId (Discord), the AI's anthropic / openai, problem, next — a sentence — and invite;
+  // who / id / why and next: { say, url } are taken too)
+  const ai = ['anthropic', 'openai'].filter((k) => j[k] && typeof j[k] === 'object').map((k) => `${k === 'anthropic' ? 'Claude' : 'OpenAI'} ${j[k].ok ? '✅' : '⚠️'}`).join('・');
+  const who = [j.who ?? j.bot, j.id ?? j.appId, ai].filter((x) => x !== undefined && x !== null && x !== '').map((x) => String(x).slice(0, 80)).join('・');
+  const why = j.problem ?? j.why ?? ['anthropic', 'openai'].map((k) => j[k]?.problem).find(Boolean);
+  const text = j.ok ? `つながりました${who ? `（${who}）` : ''}` : `つながりません: ${String(why ?? '理由は分かりません').slice(0, 200)}`;
+  const say = typeof j.next === 'string' ? j.next : j.next?.say, url = (j.next && typeof j.next === 'object' ? j.next.url : null) ?? j.invite;
+  const n = { say: String(say ?? '').slice(0, 200), url: safeLink(url) };
+  return { ok: j.ok, text, next: n.say || n.url ? n : null };
 }
 const sleeper = (ms) => new Promise((r) => setTimeout(r, ms));
 /** connect.yml started for one service and waited for (as setup's deployAuth waits for its own run: the new run started by

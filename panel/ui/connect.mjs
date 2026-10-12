@@ -79,7 +79,7 @@ function card(ctx, svc, k) {
       }
       for (const [, el] of fields) el.value = '';
       k.refresh();
-      const r = await C.runCheck(ctx.api, ctx.lab.slug, svc.key, { me: ctx.me?.login, onStep: (t) => out.replaceChildren(t) });
+      const r = await C.runCheck(ctx.api, ctx.lab.slug, svc.key, { ref: ctx.lab.repo?.default_branch ?? 'main', me: ctx.me?.login, onStep: (t) => out.replaceChildren(t) });
       k.checked[svc.key] = r;
       ctx.record?.(`connect.${svc.key}`, { ok: r.ok });
       put(out, h('div', { class: r.ok ? 'ok' : 'bad', role: r.ok ? 'status' : 'alert' }, (r.ok ? '✅ ' : '⚠️ ') + r.text),
