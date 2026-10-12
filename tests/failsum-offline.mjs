@@ -20,6 +20,20 @@ const run = (conclusion, more = {}) => ({ id: 7, status: 'completed', conclusion
 const job = (name, conclusion, steps, id = 70) => ({ id, name, conclusion, check_run_url: `https://api.github.com/repos/o/lab/check-runs/${id}`, steps: steps.map(([n, c], i) => ({ number: i + 1, name: n, conclusion: c })) });
 const an = (message, level = 'failure', title = '') => ({ annotation_level: level, title, message });
 
+// (the page's requests to the fake GitHub counted where they start — its fetch, answer and body read: a wait ends when none is
+// open and none has come or gone for a while — not after a fixed time, which a busy CI runner can outlast)
+const net = { busy: 0, at: 0 };
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (...x) => {
+  net.busy++; net.at = Date.now();
+  try { const r = await realFetch(...x), body = await r.arrayBuffer(); return new Response(body, { status: r.status, statusText: r.statusText, headers: r.headers }); } finally { net.busy--; net.at = Date.now(); }
+};
+const tick = async () => {
+  const until = Date.now() + 10_000;
+  await new Promise((r) => setTimeout(r, 30));
+  while (Date.now() < until && (net.busy > 0 || Date.now() - net.at < 60)) await new Promise((r) => setTimeout(r, 15));
+};
+
 await t('summarize: a missing secret → where (job, step number, step name), why with the name, the next step to 「秘密」', () => {
   const s = FS.summarize({ run: run('failure'), jobs: [job('notify', 'failure', [['Set up job', 'success'], ['Send', 'failure'], ['Post', 'skipped']])], annotations: [an('DISCORD_BOT_TOKEN is not set'), an('note', 'notice')] });
   eq(s.cause, 'secret');
@@ -127,7 +141,6 @@ function fakeDom() {
   globalThis.document = { createElement: (tag) => new E(tag), createTextNode: (s) => new T(s), getElementById: (id) => (id === 'toast' ? toast : null), body: new E('body') };
   return { E, toast };
 }
-const tick = () => new Promise((r) => setTimeout(r, 40));
 const btn = (c, re) => c.all((e) => e.tagName === 'BUTTON' && re.test(e.textContent))[0];
 
 await t('failsumCard: a failed run → three lines (where, why, next) from its jobs and annotations, a github.com link, 「写す」 copies them; only reads', async () => {

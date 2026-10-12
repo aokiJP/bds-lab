@@ -23,6 +23,20 @@ const job = (steps) => [{ id: 1, name: 'make', steps }];
 const states = (r) => r.stages.map((s) => s.state);
 const EXPECT = 20 * 60_000;
 
+// (the page's requests to the fake GitHub counted where they start — its fetch, answer and body read: a wait ends when none is
+// open and none has come or gone for a while — not after a fixed time, which a busy CI runner can outlast)
+const net = { busy: 0, at: 0 };
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (...x) => {
+  net.busy++; net.at = Date.now();
+  try { const r = await realFetch(...x), body = await r.arrayBuffer(); return new Response(body, { status: r.status, statusText: r.statusText, headers: r.headers }); } finally { net.busy--; net.at = Date.now(); }
+};
+const settle = async () => {
+  const until = Date.now() + 10_000;
+  await new Promise((r) => setTimeout(r, 30));
+  while (Date.now() < until && (net.busy > 0 || Date.now() - net.at < 60)) await new Promise((r) => setTimeout(r, 15));
+};
+
 await t('the stages: five, in order, with their words', () => {
   eq(PG.STAGES.map((s) => s.label), ['考える', '作る', '本物のサーバーで遊ぶ', '配る', '知らせる']);
 });
@@ -107,7 +121,6 @@ function fakeDom() {
   return { toast };
 }
 const fakeTimers = () => { const tm = { fns: new Map(), n: 0, cleared: 0, every: null }; tm.setInterval = (fn, ms) => { tm.every = ms; tm.fns.set(++tm.n, fn); return tm.n; }; tm.clearInterval = (id) => { tm.fns.delete(id); tm.cleared++; }; tm.tick = () => Promise.all([...tm.fns.values()].map((f) => f())); return tm; };
-const settle = () => new Promise((r) => setTimeout(r, 60));
 const RUNNING = { id: 77, status: 'in_progress', conclusion: null, run_started_at: at(0), html_url: 'https://github.com/o/lab/actions/runs/77', path: '.github/workflows/ai-make.yml' };
 const HIST = [{ id: 5, status: 'completed', conclusion: 'success', run_started_at: at(0), updated_at: at(20) }];
 const LAB = (o = {}) => ({ slug: 'o/lab', role: 'admin', ...o });
