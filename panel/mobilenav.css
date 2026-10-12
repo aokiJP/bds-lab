@@ -1,0 +1,20 @@
+/* bds-lab panel: スマホの下のメニュー (panel/lib/mobilenav.mjs, ui/mobilenav.mjs) — the tabs used most in a bar fixed at the
+   bottom, only when the screen is 640px wide or less; 「その他」 opens the rest above it. Loaded after panel.css: it uses its
+   colour variables. The bar sits above the phone's home line (safe-area-inset-bottom; the page sets viewport-fit=cover for it). */
+
+nav.mobilenav { display: none; }
+
+@media (max-width: 640px) {
+  nav.mobilenav { display: block; position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; background: var(--card); border-top: 1px solid var(--line);
+    padding: 4px 4px calc(4px + env(safe-area-inset-bottom, 0px)); }
+  .mobilenav-bar { display: flex; gap: 4px; }
+  .mobilenav-bar button { flex: 1 1 0; min-width: 0; min-height: 48px; padding: 6px 2px; font-size: 13px; border-radius: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mobilenav-now { display: block; font-size: 11px; }
+  .mobilenav-more { list-style: none; margin: 0 0 4px; padding: 4px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; max-height: 50vh; overflow-y: auto;
+    border-bottom: 1px solid var(--line); }
+  .mobilenav-more[hidden] { display: none; }
+  .mobilenav-more button { width: 100%; min-height: 48px; text-align: left; }
+  /* room under the page for the bar; the toasts above it */
+  body { padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px)); }
+  #toast { bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
+}
