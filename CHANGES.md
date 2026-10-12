@@ -108,6 +108,9 @@
     偽のブラウザの時計に合わせて 5 分の 1 のまま。
   - cli-offline の flaky の確かめ（どの回も節の前で落ちる）は BDS のない場で（BDS のない機械では 100 MB を落として 2 回動かして
     いた: 37 → 14 秒）。
+- 管理パネル: 「App を作る」で GitHub が「Invalid GitHub App configuration: "url" wasn't supplied」と断っていた（webhook を切って
+  いても、その `hook_attributes.url` は要る）→ パネルのアドレスを入れる（`active: false` のまま: 呼ばれない）。「全自動で準備する」に
+  Cloudflare を持っていない人の案内（無料の登録・API トークン・アカウント ID の場所、なくても App までは全部できること）。
 - 管理パネル: **⚡ 全自動で準備する**（「準備」）。押すと、Pages を有効に → GitHub の App を作る画面へ → 戻ると鍵を秘密に →
   ラボを選んである App の Install の画面へ（`suggested_target_id`・`repository_ids[]`）→ 戻ると Cloudflare にサインインの
   サービスを置いてページに渡す、までを続けて（段はこのタブに覚え、GitHub から戻るたびに続きを）。人が押すのは GitHub の

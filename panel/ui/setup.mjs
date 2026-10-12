@@ -65,6 +65,13 @@ function autoCard(ctx, draw) {
   return h('div', { class: 'card' }, h('h3', {}, '⚡ 全自動で準備する'),
     h('p', { class: 'muted' }, 'このボタンを押すと、パネルができることを上から順に全部やります。あなたが押すのは GitHub の画面の 2 つだけ（「Create GitHub App」と「Install」）。戻ってくると続きを自動でやります。'),
     cfOk ? [h('p', { class: 'muted' }, 'サインインのサービスも置くなら、Cloudflare の API トークン（テンプレート「Edit Cloudflare Workers」）とアカウント ID を入れてください。なければ空のままで、あとから入れられます。'),
+      h('details', {}, h('summary', {}, 'Cloudflare を持っていないとき（無料・5 分）'),
+        h('ol', {},
+          h('li', {}, 'dash.cloudflare.com を開き「Sign up」: メールアドレスとパスワードだけで、無料で作れます（カードは要りません）。届いたメールで確かめます。'),
+          h('li', {}, '左の「Workers & Pages」を一度開きます（はじめての人は、ここで workers.dev の名前を決めます: 好きな英小文字で）。'),
+          h('li', {}, '右上の人の形 → 「My Profile」→「API Tokens」→「Create Token」→ テンプレート「Edit Cloudflare Workers」の「Use template」→ そのまま下の「Continue to summary」→「Create Token」。出てきた長い文字列を写して、下の「API トークン」に。'),
+          h('li', {}, '「Workers & Pages」の画面の右側にある「Account ID」（32 文字）を写して、下の「アカウント ID」に。')),
+        h('p', { class: 'muted' }, 'Cloudflare を使わなくても大丈夫です: 空のまま押すと、App までを全部やります。そのときは「GitHub でサインイン」の代わりに、今と同じトークンで入ります（あとから入れれば、サービスだけを置けます）。')),
       h('label', {}, 'Cloudflare の API トークン'), token, h('label', {}, 'Cloudflare のアカウント ID'), account] : null,
     h('div', { class: 'row' }, go), say);
 }
