@@ -10,6 +10,7 @@ import http from 'node:http';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fakeCheck } from '../panel/lib/ghrules.mjs';
 
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imp = (p) => import(pathToFileURL(path.join(TOP, p)).href);
@@ -165,6 +166,7 @@ await t('members: GitHub\'s roles read and changed (never the owner, never onese
   eq(MB.memberOf({ login: 'b', permissions: { admin: true } }).permission, 'admin');
   ok(!MB.canChange({ login: 'Owner' }, { owner: 'owner', me: 'x' }).ok && !MB.canChange({ login: 'me' }, { owner: 'o', me: 'ME' }).ok && MB.canChange({ login: 'c' }, { owner: 'o', me: 'me' }).ok, 'the owner and oneself are not changed here');
   const calls = [], api = { call: async (m, path, body) => { calls.push(`${m} ${path}${body ? ' ' + JSON.stringify(body) : ''}`);
+    { const bad = fakeCheck(m, path, body); if (bad) throw Object.assign(new Error(bad.message), { status: 422 }); } // (GitHub's rules for a write: ghrules)
     if (path === '/users/ghost') throw Object.assign(new Error('nf'), { status: 404 });
     if (m === 'PUT' && path.endsWith('/newbie')) return { id: 77 };
     if (m === 'GET' && path.includes('/collaborators')) return [{ login: 'o', permissions: { admin: true } }, { login: 'w', role_name: 'write' }];
@@ -262,7 +264,8 @@ await t('panel check: a changed file → the checks it needs (ESLint, the offlin
   const PN = await imp('common/panel.mjs');
   // (a library or a view of the panel: the tabs that read them — 「アドオン」「予約」「統計」「お知らせ」 — are tried too)
   const LANES = ['tests/units-offline.mjs', 'tests/schedule-offline.mjs', 'tests/stats-offline.mjs', 'tests/inbox-offline.mjs',
-    'tests/rescue-offline.mjs', 'tests/shell-rescue-offline.mjs', 'tests/setup-rescue-offline.mjs', 'tests/units-rescue-offline.mjs', 'tests/misc-rescue-offline.mjs'];
+    'tests/rescue-offline.mjs', 'tests/shell-rescue-offline.mjs', 'tests/setup-rescue-offline.mjs', 'tests/units-rescue-offline.mjs', 'tests/misc-rescue-offline.mjs',
+    'tests/ghrules-offline.mjs', 'tests/fakes-rules-offline.mjs'];
   eq(PN.plan(['panel/lib/members.mjs']), { lint: ['panel/lib/members.mjs'], tests: ['tests/panel-offline.mjs', 'tests/governance-offline.mjs', ...LANES, 'tests/panel-browser.mjs'] });
   eq(PN.plan(['panel/ui/signin.mjs', 'auth/handler.mjs'], { quick: true }).tests, ['tests/panel-offline.mjs', 'tests/session-offline.mjs', 'tests/auth-offline.mjs', ...LANES]);
   eq(PN.plan(['common/unitci.mjs', 'common/schedule.mjs']), { lint: ['common/unitci.mjs', 'common/schedule.mjs'], tests: ['tests/units-offline.mjs', 'tests/schedule-offline.mjs'] }, 'the CLI side of 「アドオン」 and 「予約」');
@@ -417,6 +420,7 @@ await t('the GitHub client: the token as a bearer, workflow dispatch and secret 
   const fetchImpl = async (url, init) => {
     seen.push({ url: url.replace('https://api.test', ''), method: init.method, auth: init.headers.authorization, body: init.body ? JSON.parse(init.body) : null });
     const u = url.replace('https://api.test', ''), send = (status, j) => ({ ok: status < 300, status, headers: { get: (k) => ({ 'x-ratelimit-remaining': '4999', 'x-ratelimit-reset': '1' })[k] ?? null }, text: async () => (j === null ? '' : JSON.stringify(j)) });
+    { const bad = fakeCheck(init.method, u, init.body ? JSON.parse(init.body) : null); if (bad) return send(422, { message: bad.message }); } // (GitHub's rules for a write: ghrules)
     if (u === '/repos/o/r/actions/secrets/public-key') return send(200, { key_id: 'KID', key: SEAL.toB64(pk) });
     if (u.startsWith('/repos/o/r/actions/secrets?')) return send(200, { secrets: [{ name: 'A' }, { name: 'B' }] });
     if (u.startsWith('/repos/o/nope/actions/secrets')) return send(403, { message: 'Resource not accessible by personal access token' });

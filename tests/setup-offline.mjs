@@ -10,6 +10,7 @@ import http from 'node:http';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fakeCheck } from '../panel/lib/ghrules.mjs';
 
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imp = (p) => import(pathToFileURL(path.join(TOP, p)).href);
@@ -36,6 +37,7 @@ async function fakeGitHub(init = {}) {
     req.on('end', () => {
       const u = req.url, m = req.method, body = b ? JSON.parse(b) : null;
       st.seen.push({ m, u, auth: req.headers.authorization ?? null, body: b });
+      { const bad = fakeCheck(m, u, body); if (bad) return send(res, 422, { message: bad.message }); } // (GitHub's rules for a write: ghrules)
       let x;
       if (u === '/auth/health') return send(res, st.health === 500 ? 500 : 200, st.health);
       // (the App as GitHub shows it to anyone: one made before administration was asked for)

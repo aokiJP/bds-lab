@@ -108,7 +108,9 @@ async function autoSteps(ctx, draw) {
       if (no) { autoSet(ctx, null); say(`止まりました: App を作れません — ${no}`); return; }
       say('GitHub の画面へ: 「Create GitHub App」を押してください（戻ってくると続きます）');
       autoSet(ctx, { stage: 'app' });
-      const f = appForm(ctx); f.hidden = true; globalThis.document.body.append(f);
+      const f = appForm(ctx);
+      if (f.tagName !== 'FORM') { autoSet(ctx, null); say(`止まりました: ${f.textContent}`); return; }
+      f.hidden = true; globalThis.document.body.append(f);
       // (requestSubmit: the form's own submit — its state kept for the way back — then to GitHub)
       if (typeof f.requestSubmit === 'function') f.requestSubmit(); else { f.dispatchEvent?.(new globalThis.Event('submit')); f.submit?.(); }
       return;
@@ -178,6 +180,9 @@ function appForm(ctx) {
   const owner = ctx.lab.repo?.owner?.login ?? ctx.lab.slug.split('/')[0], isOrg = ctx.lab.repo?.owner?.type === 'Organization', state = S.newState();
   const manifest = S.appManifest({ owner, repo: ctx.lab.slug.split('/')[1], panelUrl: ctx.panelUrl, authUrl: ctx.config?.authUrl });
   const store = ctx.storage ?? globalThis.sessionStorage;
+  // (what GitHub would refuse, said here before going: never its 「Invalid GitHub App configuration」 page)
+  const bad = S.manifestProblems(manifest);
+  if (bad.length) return h('div', { class: 'bad', role: 'alert' }, `App の設定に GitHub が受け付けないものがあります: ${bad.join('・')}。パネルの不具合です: この文を写して作者に知らせてください`);
   return h('form', { method: 'post', action: S.manifestAction(owner, isOrg, state), onsubmit: () => store.setItem(STATE_KEY, JSON.stringify({ state, lab: ctx.lab.slug, owner, isOrg, at: Date.now() })) },
     h('input', { type: 'hidden', name: 'manifest', value: JSON.stringify(manifest) }),
     h('p', { class: 'muted' }, isOrg ? `組織 ${owner} の App として作ります（組織の管理者だけが作れます）。` : `あなた（${ctx.me?.login ?? owner}）のアカウントの App として作ります。`,

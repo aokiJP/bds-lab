@@ -8,6 +8,7 @@ import zlib from 'node:zlib';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fakeCheck } from '../panel/lib/ghrules.mjs';
 
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imp = (p) => import(pathToFileURL(path.join(TOP, p)).href);
@@ -368,6 +369,8 @@ await t('app hold: the device kept up, the live issue made, commands from the ru
     req.on('end', () => {
       const u = new URL(req.url, 'http://x'), send = (code, j) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(j)); };
       if (req.headers.authorization !== 'Bearer tok') return send(401, {});
+      // (GitHub's rules for what is written, as the real one refuses: panel/lib/ghrules.mjs)
+      { let j = null; try { j = body ? JSON.parse(body) : null; } catch { /* not JSON: the handlers below say so */ } const no = fakeCheck(req.method, u.pathname, j); if (no) return send(no.status, { message: no.message }); }
       if (req.method === 'GET' && u.pathname === '/repos/o/r/issues') return send(200, st.issues);
       if (req.method === 'POST' && u.pathname === '/repos/o/r/issues') { const i = { number: 7, title: JSON.parse(body).title }; st.issues.push(i); return send(201, i); }
       if (req.method === 'GET' && u.pathname === '/repos/o/r/issues/7/comments') return send(200, st.comments);

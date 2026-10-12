@@ -3,6 +3,7 @@
 // else is ever called: the panel's page allows no other address (its CSP's connect-src). GitHub decides
 // what this person may see and do — the panel adds no power of its own.
 import { secretPayload } from './seal.mjs';
+import { check, kindOf } from './ghrules.mjs';
 
 export class GhError extends Error { constructor(status, message, path) { super(message); this.status = status; this.path = path; } }
 const enc = new TextEncoder(), dec = new TextDecoder();
@@ -24,6 +25,10 @@ export function gh({ token, base = 'https://api.github.com', fetchImpl = (...a) 
   const state = { remaining: null, reset: null };
   // (anon: asked without the token — a call whose own argument is the proof, the App manifest's code)
   async function call(method, path, body, opts) {
+    // (a write GitHub surely refuses — lib/ghrules.mjs's sure rules — is stopped here, never sent: the same 422 GitHub would
+    // give, in plain words, for lib/rescue.mjs's next step; reads are not looked at)
+    const k = kindOf(method, path), bad = k ? check(k.kind, { path: k.path, body }, { strictOnly: true }) : [];
+    if (bad.length) throw new GhError(422, explain(422, `${bad.join('・')}（送る前に分かったので、GitHub には送っていません）`), path);
     const t0 = Date.now(), tell = (status) => { try { onCall?.({ method, path: String(path).split('?')[0], status, ms: Date.now() - t0 }); } catch { /* a view's trouble is not the call's */ } };
     // (the network itself failed — offline, refused: status 0, for lib/rescue.mjs to say so)
     let r; try { r = await send(method, path, body, opts); } catch (e) { tell(0); throw new GhError(0, `GitHub につながりません（${e?.message ?? e}）`, path); }

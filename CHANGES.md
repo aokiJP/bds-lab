@@ -5,6 +5,13 @@
 スマホの Discord から CI の端末を画面とボタンで動かせ、リポジトリの秘密も Discord のフォームで登録できる（node も PC も要らない）。**
 
 ### 管理パネル: 今の約 2 倍に — git clone も PC もなしで、作る・取り込む・直す・試験・仕上げ・配る・予約・統計・お知らせ
+- 管理パネル: **GitHub が断るものを、送る前に**（`panel/lib/ghrules.mjs`）。「App を作る」が本物の GitHub に 3 回断られた（webhook の url・
+  #fragment の戻り先・トークンの Variables）のは、試験の偽の GitHub が何でも受け付けていたから。パネルが GitHub に送る書き込み 21 種と、
+  GitHub の画面へ渡すもの（App の manifest・トークンを作る画面・Install のリンク）に GitHub の決まりを 1 か所で持ち、それぞれに出どころ
+  （実際のエラー・広く知られた決まり・推測）を書く。確かなものだけは本番で送る前に止めてやさしい言葉に（`lib/gh.mjs`・App の form）。
+  自信のないものは試験の偽の GitHub だけが使う（正しい操作を本番で止めない: 名前の無い manifest・絵文字の名前・projects の admin・
+  改行入りの base64・独自スキームの戻り先などは止めない）。試験の偽の GitHub は全部、本物と同じように 422 で断る（新しく足された偽物
+  も探して確かめる）。試験: `tests/ghrules-offline.mjs`（10）・`tests/fakes-rules-offline.mjs`（3）。
 - 🧩 **アドオン**（`lib/units.mjs`・`lib/workspace.mjs`・`ui/units.mjs`・`ui/workspace.mjs`）: ラボのユニットを GitHub から一覧（題・説明・
   版・試験の数・最新の .mcaddon）。新しく作る・人のアドオンを取り込む（専用の枝 `lab-incoming/…` に置き、既定の枝の履歴に残さない）・
   ファイルを直す（sha つきの commit）・試験・仕上げ・AI で変える。GitHub の Actions の `unit.yml` → `node lab.mjs unitci`
