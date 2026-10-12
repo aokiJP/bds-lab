@@ -29,7 +29,8 @@ const val = (env, k) => String(env[k] ?? '').trim();
 /** a result with every secret's value taken out (pure): a value found anywhere in it becomes *** (a bug's last guard) */
 export function scrub(result, secrets) {
   const vs = [...new Set(secrets.flatMap((x) => [String(x ?? ''), String(x ?? '').trim()]))].filter((x) => x.length >= 4).sort((a, b) => b.length - a.length);
-  const walk = (x) => (typeof x === 'string' ? vs.reduce((s, v) => s.split(v).join('***'), x)
+  // (a string that held a secret is replaced whole: a *** in the middle of a sentence would tell the secret's place)
+  const walk = (x) => (typeof x === 'string' ? (vs.some((v) => x.includes(v)) ? '（秘密が含まれていたので伏せました）' : x)
     : Array.isArray(x) ? x.map(walk) : x && typeof x === 'object' ? Object.fromEntries(Object.entries(x).map(([k, v]) => [k, walk(v)])) : x);
   return walk(result);
 }
@@ -147,13 +148,18 @@ export async function checkGoogle({ env = process.env, secrets, exchange, mask =
     // (the secrets must be writable before the one-time value is spent)
     if (!secrets && (!repo || !token)) return { ok: false, problem: '秘密を書けません（App のトークンか LAB_SECRETS_TOKEN と GITHUB_REPOSITORY が要ります）' };
     secrets ??= ghSecrets({ repo, token });
+    // (the address written first: it proves the secrets can be written before the one-time value is spent)
+    const first = secrets.set('GOOGLE_EMAIL', email);
+    if (!first.ok) return { ok: false, problem: `秘密を書けません（oauth_token はまだ使っていません。App の Secrets の書き込みか LAB_SECRETS_TOKEN を確かめて、もう一度）: ${String(first.error ?? '').split(email).join('<値>')}` };
     let aas, problem = null;
     try { aas = await (exchange ?? ((o) => K.exchangeToken({ toolsDir: path.join(TOP, 'tools'), email, oauthToken: o, env, log })))(oauth); } catch (e) { problem = e.message; }
-    const removed = secrets.remove('GOOGLE_OAUTH_TOKEN');
-    if (problem || !aas) return { ok: false, problem: problem ?? 'AAS トークンを受け取れませんでした', next: 'oauth_token は一度きりで数分で切れます: accounts.google.com でログインし直して新しい値を', oauthRemoved: removed.ok };
+    if (problem || !aas) { const removed = secrets.remove('GOOGLE_OAUTH_TOKEN'); return { ok: false, problem: problem ?? 'AAS トークンを受け取れませんでした', next: 'oauth_token は一度きりで数分で切れます: accounts.google.com でログインし直して新しい値を', oauthRemoved: removed.ok }; }
     mask(aas);
     const set = [], failed = [];
-    for (const [k, v] of [['GOOGLE_AAS_TOKEN', aas], ['GOOGLE_EMAIL', email]]) { const r = secrets.set(k, v); if (r.ok) set.push(k); else failed.push(`${k}: ${String(r.error ?? '').split(aas).join('<値>')}`); }
+    for (const [k, v] of [['GOOGLE_AAS_TOKEN', aas]]) { const r = secrets.set(k, v); if (r.ok) set.push(k); else failed.push(`${k}: ${String(r.error ?? '').split(aas).join('<値>')}`); }
+    set.unshift('GOOGLE_EMAIL');
+    // (the one-time value removed only once the AAS token is kept: a failed write leaves it to be tried again, not lost)
+    const removed = failed.length ? { ok: false } : secrets.remove('GOOGLE_OAUTH_TOKEN');
     return { ok: !failed.length, made: 'GOOGLE_AAS_TOKEN', set, oauthRemoved: removed.ok, ...(failed.length ? { problem: `秘密を書けません: ${failed.join(' / ')}` } : {}) };
   }
   const c = K.playCredentials(env);

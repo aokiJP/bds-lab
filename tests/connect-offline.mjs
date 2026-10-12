@@ -76,7 +76,9 @@ await t('noticeLine: one line, % escaped (the runner reads it unescaped)', async
   eq(C.noticeLine('ai', { ok: true }), '::notice title=connect-ai::{"ok":true}');
 });
 await t('scrub: a value in any string becomes ***, keys and booleans untouched', async () => {
-  eq(C.scrub({ ok: true, a: 'x secretvalue y', b: ['secretvalue'], c: { d: 'true' } }, ['secretvalue', 'true']), { ok: true, a: 'x *** y', b: ['***'], c: { d: '***' } });
+  // (a string that held a secret is replaced whole: no *** in a sentence telling where the secret was, or how long)
+  const H = '（秘密が含まれていたので伏せました）';
+  eq(C.scrub({ ok: true, a: 'x secretvalue y', b: ['secretvalue'], c: { d: 'true' }, e: 'clean' }, ['secretvalue', 'true']), { ok: true, a: H, b: [H], c: { d: H }, e: 'clean' });
 });
 await t('discord: invite link (scope bot, View Channels + Send Messages + Attach Files)', async () => {
   eq(C.discordInvite('123'), 'https://discord.com/oauth2/authorize?client_id=123&scope=bot&permissions=35840');
@@ -167,22 +169,40 @@ await t('google: oauth_token → AAS token through apkeep (apk.mjs exchangeToken
   const exchange = (o) => K.exchangeToken({ toolsDir: dir, email: EMAIL, oauthToken: o, env: { APKEEP_BIN: bin }, log: () => {}, run: (b, a) => { argv = [b, ...a]; return { status: 0, stdout: `AAS Token: ${AAS}\n`, stderr: '' }; } });
   const s = fakeSecrets();
   const r = await run('google', { GOOGLE_OAUTH_TOKEN: OAUTH, GOOGLE_EMAIL: EMAIL }, { secrets: s.api, exchange });
-  eq(r.ok, true); eq(r.notice.set, ['GOOGLE_AAS_TOKEN', 'GOOGLE_EMAIL']); eq(r.notice.oauthRemoved, true);
-  eq(s.set, { GOOGLE_AAS_TOKEN: AAS, GOOGLE_EMAIL: EMAIL }); eq(s.removed, ['GOOGLE_OAUTH_TOKEN']);
+  eq(r.ok, true); eq(r.notice.set, ['GOOGLE_EMAIL', 'GOOGLE_AAS_TOKEN']); eq(r.notice.oauthRemoved, true);
+  eq(s.set, { GOOGLE_EMAIL: EMAIL, GOOGLE_AAS_TOKEN: AAS }); eq(s.removed, ['GOOGLE_OAUTH_TOKEN']);
   eq(argv, [bin, '-e', EMAIL, '--oauth-token', OAUTH]);
   masked(r.text, OAUTH); masked(r.text, AAS); noLeak(r.text, [OAUTH, AAS, EMAIL]);
   ok(r.text.indexOf(`::add-mask::${AAS}`) < r.text.indexOf('::notice'), 'the AAS token masked before the notice');
   fs.rmSync(dir, { recursive: true, force: true });
 });
-await t('google: exchange fails → not ok, the one-time oauth_token still removed, nothing set', async () => {
+await t('google: exchange fails → not ok, the one-time oauth_token (spent) removed, no AAS token set', async () => {
   const s = fakeSecrets();
   const r = await run('google', { GOOGLE_OAUTH_TOKEN: OAUTH, GOOGLE_EMAIL: EMAIL }, { secrets: s.api, exchange: async () => { throw new Error('AAS トークンを受け取れませんでした'); } });
-  eq([r.ok, r.notice.oauthRemoved], [false, true]); eq(s.set, {}); eq(s.removed, ['GOOGLE_OAUTH_TOKEN']); ok(/accounts\.google\.com/.test(r.notice.next), r.notice.next);
+  eq([r.ok, r.notice.oauthRemoved], [false, true]); eq(s.set, { GOOGLE_EMAIL: EMAIL }); eq(s.removed, ['GOOGLE_OAUTH_TOKEN']); ok(/accounts\.google\.com/.test(r.notice.next), r.notice.next);
 });
 await t('google: a secret that cannot be written → not ok, its value never said', async () => {
   const s = fakeSecrets(['GOOGLE_AAS_TOKEN']);
   const r = await run('google', { GOOGLE_OAUTH_TOKEN: OAUTH, GOOGLE_EMAIL: EMAIL }, { secrets: s.api, exchange: async () => AAS });
   eq([r.ok, r.notice.set], [false, ['GOOGLE_EMAIL']]); noLeak(r.text, [AAS, OAUTH]);
+  eq(s.removed, [], 'the AAS token not kept: the one-time value is not removed either (to be tried again, not lost)');
+});
+await t('google: the secrets cannot be written at all → the oauth_token is not spent', async () => {
+  let spent = false;
+  const s = fakeSecrets(['GOOGLE_EMAIL']);
+  const r = await run('google', { GOOGLE_OAUTH_TOKEN: OAUTH, GOOGLE_EMAIL: EMAIL }, { secrets: s.api, exchange: async () => { spent = true; return AAS; } });
+  ok(!r.ok && /まだ使っていません/.test(r.notice.problem), r.notice.problem); eq([spent, s.removed], [false, []]); noLeak(r.text, [OAUTH]);
+});
+await t('ghSecrets: a value goes to gh through stdin, never its command line; an error never says the value', () => {
+  const calls = [];
+  const fake = (cmd, args, o) => { calls.push({ cmd, args, input: o.input, token: o.env.GH_TOKEN }); return args[1] === 'set' && args[2] === 'BAD' ? { status: 1, stderr: `could not set ${o.input}` } : { status: 0 }; };
+  const g = C.ghSecrets({ repo: 'o/lab', token: 'ghs_x', run: fake });
+  eq(g.set('GOOGLE_AAS_TOKEN', AAS), { ok: true });
+  eq([calls[0].cmd, calls[0].args, calls[0].input, calls[0].token], ['gh', ['secret', 'set', 'GOOGLE_AAS_TOKEN', '--repo', 'o/lab'], AAS, 'ghs_x']);
+  ok(!calls[0].args.join(' ').includes(AAS), 'not on the command line');
+  const bad = g.set('BAD', AAS);
+  ok(!bad.ok && !bad.error.includes(AAS) && /<値>/.test(bad.error), bad.error);
+  eq(g.remove('GOOGLE_OAUTH_TOKEN'), { ok: true }); eq(calls.at(-1).args, ['secret', 'delete', 'GOOGLE_OAUTH_TOKEN', '--repo', 'o/lab']);
 });
 await t('google: no email with the oauth_token, no way to write secrets → the oauth_token is not spent', async () => {
   let spent = false;

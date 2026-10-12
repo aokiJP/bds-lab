@@ -139,6 +139,7 @@ function fakeDom() {
     addEventListener(type, fn) { (this.on[type] ??= []).push(fn); }
     append(...xs) { for (const x of xs) { const n = x instanceof N ? x : new T(x); if (n.parent) n.parent.kids = n.parent.kids.filter((k) => k !== n); n.parent = this; this.kids.push(n); } }
     replaceChildren(...xs) { for (const k of this.kids) k.parent = null; this.kids = []; this.append(...xs); }
+    remove() { if (this.parent) this.parent.kids = this.parent.kids.filter((k) => k !== this); this.parent = null; }
     get textContent() { return this.kids.map((k) => k.textContent).join(''); }
     click() { return Promise.all((this.on.click ?? []).map((fn) => fn({ target: this, preventDefault() {} }))); }
     all(test) { const out = [], walk = (e) => { for (const k of e.kids) if (k instanceof E) { if (test(k)) out.push(k); walk(k); } }; walk(this); return out; }
@@ -205,7 +206,7 @@ await t('a check that fails or cannot be made: the words and the way on in place
     tk.value = CF; field(c, 'アカウント ID').value = ACC;
     await button(c, /封じて登録/).click();
     ok(/⚠️ つながりません: トークンが違います/.test(c.textContent) && /つながらなかった/.test(c.textContent) && tk.value === '', c.textContent);
-    const m = card(body, 'microsoft'), pw = field(m, 'パスワード');
+    const m = card(body, 'microsoft'), pw = field(m, 'パスワード（二段階認証だけの人は空でよい）');
     field(m, 'Microsoft アカウントのメール').value = 'a@b.example'; pw.value = 'hunter2hunter2';
     const before = f.st.dispatched.length;
     await button(m, /封じて登録/).click();
@@ -268,6 +269,32 @@ await t('the panel reads what common/connect.mjs really says (the same notice li
   ok(!bad.ok && /ボットのもの/.test(bad.text), JSON.stringify(bad));
   const ai = said('ai', { ok: false, anthropic: { ok: true }, openai: { ok: false, problem: 'キーが違います' } });
   ok(!ai.ok && /キーが違います/.test(ai.text), JSON.stringify(ai));
+});
+
+await t('Google tied once the AAS token is kept (the one-time value gone); Microsoft without a password; a form that is only fine is not 「つながりました」; the page\'s guard used for each secret and the run when it gives one', async () => {
+  eq(C.status(['GOOGLE_EMAIL', 'GOOGLE_AAS_TOKEN']).find((x) => x.key === 'google').state === 'missing', false, 'google tied with the AAS token');
+  eq(C.status(['GOOGLE_EMAIL']).find((x) => x.key === 'google').state, 'missing');
+  const ms = C.serviceOf('microsoft');
+  eq(C.problems(ms, { MS_EMAIL: 'a@b.example' }), {}, 'no password needed');
+  const v = C.parseResult(JSON.stringify({ ok: true, email: true, password: false, verified: false }));
+  ok(v.ok && /形はよいです/.test(v.text) && !/つながりました/.test(v.text), v.text);
+  const { E } = fakeDom(), UI = await imp('panel/ui/connect.mjs'), f = await fakeGitHub({ notices: { microsoft: JSON.stringify({ ok: true, verified: false }) } });
+  try {
+    const seen = [];
+    const guarded = async (action, detail, fn) => { seen.push([action, detail.name ?? detail.workflow]); return (await fn()) ?? null; };
+    const body = new E('div');
+    await UI.connectTab(body, { api: f.api, lab: LAB(), me: { login: 'o' }, guarded });
+    const m = card(body, 'microsoft');
+    field(m, 'Microsoft アカウントのメール').value = 'a@b.example';
+    await button(m, /封じて登録/).click();
+    eq(seen, [['secrets.put', 'MS_EMAIL'], ['dispatch', 'connect.yml']], 'through the guard, the password not sent when empty');
+    ok(/形はよいです/.test(m.textContent), m.textContent);
+    const refused = async () => undefined, body2 = new E('div'), before = f.st.dispatched.length;
+    await UI.connectTab(body2, { api: f.api, lab: LAB(), me: { login: 'o' }, guarded: refused });
+    const m2 = card(body2, 'microsoft'); field(m2, 'Microsoft アカウントのメール').value = 'a@b.example';
+    await button(m2, /封じて登録/).click();
+    ok(f.st.dispatched.length === before && /登録しませんでした/.test(m2.textContent), 'the guard said no: nothing started');
+  } finally { f.close(); }
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

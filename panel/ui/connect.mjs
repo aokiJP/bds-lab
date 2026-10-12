@@ -72,14 +72,18 @@ function card(ctx, svc, k) {
     try {
       for (const f of svc.fields) {
         if (!values[f.name]) continue;
-        await ctx.api.putSecret(ctx.lab.slug, f.name, values[f.name]);
+        // (through the page's guard when it gives one — guarded: the policy's confirm, an administrator who must lend first,
+        // the audit log per secret — else straight)
+        const put1 = () => ctx.api.putSecret(ctx.lab.slug, f.name, values[f.name]);
+        if (ctx.guarded) { if (await ctx.guarded('secrets.put', { name: f.name }, put1) === undefined) throw new Error(`${f.name} を登録しませんでした（上の知らせ）`); } else await put1();
         ctx.lab.secrets = [...new Set([...k.secrets(), f.name])];
         // (sent: the value leaves the page at once, not after the check)
         fields.find(([x]) => x.name === f.name)[1].value = '';
       }
       for (const [, el] of fields) el.value = '';
       k.refresh();
-      const r = await C.runCheck(ctx.api, ctx.lab.slug, svc.key, { ref: ctx.lab.repo?.default_branch ?? 'main', me: ctx.me?.login, onStep: (t) => out.replaceChildren(t) });
+      const api = ctx.guarded ? { ...ctx.api, dispatch: async (...a) => { const r0 = await ctx.guarded('dispatch', { workflow: 'connect.yml' }, () => ctx.api.dispatch(...a)); if (r0 === undefined) throw new Error('connect.yml を始めませんでした（上の知らせ）'); return r0; } } : ctx.api;
+      const r = await C.runCheck(api, ctx.lab.slug, svc.key, { ref: ctx.lab.repo?.default_branch ?? 'main', me: ctx.me?.login, onStep: (t) => out.replaceChildren(t) });
       k.checked[svc.key] = r;
       ctx.record?.(`connect.${svc.key}`, { ok: r.ok });
       put(out, h('div', { class: r.ok ? 'ok' : 'bad', role: r.ok ? 'status' : 'alert' }, (r.ok ? '✅ ' : '⚠️ ') + r.text),

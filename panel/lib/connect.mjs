@@ -32,13 +32,13 @@ export const SERVICES = Object.freeze([
     fields: [
       { name: 'CLOUDFLARE_API_TOKEN', label: 'API トークン', secret: true, check: (v) => (bare(v) && v.length >= 20 ? null : 'API トークンの形が違います（空白のない長い文字列）') },
       { name: 'CLOUDFLARE_ACCOUNT_ID', label: 'アカウント ID', secret: false, check: (v) => (/^[0-9a-f]{32}$/i.test(v) ? null : 'アカウント ID は 32 文字の 16 進数です') }] },
-  { key: 'microsoft', name: 'Microsoft', why: 'Microsoft ストアへ出す（Xbox 向けの）手続きに使います。',
+  { key: 'microsoft', name: 'Microsoft', why: '本物の Minecraft（app ラボ・lan）が、あなたの Xbox（Microsoft）アカウントでサーバーに入るのに使います。',
     secrets: ['MS_EMAIL', 'MS_PASSWORD'],
-    steps: [{ say: '出す先のパートナーセンターに入れる Microsoft アカウントを確かめます。二段階認証がある場合は、確かめの途中で Microsoft が本人確認を求めます（それはあなたが押します）。', link: 'https://account.microsoft.com/' }],
+    steps: [{ say: 'Minecraft で使っている Microsoft アカウントのメールを入れます。パスワードは無くてもよい: 実際のサインインは app.yml（端末で動く本物のゲーム）で行い、二段階認証があればそのとき Microsoft が本人確認を求めます（それはあなたが押します）。', link: 'https://account.microsoft.com/' }],
     fields: [
       { name: 'MS_EMAIL', label: 'Microsoft アカウントのメール', secret: false, check: (v) => (EMAIL.test(v) ? null : 'メールアドレスの形が違います') },
-      { name: 'MS_PASSWORD', label: 'パスワード', secret: true, check: (v) => (v && !/[\r\n]/.test(v) ? null : 'パスワードが空か、改行が入っています') }] },
-  { key: 'google', name: 'Google Play', why: 'Google Play へ出すための鍵を、CI がこの 2 つから作ります（トークンは 1 回だけ使えます）。',
+      { name: 'MS_PASSWORD', label: 'パスワード（二段階認証だけの人は空でよい）', secret: true, optional: true, check: (v) => (v && !/[\r\n]/.test(v) ? null : 'パスワードが空か、改行が入っています') }] },
+  { key: 'google', name: 'Google Play', why: '本物の Minecraft のアプリ（APK）を、Minecraft を買った Google アカウントで Google Play から受け取るのに使います。CI がこの 2 つから AAS トークンを作って秘密にし、一度きりの値は消します。',
     secrets: ['GOOGLE_EMAIL', 'GOOGLE_OAUTH_TOKEN'],
     steps: [
       { say: 'ブラウザで下の画面を開き、Google にログインして「同意する」まで進めます（画面は真っ白でよい）。', link: 'https://accounts.google.com/EmbeddedSetup' },
@@ -75,7 +75,9 @@ export function status(secrets, checked = {}) {
   const have = new Set(secrets ?? []);
   return SERVICES.map((s) => {
     const required = s.fields.filter((f) => !f.optional).map((f) => f.name), anyOf = s.fields.some((f) => f.optional) ? s.fields.map((f) => f.name) : [];
-    const missing = required.filter((n) => !have.has(n)), r = checked[s.key] ?? null;
+    // (Google: once CI made the AAS token, the one-time oauth_token is gone — the email and the AAS token are what is kept)
+    const made = s.key === 'google' && have.has('GOOGLE_EMAIL') && have.has('GOOGLE_AAS_TOKEN');
+    const missing = made ? [] : required.filter((n) => !have.has(n)), r = checked[s.key] ?? null;
     const there = missing.length === 0 && (!anyOf.length || anyOf.some((n) => have.has(n)));
     if (!there) return { key: s.key, state: 'missing', missing: anyOf.length && !required.length ? anyOf : missing, result: r };
     return { key: s.key, state: r ? (r.ok ? 'ok' : 'bad') : 'unchecked', missing: [], result: r };
@@ -89,9 +91,9 @@ export function parseResult(msg) {
   // (common/connect.mjs's words: bot / appId (Discord), the AI's anthropic / openai, problem, next — a sentence — and invite;
   // who / id / why and next: { say, url } are taken too)
   const ai = ['anthropic', 'openai'].filter((k) => j[k] && typeof j[k] === 'object').map((k) => `${k === 'anthropic' ? 'Claude' : 'OpenAI'} ${j[k].ok ? '✅' : '⚠️'}`).join('・');
-  const who = [j.who ?? j.bot, j.id ?? j.appId, ai].filter((x) => x !== undefined && x !== null && x !== '').map((x) => String(x).slice(0, 80)).join('・');
+  const who = [j.who ?? j.bot ?? j.accountName, j.id ?? j.appId ?? (j.subdomain ? `${j.subdomain}.workers.dev` : undefined), ai].filter((x) => x !== undefined && x !== null && x !== '').map((x) => String(x).slice(0, 80)).join('・');
   const why = j.problem ?? j.why ?? ['anthropic', 'openai'].map((k) => j[k]?.problem).find(Boolean);
-  const text = j.ok ? `つながりました${who ? `（${who}）` : ''}` : `つながりません: ${String(why ?? '理由は分かりません').slice(0, 200)}`;
+  const text = j.ok && j.verified === false ? `形はよいです${who ? `（${who}）` : ''}（本当に入れるかは、使うとき app.yml で確かめます）` : j.ok ? `つながりました${who ? `（${who}）` : ''}` : `つながりません: ${String(why ?? '理由は分かりません').slice(0, 200)}`;
   const say = typeof j.next === 'string' ? j.next : j.next?.say, url = (j.next && typeof j.next === 'object' ? j.next.url : null) ?? j.invite;
   const n = { say: String(say ?? '').slice(0, 200), url: safeLink(url) };
   return { ok: j.ok, text, next: n.say || n.url ? n : null };

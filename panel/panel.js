@@ -385,7 +385,7 @@ const every = (fn) => { clearInterval(st.timer); st.timer = setInterval(() => { 
 // ---- 連携 (ui/connect.mjs): Discord・Cloudflare・Microsoft・Google Play・AI, each checked for real by connect.yml ----
 function connectView(body) {
   connectTab(body, { api: st.api, lab: { slug: st.lab.slug, repo: st.lab.repo, role: st.lab.role, secrets: st.lab.secrets, workflows: st.lab.workflows }, me: st.me, policy: st.policy, role: st.role,
-    reload: async () => { await loadEnv(st.lab); if (st.tab === 'connect') render(); }, record: (action, detail) => record(action, detail) });
+    guarded, reload: async () => { await loadEnv(st.lab); if (st.tab === 'connect') render(); }, record: (action, detail) => record(action, detail) });
 }
 function setup(body) {
   setupTab(body, { api: st.api, lab: { slug: st.lab.slug, repo: st.lab.repo, role: st.lab.role, secrets: st.lab.secrets, workflows: st.lab.workflows }, hosts: st.hosts, me: st.me, config: CONFIG,
