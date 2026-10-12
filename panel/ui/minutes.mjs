@@ -1,9 +1,8 @@
 // minutes (a card on the 「統計」 tab): this month's Actions minutes so far (a line, the days added up), where the month will end
 // (a dotted line and a dot), by workflow, and what to cut to save some. The runs are read from the first of the month (stats.mjs
-// readRuns); the numbers are lib/minutes.mjs forecast. The free minutes are not assumed: ctx.limit (a number) or "分かりません".
+// readMonth below, which turns the pages up to 20 × 100 runs, not stats.mjs's 3); the numbers are lib/minutes.mjs forecast. The free minutes are not assumed: ctx.limit (a number) or "分かりません".
 // The chart is SVG made with createElementNS, all in attributes (the page's CSP allows no style attribute), with a table twin.
 import { h, act, failView } from './dom.mjs';
-import { readRuns } from './stats.mjs';
 import { forecast, monthStart } from '../lib/minutes.mjs';
 import * as S from '../lib/stats.mjs';
 
@@ -17,6 +16,21 @@ const s = (tag, attrs = {}, ...kids) => {
 };
 const W = 320, H = 150, PAD = { l: 40, r: 10, t: 10, b: 22 };
 const r1 = (x) => Math.round(x * 10) / 10;
+const PER_PAGE = 100, MAX_PAGES = 20;
+
+/** the runs created from `since` on, the newest first, page after page until a short page (at most MAX_PAGES) → { runs, cutFrom }
+ *  (cutFrom: the day the reading stopped at when there were more pages than that, else null) */
+async function readMonth(api, slug, since, tz) {
+  const runs = [];
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const q = `per_page=${PER_PAGE}&page=${page}&created=${encodeURIComponent(`>=${since}`)}`;
+    const rs = (await api.call('GET', `/repos/${slug}/actions/runs?${q}`))?.workflow_runs ?? [];
+    runs.push(...rs);
+    if (rs.length < PER_PAGE) return { runs, cutFrom: null };
+  }
+  const days = runs.map((r) => S.clock(S.startMs(r), tz)?.day).filter(Boolean).sort();
+  return { runs, cutFrom: days[0] ?? null };
+}
 
 /** the chart: the minutes added up day by day (a line), the rest of the month at the pace so far (dotted, ending in a dot), the
  *  free minutes (a line, when known) */
@@ -50,15 +64,17 @@ export function minutesCard(ctx) {
     const now = ctx.now ?? Date.now();
     // (the day before the 1st: the API counts days in UTC, the month is in this browser's zone)
     const since = new Date(Date.parse(`${monthStart(now, tz)}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
-    let runs;
-    try { runs = await readRuns(api, lab.slug, { since }); } catch (e) { out.replaceChildren(failView(e, load), h('button', { onclick: load }, '読み直す')); return; }
+    let runs, cutFrom;
+    try { ({ runs, cutFrom } = await readMonth(api, lab.slug, since, tz)); } catch (e) { out.replaceChildren(failView(e, load), h('button', { onclick: load }, '読み直す')); return; }
     const f = forecast(runs, { now, tz, limit: ctx.limit });
+    const cut = cutFrom && cutFrom > monthStart(now, tz) ? cutFrom : null;
     out.replaceChildren(
       h('p', {}, `今月（${f.day} 日目）は `, h('strong', { id: 'minutesused' }, `${f.used} 分`), ' 使いました。このままだと月末は ', h('strong', { id: 'minutesend' }, `約 ${f.monthEnd} 分`), ' です。'),
-      h('p', { class: 'muted' }, `1 日の平均 ${f.perDay} 分（平日 ${f.weekdayPerDay} 分・土日 ${f.weekendPerDay} 分）。実行の始まりから最後の更新までを分に切り上げた見積もりで、GitHub の請求そのものではありません。`),
+      h('p', { class: 'muted' }, `1 日の平均 ${f.perDay} 分（平日 ${f.weekdayPerDay} 分・土日 ${f.weekendPerDay} 分）。実行の始まりから最後の更新までを分に切り上げた見積もりです。GitHub の請求はジョブごと・請求日ごとに数えるので、ずれることがあります。`),
+      cut ? h('p', { class: 'warn', id: 'minutescut' }, `${Number(cut.slice(5, 7))}月${Number(cut.slice(8, 10))}日より前は読めていません（見込みは少なめです）。`) : null,
       f.limit === null ? h('p', { class: 'warn', id: 'minuteslimit' }, '無料の分の上限は分かりません（このパネルは決めつけません）。GitHub の「Billing」で確かめてください。')
-        : f.overBy > 0 ? h('p', { class: 'bad', id: 'minuteslimit' }, `上限 ${f.limit} 分を約 ${f.overBy} 分こえそうです。下の案で減らしましょう。`)
-          : h('p', { class: 'ok', id: 'minuteslimit' }, `上限 ${f.limit} 分の中に収まりそうです（あと約 ${f.limit - f.monthEnd} 分の余り）。`),
+        : f.overBy > 0 ? h('p', { class: 'bad', id: 'minuteslimit' }, `上限 ${f.limit} 分を約 ${f.overBy} 分こえる見積もりです。下の案で減らしましょう。`)
+          : h('p', { class: 'ok', id: 'minuteslimit' }, `上限 ${f.limit} 分の中に収まる見積もりです（あと約 ${f.limit - f.monthEnd} 分の余り）。`),
       chart(f),
       h('p', { class: 'muted' }, '実線は今までの合計、点線は今のペースで続けた場合、赤い線は上限です。'),
       h('h3', {}, 'ワークフローごと'),

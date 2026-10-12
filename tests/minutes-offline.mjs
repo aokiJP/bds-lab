@@ -102,7 +102,8 @@ function fakeApi({ runs = verifyRuns(), fail = false } = {}) {
     calls.push([method, p]);
     const bad = fakeCheck(method, p, undefined); if (bad) throw Object.assign(new Error(bad.message), { status: 422 });
     if (fail) throw Object.assign(new Error('GitHub に届きません'), { status: 502 });
-    return { workflow_runs: runs };
+    const pg = Number(/[?&]page=(\d+)/.exec(p)?.[1] ?? 1), per = Number(/per_page=(\d+)/.exec(p)?.[1] ?? 30);
+    return { workflow_runs: runs.slice((pg - 1) * per, pg * per) };
   } };
 }
 const ctxOf = (api, more = {}) => ({ api, lab: { slug: 'o/lab' }, tz: 'UTC', now: NOW, ...more });
@@ -129,7 +130,7 @@ await t('with a limit: under it, or over it by how much; the line is drawn (scre
   ok(byId(over, 'minuteslimit').textContent.includes('約 20 分') && byId(over, 'minuteslimit').className === 'bad');
   ok(over.all((e) => e.attrs['data-part'] === 'limit').length === 1);
   const under = M.minutesCard(ctxOf(fakeApi(), { limit: 500 })); await under.ready;
-  ok(byId(under, 'minuteslimit').textContent.includes('収まりそう') && byId(under, 'minuteslimit').textContent.includes('280'));
+  ok(byId(under, 'minuteslimit').textContent.includes('収まる見積もり') && byId(under, 'minuteslimit').textContent.includes('280'));
 });
 
 await t('a month with no runs is said so; a read that fails shows the words and 「読み直す」, which reads again (screen)', async () => {
@@ -152,6 +153,20 @@ await t('nothing secret or outside GitHub: no address in the card, only the pane
   ok(!/\bfetch\s*\(|localStorage|sessionStorage|document\.cookie/.test(src), 'no fetch or storage of its own');
   const colours = card.all((e) => e.ns).flatMap((e) => [e.attrs.stroke, e.attrs.fill]).filter(Boolean).filter((v) => v !== 'none');
   ok(colours.length && colours.every((v) => /^var\(--(accent|bad|muted|line)\)$/.test(v)), [...new Set(colours)].join());
+});
+
+await t('a month of over 300 runs is read to its first day, page after page; one too long to read says where it stops (screen)', async () => {
+  const many = Array.from({ length: 450 }, (_, i) => mk(`2026-10-0${1 + (i % 8)}T10:00:00Z`, 1));
+  const api = fakeApi({ runs: many }), card = M.minutesCard(ctxOf(api)); await card.ready;
+  eq(api.calls.length, 5, 'pages until a short one');
+  eq(byId(card, 'minutesused').textContent, '450 分');
+  ok(!byId(card, 'minutescut'), 'all read: no warning');
+  ok(/ジョブごと/.test(card.textContent), 'the bill differs, said once');
+  // 2100 runs, newest first: 21 pages would be needed; the oldest day read is the 5th
+  const huge = Array.from({ length: 2100 }, (_, i) => mk(`2026-10-0${8 - Math.floor(i / 420)}T10:00:00Z`, 1));
+  const api2 = fakeApi({ runs: huge }), big = M.minutesCard(ctxOf(api2)); await big.ready;
+  eq(api2.calls.length, 20, 'at most 20 pages');
+  ok(byId(big, 'minutescut').textContent.includes('10月4日より前は読めていません'), byId(big, 'minutescut')?.textContent);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
