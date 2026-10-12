@@ -1,10 +1,14 @@
 // undo card: one entry of the audit log taken back (lib/undo.mjs) — what it is now and what it would be after, line by line
 // for a file and value by value for a variable, then 「この変更を取り消す」 through ctx.guarded with the policy's action for
 // what is written (a variable: variables; the policy's file: members; the timetable: dispatch; who hears what: variables), so
-// the undo is asked again when the policy wants and kept in the audit log too. Meant beside each row of the 「監査」 tab.
+// the undo is asked again when the policy wants and kept in the audit log too (with ref: the commit put back to, or a
+// variable's value before the undo, so the undo can be undone too). GitHub is read only when 「取り消す…」 is pressed; when
+// the same file changed after that commit, those changes go back too: said, and a check to tick first. Meant beside each row
+// of the 「監査」 tab.
 import { h, failView } from './dom.mjs';
 import * as U from '../lib/undo.mjs';
 import * as P from '../lib/policy.mjs';
+import { BEFORE_NAMES } from '../lib/audit.mjs';
 
 const fill = (el, ...kids) => el.replaceChildren(...kids.flat(Infinity).filter((k) => k !== null && k !== undefined && k !== false));
 const SHOW = 20;
@@ -36,11 +40,18 @@ export function undoCard(ctx, entry) {
       : p.problems?.length ? `前の版に誤りがあるので戻せません: ${p.problems.join('・')}`
         : !ctx.guarded ? 'ここでは取り消せません（監査ログに残せないため）'
           : ctx.may && !ctx.may(p.action) ? `この役割では取り消せません（「${P.ACTION_WORDS[p.action] ?? p.action}」の力が要ります。管理者に頼んでください）` : null;
+    // (changed again after that commit: those go back too — only after the check is ticked)
+    const later = !why && p.kind === 'file' && p.later > 0 ? p.later : 0;
+    const needTick = `後の ${later} 件の変更も戻ることを確かめて、上のチェックを入れてください`;
+    const tick = later ? h('input', { type: 'checkbox', 'aria-label': `後の ${later} 件の変更もまとめて戻す` }) : null;
+    const hint = h('p', { class: 'muted' }, why ?? (later ? needTick : ''));
+    const blocked = () => why ?? (tick && !tick.checked ? needTick : null);
     const go = h('button', {
-      class: 'primary', disabled: Boolean(why), title: why ?? '',
+      class: 'primary', disabled: Boolean(blocked()), title: blocked() ?? '',
       onclick: async () => {
-        if (why) return;
-        const detail = p.kind === 'file' ? { file: p.path } : { name: p.name };
+        if (blocked()) return;
+        const detail = p.kind === 'file' ? { file: p.path, ref: U.shortSha(p.commit?.parent) }
+          : { name: p.name, ...(BEFORE_NAMES.includes(p.name) && typeof p.now === 'string' ? { before: p.now } : {}) };
         const done = p.kind === 'file' ? `${what}を ${U.shortSha(p.commit?.sha)} の前に戻しました（新しい commit として）` : `変数 ${p.name} を前の値に戻しました`;
         const r = await ctx.guarded(p.action, detail, () => U.apply(api, lab.slug, p), done);
         if (r === undefined) return;
@@ -49,9 +60,15 @@ export function undoCard(ctx, entry) {
         body.prepend(h('p', {}, r.changed ? '取り消しました。監査ログにも残りました。' : '今と同じだったので、何も変えていません。'));
       },
     }, 'この変更を取り消す');
-    fill(body, diff, why ? h('p', { class: 'muted' }, why) : null, go);
+    if (tick) tick.addEventListener('change', () => { const b = blocked(); go.disabled = Boolean(b); go.title = b ?? ''; fill(hint, b ?? ''); });
+    fill(body, diff,
+      later ? [h('p', { class: 'bad' }, `この変更の後にも ${p.path} は ${later} 件変わっています。取り消すと、それも戻ります。`),
+        h('label', {}, tick, ` 後の ${later} 件の変更もまとめて戻す`)] : null,
+      why || later ? hint : null, go);
     return p;
   };
-  load();
+  // (GitHub is read only when asked: making the card reads nothing)
+  if (!u.ok) no(u.why);
+  else fill(body, h('button', { onclick: load }, '取り消す…'));
   return root;
 }
