@@ -24,7 +24,7 @@ const VERSION = (() => { const v = new URL(globalThis.location.href).searchParam
 const PREFIX = `bdslab-panel:${new URL(SCOPE).pathname}:`;
 const CACHE = PREFIX + (VERSION || 'unversioned');
 const INDEX = new URL('index.html', SCOPE).href;
-const SHELL = ['index.html', 'panel.css', 'a11y.css', 'panel.js', 'manifest.webmanifest', 'icon.svg', 'config.json'];
+const SHELL = ['index.html', 'panel.css', 'a11y.css', 'mobilenav.css', 'panel.js', 'manifest.webmanifest', 'icon.svg', 'config.json'];
 const MUST = ['index.html', 'panel.css', 'panel.js'];
 const MAX_FILES = 300;
 

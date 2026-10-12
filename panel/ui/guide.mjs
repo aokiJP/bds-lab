@@ -3,6 +3,7 @@
 // place for it, and the panel's words explained) and the glossary.
 import { h } from './dom.mjs';
 import * as G from '../lib/guide.mjs';
+import { focusTrap } from './keys.mjs';
 
 /** the tab's help line: open the first time this browser sees the tab, folded after */
 export function helpLine(tab, storage) {
@@ -29,8 +30,9 @@ export function guideCard({ role, facts, go, storage, labSlug }) {
 /** 「やりたいこと」: a box over the page — typed words → the places for them and the words explained; Enter takes the first,
  *  ↑↓ choose, Esc closes. ctx: { tabs(), may(action), go(tab, anchor) } → { open, close } */
 export function palette(ctx) {
-  let box = null, sel = 0, found = [];
-  const close = () => { box?.remove(); box = null; };
+  // (while it is open, Tab stays inside it; closed, the focus goes back where it was — ui/keys.mjs)
+  let box = null, sel = 0, found = [], release = null;
+  const close = () => { release?.(); release = null; box?.remove(); box = null; };
   const choose = (x) => { close(); ctx.go(x.tab, x.anchor ?? null, x.id); };
   const open = () => {
     if (box) return box.querySelector('input').focus();
@@ -54,6 +56,7 @@ export function palette(ctx) {
     box = h('div', { id: 'palette', role: 'dialog', 'aria-label': 'やりたいこと', onclick: (e) => { if (e.target === box) close(); } },
       h('div', { class: 'card' }, h('h2', {}, '🔎 やりたいこと'), input, list, terms, h('p', { class: 'muted' }, 'Enter で開く・↑↓ で選ぶ・Esc で閉じる（Ctrl/⌘+K でいつでも）')));
     document.body.append(box);
+    try { release = focusTrap(box); } catch { release = null; /* no trap: the dialog still works */ }
     draw(); input.focus();
   };
   return { open, close, isOpen: () => Boolean(box) };

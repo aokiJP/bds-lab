@@ -53,6 +53,17 @@ import { lendForecastCard } from './ui/lendfc.mjs';
 import { wizardCard } from './ui/wizard.mjs';
 import { a11yCard, apply as applyA11y } from './ui/a11y.mjs';
 import * as A11Y from './lib/a11y.mjs';
+import { todayCard } from './ui/today.mjs';
+import { wfWatchCard } from './ui/wfwatch.mjs';
+import { badgesCard } from './ui/badges.mjs';
+import { panicCard } from './ui/panic.mjs';
+import { secretMapCard } from './ui/secretmap.mjs';
+import { todoCard as todoBoard } from './ui/todo.mjs';
+import { whatsThisButton } from './ui/whatsthis.mjs';
+import { mobileNav } from './ui/mobilenav.mjs';
+import * as MN from './lib/mobilenav.mjs';
+import { keysCard, skipLink } from './ui/keys.mjs';
+import * as K from './lib/keys.mjs';
 
 // ---- the browser's storage (one that refuses it — a private window may — still works for the tab) ----
 const storage = (name) => { try { const s = window[name]; s.setItem('bdslab.probe', '1'); s.removeItem('bdslab.probe'); return s; } catch { return memoryStorage(); } };
@@ -395,12 +406,15 @@ function render() {
   renderWho();
   const tabs = TABS.filter(([k]) => (k === 'audit' ? may('audit.read') : canLab() || ['overview', 'hosts', 'settings'].includes(k)));
   if (!tabs.some(([k]) => k === st.tab)) st.tab = tabs[0][0];
-  const body = h('div', { id: 'tabbody' }, helpLine(st.tab, LOCAL));
-  main().replaceChildren(h('nav', { class: 'tabs' }, tabs.map(([k, label], i) => h('button', { class: st.tab === k ? 'on' : '', 'data-tab': k, title: i < 10 ? `キー ${(i + 1) % 10}` : null, onclick: () => go(k) }, label))), body);
+  // (「❓」: what each button and heading of this tab is for, beside them — ui/whatsthis.mjs)
+  const body = h('div', { id: 'tabbody' }, h('div', { class: 'row' }, h('div', { class: 'grow' }, helpLine(st.tab, LOCAL)), whatsThisButton({}, { tab: st.tab, root: () => body })));
+  main().replaceChildren(h('nav', { class: 'tabs' }, tabs.map(([k, label], i) => h('button', { class: st.tab === k ? 'on' : '', 'data-tab': k, title: i < 10 ? `キー ${(i + 1) % 10}` : null, onclick: () => go(k) }, label))), body,
+    // (a narrow screen: the five tabs used most at the bottom, the rest under 「その他」 — ui/mobilenav.mjs, shown by mobilenav.css)
+    mobileNav({ tabs: tabs.map(([k, label]) => ({ key: k, label })), current: st.tab, role: st.role ?? st.lab?.role, storage: LOCAL, go }));
   ({ overview, runs, start, units, releases, files, schedule, stats, discord, secrets, live, hosts, members, setup, connect: connectView, audit, settings: settingsTab })[st.tab](body);
 }
 /** another tab (the address follows: a reload or a shared link opens the same tab) */
-function go(tab) { st.tab = tab; history.replaceState(null, '', `#${tab}`); render(); }
+function go(tab) { st.tab = tab; MN.remember(LOCAL, tab); history.replaceState(null, '', `#${tab}`); render(); }
 const every = (fn) => { clearInterval(st.timer); st.timer = setInterval(() => { if (document.visibilityState === 'visible') fn(); }, Math.max(5, settings().refresh) * 1000); };
 
 // ---- 準備 (ui/setup.mjs) and 監査 (ui/audit.mjs) ----
@@ -620,7 +634,9 @@ setInterval(() => { if (document.visibilityState === 'visible') checkVersion(); 
 
 // ---- keys (outside a text box): 1–9, 0 the tabs shown, / search the runs, r read again, ? which keys ----
 const shownTabs = () => [...document.querySelectorAll('nav.tabs button')].map((b) => b.dataset.tab);
-const KEYS_HELP = 'Ctrl/⌘+K か ?: やりたいこと　1〜9・0: タブ　/: 実行を探す　r: 読み直す';
+const KEYS_HELP = K.helpLine(K.KEYMAP, K.isMac(globalThis.navigator?.platform));
+// (「本文へ飛ぶ」: the first thing Tab reaches)
+try { document.body.prepend(skipLink('main')); } catch { /* the page as it is */ }
 // 「やりたいこと」 (ui/guide.mjs): what someone wants in their own words → the tab for it (and the part of it: an anchor)
 const PAL = palette({ tabs: () => shownTabs(), may: (a) => (st.lab ? may(a) : false), go: (tab, anchor, id) => {
   if (id === 'guide') LOCAL.removeItem(`bdslab.panel.guide.hidden.${st.lab?.slug}`);
@@ -628,10 +644,12 @@ const PAL = palette({ tabs: () => shownTabs(), may: (a) => (st.lab ? may(a) : fa
   if (anchor) setTimeout(() => $(anchor)?.scrollIntoView({ block: 'start' }), 50);
   if (id === 'inbox') openInbox();
 } });
+// (the keys, one table: lib/keys.mjs — Ctrl/⌘+K anywhere, the rest not while typing)
 window.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && !e.altKey && String(e.key).toLowerCase() === 'k' && st.me && st.as?.length) { e.preventDefault(); PAL.open(); return; }
-  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing || !st.lab || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? '') || document.activeElement?.isContentEditable) return;
-  const k = M.shortcut(e.key, shownTabs()); if (!k) return;
+  const m = K.match(e, K.KEYMAP, document.activeElement); if (!m) return;
+  if (m.palette) { if (st.me && st.as?.length) { e.preventDefault(); PAL.open(); } return; }
+  if (!st.lab) return;
+  const k = K.resolve(m, shownTabs()); if (!k) return;
   e.preventDefault();
   if (k.tab) go(k.tab);
   else if (k.reload) render();
@@ -642,6 +660,8 @@ window.addEventListener('keydown', (e) => {
 // ---- 概要 ----
 function overview(body) {
   const ses = A.session(st.login);
+  // (今日やること: the lab's now, what to do first — then the rest of the overview)
+  if (st.lab && !lendFirst()) body.append(todayCard({ api: st.api, lab: st.lab, hosts: st.hosts, go }));
   // (「何がしたい？」: three choices that lead to the tab and the button — folded; opened by whoever is lost)
   if (st.lab && !lendFirst()) {
     const wz = h('details', { class: 'card', id: 'wizardbox' }, h('summary', {}, '🧭 何がしたい？（迷ったらここ）'));
@@ -689,6 +709,15 @@ function overview(body) {
     });
   } else if (st.lab) body.append(h('div', { class: 'card' }, h('h2', {}, st.lab.slug), h('p', { class: 'muted' }, `このリポジトリは ${M.ROLE_NAMES[st.lab.role] ?? '見えない'} です: 実行・秘密・端末は、書き込める人だけ。使うときは、持ち主に書き込める人（Write 以上）として招いてもらってください。`),
     link(st.lab.repo.html_url, 'ラボを GitHub で見る')));
+  if (st.lab && canLab() && !lendFirst()) {
+    // (pull requests that change the workflows, the ToDo board and the badges — the last two folded, read when opened; the
+    // emergency stop folded at the end: it is there when it is needed, not in the way)
+    const fold = (id, title, make) => { const d = h('details', { class: 'card', id }, h('summary', {}, title)); let made = false; d.addEventListener('toggle', () => { if (d.open && !made) { made = true; d.append(make()); } }); return d; };
+    body.append(wfWatchCard({ api: st.api, lab: st.lab }),
+      fold('todobox', '🗂 ToDo ボード（Issue）', () => todoBoard({ api: st.api, lab: st.lab, guarded, may })),
+      fold('badgebox', '🏅 実績', () => badgesCard({ api: st.api, lab: st.lab, hosts: st.hosts, storage: LOCAL })),
+      fold('panicbox', '🛑 緊急停止（動いている実行と自動で始まるワークフローを全部止める）', () => panicCard({ api: st.api, lab: st.lab, policy: st.policy, role: st.role, guarded, storage: LOCAL })));
+  }
   for (const x of st.hosts) body.append(hostCard(x, true));
   if (!st.hosts.length) body.append(h('div', { class: 'card' }, h('h2', {}, '貸し借り（ホスト）'), h('p', { class: 'muted' }, 'まだありません。「貸し借り」で自分のホストを探すか、貸し手のリポジトリを加えると、ここに出ます。'), h('button', { onclick: () => go('hosts') }, '「貸し借り」を開く')));
   const others = A.list().filter((e) => e.login !== st.login);
@@ -1046,7 +1075,9 @@ function discord(body) {
 // ---- 秘密 ----
 function secrets(body) {
   // (secrets not set again for long: which, and how to renew each — names and dates only, never a value)
-  body.append(secretWatchCard({ api: st.api, lab: st.lab }));
+  body.append(secretWatchCard({ api: st.api, lab: st.lab }),
+    // (which workflow uses which secret: the missing ones a tap away from being set here, the unused ones to look at)
+    secretMapCard({ api: st.api, lab: st.lab, openSecrets: (n) => { st.prefill = n; render(); } }));
   const list = h('div', {}, h('p', { class: 'muted' }, '読んでいます…'));
   const name = h('input', { type: 'text', list: 'known', placeholder: 'MS_EMAIL', autocapitalize: 'characters', value: st.prefill ?? '' }), value = h('input', { type: 'password', autocomplete: 'new-password' });
   st.prefill = null;
@@ -1290,7 +1321,7 @@ function settingsTab(body) {
     h('p', { class: 'muted' }, '知らせたことは、上の 🔔「お知らせ」にも残ります（開いていなかった間のことも、次に開いたときに）。'),
     h('p', { class: 'muted' }, 'スマホではブラウザのメニューの「ホーム画面に追加」で、アプリのように開けます（iPhone はこうすると知らせが届きます）。一度開いたパネルは、ネットがなくても開けます。'), h('p', { class: 'muted' }, `キー: ${KEYS_HELP}`)));
   // (the lab's Discord messages: who is told of what — .github/bds-lab-notify.json, shared by everyone in the lab)
-  body.append(a11yCard({ storage: LOCAL, document, matchMedia: globalThis.matchMedia?.bind(globalThis) }));
+  body.append(a11yCard({ storage: LOCAL, document, matchMedia: globalThis.matchMedia?.bind(globalThis) }), keysCard({}));
   if (st.lab) body.append(notifyPrefsCard({ api: st.api, lab: st.lab, me: st.me, policy: st.policy, role: st.role, may, guarded, record }));
   body.append(debugCard(), glossaryCard());
 }
