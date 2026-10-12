@@ -20,6 +20,7 @@ import * as AU from './lib/audit.mjs';
 import { h, $, main, toast, act, link, setOnFail, failView } from './ui/dom.mjs';
 import { signInCard, tokenHelp } from './ui/signin.mjs';
 import { setupTab, takeAppReturn } from './ui/setup.mjs';
+import { connectTab } from './ui/connect.mjs';
 import { auditTab } from './ui/audit.mjs';
 import { membersTab } from './ui/members.mjs';
 import * as DBG from './lib/debug.mjs';
@@ -366,7 +367,7 @@ const hasWf = (f) => (st.lab?.workflows ?? []).some((w) => String(w.path).endsWi
 
 // ---- the frame: tabs ----
 const TABS = [['overview', '概要'], ['runs', '進み具合'], ['start', '実行'], ['units', 'アドオン'], ['releases', '配布'], ['files', '成果物'], ['schedule', '予約'], ['stats', '統計'], ['discord', 'Discord'], ['secrets', '秘密'],
-  ['live', '端末'], ['hosts', '貸し借り'], ['members', 'メンバー'], ['setup', '準備'], ['audit', '監査'], ['settings', '設定']];
+  ['live', '端末'], ['hosts', '貸し借り'], ['members', 'メンバー'], ['setup', '準備'], ['connect', '連携'], ['audit', '監査'], ['settings', '設定']];
 function render() {
   clearInterval(st.timer);
   renderWho();
@@ -374,13 +375,18 @@ function render() {
   if (!tabs.some(([k]) => k === st.tab)) st.tab = tabs[0][0];
   const body = h('div', { id: 'tabbody' }, helpLine(st.tab, LOCAL));
   main().replaceChildren(h('nav', { class: 'tabs' }, tabs.map(([k, label], i) => h('button', { class: st.tab === k ? 'on' : '', 'data-tab': k, title: i < 10 ? `キー ${(i + 1) % 10}` : null, onclick: () => go(k) }, label))), body);
-  ({ overview, runs, start, units, releases, files, schedule, stats, discord, secrets, live, hosts, members, setup, audit, settings: settingsTab })[st.tab](body);
+  ({ overview, runs, start, units, releases, files, schedule, stats, discord, secrets, live, hosts, members, setup, connect: connectView, audit, settings: settingsTab })[st.tab](body);
 }
 /** another tab (the address follows: a reload or a shared link opens the same tab) */
 function go(tab) { st.tab = tab; history.replaceState(null, '', `#${tab}`); render(); }
 const every = (fn) => { clearInterval(st.timer); st.timer = setInterval(() => { if (document.visibilityState === 'visible') fn(); }, Math.max(5, settings().refresh) * 1000); };
 
 // ---- 準備 (ui/setup.mjs) and 監査 (ui/audit.mjs) ----
+// ---- 連携 (ui/connect.mjs): Discord・Cloudflare・Microsoft・Google Play・AI, each checked for real by connect.yml ----
+function connectView(body) {
+  connectTab(body, { api: st.api, lab: { slug: st.lab.slug, repo: st.lab.repo, role: st.lab.role, secrets: st.lab.secrets, workflows: st.lab.workflows }, me: st.me, policy: st.policy, role: st.role,
+    guarded, reload: async () => { await loadEnv(st.lab); if (st.tab === 'connect') render(); }, record: (action, detail) => record(action, detail) });
+}
 function setup(body) {
   setupTab(body, { api: st.api, lab: { slug: st.lab.slug, repo: st.lab.repo, role: st.lab.role, secrets: st.lab.secrets, workflows: st.lab.workflows }, hosts: st.hosts, me: st.me, config: CONFIG,
     panelUrl: `${location.origin}${location.pathname}`, signedInWithApp: A.session(st.login)?.kind === 'oauth', storage: TAB, appReturn: APP_RETURN, policy: st.policy, role: st.role,

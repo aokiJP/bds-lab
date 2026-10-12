@@ -265,7 +265,7 @@ await t('panel check: a changed file → the checks it needs (ESLint, the offlin
   // (a library or a view of the panel: the tabs that read them — 「アドオン」「予約」「統計」「お知らせ」 — are tried too)
   const LANES = ['tests/units-offline.mjs', 'tests/schedule-offline.mjs', 'tests/stats-offline.mjs', 'tests/inbox-offline.mjs',
     'tests/rescue-offline.mjs', 'tests/shell-rescue-offline.mjs', 'tests/setup-rescue-offline.mjs', 'tests/units-rescue-offline.mjs', 'tests/misc-rescue-offline.mjs',
-    'tests/ghrules-offline.mjs', 'tests/fakes-rules-offline.mjs'];
+    'tests/ghrules-offline.mjs', 'tests/fakes-rules-offline.mjs', 'tests/connect-ui-offline.mjs'];
   eq(PN.plan(['panel/lib/members.mjs']), { lint: ['panel/lib/members.mjs'], tests: ['tests/panel-offline.mjs', 'tests/governance-offline.mjs', ...LANES, 'tests/panel-browser.mjs'] });
   eq(PN.plan(['panel/ui/signin.mjs', 'auth/handler.mjs'], { quick: true }).tests, ['tests/panel-offline.mjs', 'tests/session-offline.mjs', 'tests/auth-offline.mjs', ...LANES]);
   eq(PN.plan(['common/unitci.mjs', 'common/schedule.mjs']), { lint: ['common/unitci.mjs', 'common/schedule.mjs'], tests: ['tests/units-offline.mjs', 'tests/schedule-offline.mjs'] }, 'the CLI side of 「アドオン」 and 「予約」');
@@ -454,7 +454,10 @@ await t('the page: its CSP allows GitHub\'s API alone (and its own config; pages
   for (const f of ['panel.js', ...['lib', 'ui'].flatMap((d) => (fs.existsSync(path.join(TOP, 'panel', d)) ? fs.readdirSync(path.join(TOP, 'panel', d)).map((x) => `${d}/${x}`) : []))]) {
     const src = fs.readFileSync(path.join(TOP, 'panel', f), 'utf8');
     ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/.test(src), `${f}: no HTML parsing, no eval`);
-    ok(![...src.matchAll(/https?:\/\/[\w.-]+/g)].map((m) => m[0]).some((u) => !/^https:\/\/(api\.github\.com|github\.com|avatars\.githubusercontent\.com)$/.test(u)), `${f}: no other address`);
+    // (the services' own pages — links only, never fetched: CSP — in the 「連携」 files alone; every other file GitHub's alone)
+    const official = /^(lib|ui)\/connect\.mjs$/.test(f) ? '|discord\\.com|dash\\.cloudflare\\.com|accounts\\.google\\.com|account\\.microsoft\\.com|console\\.anthropic\\.com|platform\\.openai\\.com' : '';
+    const allowed = new RegExp(`^https:\\/\\/(api\\.github\\.com|github\\.com|avatars\\.githubusercontent\\.com${official})$`);
+    ok(![...src.matchAll(/https?:\/\/[\w.-]+/g)].map((m) => m[0]).some((u) => !allowed.test(u)), `${f}: no address but GitHub and the services' own pages`);
   }
   ok(/setAttribute\('style'/.test(js) === false, 'styles through the CSSOM only');
   eq(M.repoFromLocation({ hostname: 'aokijp.github.io', pathname: '/bds-lab/' }), 'aokijp/bds-lab'); eq(M.repoFromLocation({ hostname: '127.0.0.1', pathname: '/' }), null);

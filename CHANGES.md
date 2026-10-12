@@ -5,6 +5,15 @@
 スマホの Discord から CI の端末を画面とボタンで動かせ、リポジトリの秘密も Discord のフォームで登録できる（node も PC も要らない）。**
 
 ### 管理パネル: 今の約 2 倍に — git clone も PC もなしで、作る・取り込む・直す・試験・仕上げ・配る・予約・統計・お知らせ
+- 管理パネル: **🔗 連携**（`panel/ui/connect.mjs`・`panel/lib/connect.mjs`・`common/connect.mjs`・`.github/workflows/connect.yml`）。Discord・
+  Cloudflare・Microsoft（Xbox）・Google Play・AI（Claude / OpenAI）を「全部つなぐ」で上から順に: 公式の画面を開く → 本人が確認を押して
+  1 つ貼る → パネルが封じて秘密に → connect.yml が本物か確かめ（`node lab.mjs connect check <service>`、結果は注釈 connect-<service>、
+  値は出さない）→ 結果と次の 1 手（Discord はボットの招待リンク、Cloudflare は workers.dev が無いときの作り方）。Google は一度きりの
+  oauth_token を CI が AAS トークンに換えて秘密にし（先にアドレスを書いて書けることを確かめてから使う・AAS を保ってから消す）、
+  Microsoft はパスワードなし（二段階認証）でもよい。形だけを確かめたものは「形はよい（本当に入れるかは app.yml で）」と分けて出す。
+  各サービスのログイン・同意・トークンの作成は本人が押す（自動では押さない）。パネルの守り（ポリシーの確認・先に貸す管理者・
+  監査ログ）を秘密ごと・実行ごとに通す。パネルの外へのリンクは連携のファイルだけ各サービスの公式の画面も（fetch の先は GitHub のまま）。
+  試験: `tests/connect-offline.mjs`（23: 偽の Discord・Cloudflare・Anthropic・OpenAI・apkeep・gh）・`tests/connect-ui-offline.mjs`（10）。
 - 管理パネル: **GitHub が断るものを、送る前に**（`panel/lib/ghrules.mjs`）。「App を作る」が本物の GitHub に 3 回断られた（webhook の url・
   #fragment の戻り先・トークンの Variables）のは、試験の偽の GitHub が何でも受け付けていたから。パネルが GitHub に送る書き込み 21 種と、
   GitHub の画面へ渡すもの（App の manifest・トークンを作る画面・Install のリンク）に GitHub の決まりを 1 か所で持ち、それぞれに出どころ
