@@ -48,10 +48,18 @@ import { secretWatchCard } from './ui/secretwatch.mjs';
 import { connectDailyCard } from './ui/connectdaily.mjs';
 import { weeklyCard } from './ui/weekly.mjs';
 import { notifyPrefsCard } from './ui/notifyprefs.mjs';
+import { minutesCard } from './ui/minutes.mjs';
+import { lendForecastCard } from './ui/lendfc.mjs';
+import { wizardCard } from './ui/wizard.mjs';
+import { a11yCard, apply as applyA11y } from './ui/a11y.mjs';
+import * as A11Y from './lib/a11y.mjs';
 
 // ---- the browser's storage (one that refuses it — a private window may — still works for the tab) ----
 const storage = (name) => { try { const s = window[name]; s.setItem('bdslab.probe', '1'); s.removeItem('bdslab.probe'); return s; } catch { return memoryStorage(); } };
 const LOCAL = storage('localStorage'), TAB = storage('sessionStorage');
+// (見やすさ — big letters, strong colours, no motion, underlined links — this browser's choice, else the device's own, before
+// anything is drawn)
+try { applyA11y(document, A11Y.load(LOCAL, A11Y.fromMedia(globalThis.matchMedia?.bind(globalThis)))); } catch { /* the page as it is */ }
 
 // ---- never inside another page's frame: a click there would be this person's own (GitHub Pages sends no frame-ancestors
 // header, and a meta CSP cannot say it) — the panel then does nothing at all ----
@@ -408,7 +416,7 @@ function setup(body) {
     panelUrl: `${location.origin}${location.pathname}`, signedInWithApp: A.session(st.login)?.kind === 'oauth', storage: TAB, appReturn: APP_RETURN, policy: st.policy, role: st.role,
     reload: async () => { await loadEnv(st.lab); if (st.tab === 'setup') render(); }, record: (action, detail) => record(action, detail) });
 }
-function audit(body) { auditTab(body, { api: st.api, lab: st.lab, policy: st.policy, role: st.role }); }
+function audit(body) { auditTab(body, { api: st.api, lab: st.lab, policy: st.policy, role: st.role, guarded, may }); }
 // ---- アドオン・配布 (ui/units.mjs, ui/workspace.mjs, ui/releases.mjs): the lab's units made, taken in, changed, tested and
 // finished, and what it has given out — by GitHub alone: the contents API and unit.yml on the lab's own Actions ----
 /** a workflow of the lab started on its default branch — GitHub's call alone: the tab that calls it guards it, once */
@@ -431,7 +439,7 @@ function stats(body) {
   const inside = h('div', {}), compare = h('details', { class: 'card', id: 'runcompare' }, h('summary', {}, '⚖️ 2 つの実行を比べる'), inside);
   let opened = false;
   compare.addEventListener('toggle', () => { if (!compare.open || opened) return; opened = true; fill(inside, async () => inside.replaceChildren(runCompareCard({ api: st.api, lab: st.lab }, { runs: await st.api.runs(st.lab.slug, { per: 50 }) }))); });
-  body.append(testHistCard({ api: st.api, lab: st.lab }), compare,
+  body.append(minutesCard({ api: st.api, lab: st.lab }), testHistCard({ api: st.api, lab: st.lab }), compare,
     weeklyCard({ api: st.api, lab: st.lab, hosts: st.hosts, me: st.me, policy: st.policy, role: st.role, gate, guarded, go, dispatch: dispatchRaw, caps: capsOf() }));
 }
 // ---- 健康度 (ui/health.mjs, on 「概要」): the lab's health as a number, what would raise it, and the report for a company ----
@@ -446,7 +454,7 @@ const healthCtx = () => {
   };
   return ctx;
 };
-function members(body) { membersTab(body, { api: st.api, lab: st.lab, me: st.me, policy: st.policy, role: st.role, policyErrors: st.policyErrors, may, guarded, lending: isOwner() ? forkLendingNow : null, reload: async () => { await loadPolicy(); st.adminLend = await adminLendNow(); render(); } }); }
+function members(body) { membersTab(body, { api: st.api, lab: st.lab, me: st.me, panelUrl: `${location.origin}${location.pathname}`, policy: st.policy, role: st.role, policyErrors: st.policyErrors, may, guarded, lending: isOwner() ? forkLendingNow : null, reload: async () => { await loadPolicy(); st.adminLend = await adminLendNow(); render(); } }); }
 
 // ---- lending from forks of the lab (ui/lend.mjs): an administrator's own — always, the policy's adminsLend — and the owner's
 // view of them all, each fork's whole say given to the lab's owner (invited there, the lab's App on it) ----
@@ -482,12 +490,14 @@ async function adminLendNow() {
   } catch (e) { return { required: true, ok: false, fork: null, why: [`あなたのフォークを読めませんでした（${e.message}）`], err: e }; }
 }
 /** a fork into the lab's LAB_HOSTS (hostrun's auto chooses among them, each through the App on it), kept in the audit log */
-async function addLabHost(slug, drop = false) {
+async function addLabHost(slug, drop = false, detail = null) {
   // (variable() is null when there is none; a failed read throws — never written over from an empty list)
   const now = await st.api.variable(st.lab.slug, 'LAB_HOSTS'), next = M.labHostsWith(now, drop ? [] : [slug], drop ? [slug] : []);
   if (next === M.labHostsWith(now)) return false;
   await st.api.setVariable(st.lab.slug, 'LAB_HOSTS', next);
-  record('variables', { name: 'LAB_HOSTS' });
+  // (the value before, for 「↩️ 取り消す」; inside a guard its detail is filled and the guard records it — once)
+  const before = typeof now === 'string' ? now : undefined;
+  if (detail) detail.before = before; else record('variables', { name: 'LAB_HOSTS', before });
   return true;
 }
 /** the lab's forks that lend and its administrators who do not (the owner's view; a minute's cache) → { list, admins,
@@ -632,6 +642,14 @@ window.addEventListener('keydown', (e) => {
 // ---- 概要 ----
 function overview(body) {
   const ses = A.session(st.login);
+  // (「何がしたい？」: three choices that lead to the tab and the button — folded; opened by whoever is lost)
+  if (st.lab && !lendFirst()) {
+    const wz = h('details', { class: 'card', id: 'wizardbox' }, h('summary', {}, '🧭 何がしたい？（迷ったらここ）'));
+    let made = false;
+    wz.addEventListener('toggle', () => { if (!wz.open || made) return; made = true; wz.append(wizardCard({ tabs: () => TABS.map(([k]) => k).filter((k) => k === 'audit' ? may('audit.read') : canLab() || ['overview', 'hosts', 'settings'].includes(k)), may, storage: TAB, labSlug: st.lab.slug,
+      go: (tab, focus) => { go(tab); if (focus) setTimeout(() => $(focus)?.scrollIntoView({ block: 'start' }), 50); } })); });
+    body.append(wz);
+  }
   // (an administrator who has to lend: that first, here — nothing else is offered until they do)
   if (lendFirst()) body.append(h('div', { class: 'card' }, h('h2', {}, '⏱ まず時間を貸します'), h('p', {}, '管理者の決まり（adminsLend）: 次がそろうと、管理者の操作が使えるようになります。'), h('ul', {}, st.adminLend.why.map((w) => h('li', { class: 'warn' }, w))),
       st.adminLend.err ? failView(st.adminLend.err, () => connect()) : null),
@@ -999,7 +1017,13 @@ function discord(body) {
   const note = h('p', { class: 'muted' }, 'リポジトリの変数を読んでいます…');
   body.append(h('div', { class: 'card' }, h('h2', {}, '知らせる実行と、添えるもの'),
     h('label', {}, 'どの実行を知らせる（変数 LAB_NOTIFY）'), when, h('label', {}, '添える成果物（変数 LAB_NOTIFY_FILES）'), what, note,
-    h('div', { class: 'row' }, h('button', { class: 'primary', ...gate('variables'), onclick: () => guarded('variables', { name: 'LAB_NOTIFY' }, async () => { await st.api.setVariable(st.lab.slug, 'LAB_NOTIFY', when.value); await st.api.setVariable(st.lab.slug, 'LAB_NOTIFY_FILES', what.value); return true; }, '知らせ方を保存しました') }, '知らせ方を保存'))));
+    h('div', { class: 'row' }, h('button', { class: 'primary', ...gate('variables'), onclick: () => { const d = { name: 'LAB_NOTIFY' }; return guarded('variables', d, async () => {
+      // (the two values before, for 「↩️ 取り消す」: LAB_NOTIFY's in this entry, LAB_NOTIFY_FILES' in one of its own)
+      const [w0, f0] = await Promise.all([st.api.variable(st.lab.slug, 'LAB_NOTIFY'), st.api.variable(st.lab.slug, 'LAB_NOTIFY_FILES')]);
+      if (typeof w0 === 'string') d.before = w0;
+      await st.api.setVariable(st.lab.slug, 'LAB_NOTIFY', when.value); await st.api.setVariable(st.lab.slug, 'LAB_NOTIFY_FILES', what.value);
+      record('variables', { name: 'LAB_NOTIFY_FILES', ...(typeof f0 === 'string' ? { before: f0 } : {}) });
+      return true; }, '知らせ方を保存しました'); } }, '知らせ方を保存'))));
   fill(note, async () => {
     const [w, f] = await Promise.all([st.api.variable(st.lab.slug, 'LAB_NOTIFY'), st.api.variable(st.lab.slug, 'LAB_NOTIFY_FILES')]);
     when.value = M.NOTIFY_WHEN[w] ? w : 'auto'; what.value = M.NOTIFY_FILES[f] ? f : 'auto';
@@ -1193,6 +1217,7 @@ function hosts(body) {
       toast(found.length ? `${found.length} 個見つけました` : '見つかりませんでした（.lab-host.json のある、最近の 40 個を見ました）: 貸し手のリポジトリを owner/名前 で右に入れて「加える」');
     }) }, '自分のホストを探す'), add, h('button', { onclick: async () => { const v = add.value.trim(), bad = M.slugProblem(v, settings().hosts); if (bad) return toast(bad, true); saveSettings({ hosts: [...settings().hosts, v] }); await reload(); } }, '加える'))));
   if (!st.hosts.length) body.append(h('p', { class: 'muted' }, 'まだホストがありません: 時間を貸すなら「自分のホストを探す」か、ラボの「概要」の「フォークで貸す」。借りるなら、貸し手のリポジトリ（owner/名前）を上に入れて「加える」。'));
+  if (st.hosts.some((x) => x.rules)) body.append(lendForecastCard({ api: st.api, hosts: st.hosts.filter((x) => x.rules) }));
   for (const x of st.hosts) body.append(hostCard(x), h('div', { class: 'row' }, h('button', { class: 'danger', onclick: () => { saveSettings({ hosts: settings().hosts.filter((s) => s !== x.slug) }); st.hosts = st.hosts.filter((y) => y.slug !== x.slug); render(); } }, `${x.slug} を一覧から外す`)));
 }
 
@@ -1219,8 +1244,8 @@ function forksCard() {
         h('div', { class: 'muted' }, x.rules ? `1 か月 ${x.rules.minutesPerMonth} 分・${x.rules.jobs.join(' ')}・${x.rules.hours}${x.rules.until ? `・${x.rules.until} まで` : ''}${d.files[x.slug]?.hostYmlOk ? '' : '・host.yml がラボと違う'}` : x.errors.join(' / '), x.always.ok ? '' : `（${x.always.why.join(' / ')}）`)),
       h('button', { onclick: () => act(sync(x.slug), `${x.slug} をラボに合わせました（動くのは host.yml だけ）`).then(draw) }, '🔄 合わせる'),
       !x.always.ok ? h('button', { onclick: () => act(setAlways(x), `${x.slug} をずっと貸すにしました`).then(draw) }, '⏱ ずっと貸すに') : null,
-      listed.has(x.slug.toLowerCase()) ? h('button', { ...gate('variables'), onclick: () => guarded('variables', { name: 'LAB_HOSTS' }, () => addLabHost(x.slug, true), `${x.slug} を LAB_HOSTS から外しました`).then(draw) }, 'LAB_HOSTS から外す')
-        : h('button', { ...gate('variables'), onclick: () => guarded('variables', { name: 'LAB_HOSTS' }, () => addLabHost(x.slug), `${x.slug} を LAB_HOSTS に入れました（hostrun の auto が選びます）`).then(draw) }, 'LAB_HOSTS に入れる')));
+      listed.has(x.slug.toLowerCase()) ? h('button', { ...gate('variables'), onclick: () => { const ad = { name: 'LAB_HOSTS' }; return guarded('variables', ad, () => addLabHost(x.slug, true, ad), `${x.slug} を LAB_HOSTS から外しました`).then(draw); } }, 'LAB_HOSTS から外す')
+        : h('button', { ...gate('variables'), onclick: () => { const ad = { name: 'LAB_HOSTS' }; return guarded('variables', ad, () => addLabHost(x.slug, false, ad), `${x.slug} を LAB_HOSTS に入れました（hostrun の auto が選びます）`).then(draw); } }, 'LAB_HOSTS に入れる')));
     box.replaceChildren(
       d.errors?.length ? h('div', { class: 'warn' }, h('ul', {}, d.errors.map((e) => h('li', {}, e))), h('button', { onclick: draw }, 'もう一度')) : null,
       inv === null ? h('p', { class: 'muted' }, 'フォークからの招待は、このサインインでは読めません: ', link('https://github.com/notifications', 'GitHub で招待を見る')) : null,
@@ -1231,7 +1256,7 @@ function forksCard() {
       d.list.length ? h('ul', { class: 'plain' }, rows) : h('p', { class: 'muted' }, 'まだフォークで貸している人はいません: 手伝う人に、パネルの「概要」の「フォークで貸す」から貸してもらうと、ここに出ます（管理者は入るとまず貸す画面になります）。'),
       d.idle.length ? h('p', { class: 'warn' }, `まだいつも貸していない管理者: ${d.idle.join('・')}（パネルに入ると、まず貸す画面になります）`) : null,
       d.list.length ? h('div', { class: 'row' }, h('button', { onclick: () => act(async () => { for (const x of d.list) await sync(x.slug)(); }, '全部のフォークをラボに合わせました').then(draw) }, '🔄 全部合わせる'),
-        h('button', { ...gate('variables'), onclick: () => guarded('variables', { name: 'LAB_HOSTS' }, async () => { const v = await st.api.variable(st.lab.slug, 'LAB_HOSTS'); await st.api.setVariable(st.lab.slug, 'LAB_HOSTS', M.labHostsWith(v, d.list.filter((x) => x.always.ok || !x.admin).map((x) => x.slug))); }, '貸しているフォークを全部 LAB_HOSTS に入れました').then(draw) }, '貸しているものを全部 LAB_HOSTS に')) : null);
+        h('button', { ...gate('variables'), onclick: () => { const ad = { name: 'LAB_HOSTS' }; return guarded('variables', ad, async () => { const v = await st.api.variable(st.lab.slug, 'LAB_HOSTS'); if (typeof v === 'string') ad.before = v; await st.api.setVariable(st.lab.slug, 'LAB_HOSTS', M.labHostsWith(v, d.list.filter((x) => x.always.ok || !x.admin).map((x) => x.slug))); }, '貸しているフォークを全部 LAB_HOSTS に入れました').then(draw); } }, '貸しているものを全部 LAB_HOSTS に')) : null);
   });
   draw();
   return h('div', { class: 'card', id: 'forks' }, h('h2', {}, 'フォークで貸している人（預かっているもの）'),
@@ -1265,6 +1290,7 @@ function settingsTab(body) {
     h('p', { class: 'muted' }, '知らせたことは、上の 🔔「お知らせ」にも残ります（開いていなかった間のことも、次に開いたときに）。'),
     h('p', { class: 'muted' }, 'スマホではブラウザのメニューの「ホーム画面に追加」で、アプリのように開けます（iPhone はこうすると知らせが届きます）。一度開いたパネルは、ネットがなくても開けます。'), h('p', { class: 'muted' }, `キー: ${KEYS_HELP}`)));
   // (the lab's Discord messages: who is told of what — .github/bds-lab-notify.json, shared by everyone in the lab)
+  body.append(a11yCard({ storage: LOCAL, document, matchMedia: globalThis.matchMedia?.bind(globalThis) }));
   if (st.lab) body.append(notifyPrefsCard({ api: st.api, lab: st.lab, me: st.me, policy: st.policy, role: st.role, may, guarded, record }));
   body.append(debugCard(), glossaryCard());
 }

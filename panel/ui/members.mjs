@@ -6,6 +6,7 @@ import * as MB from '../lib/members.mjs';
 import * as P from '../lib/policy.mjs';
 import * as M from '../lib/model.mjs';
 import * as G from '../lib/guide.mjs';
+import { inviteQrCard } from './inviteqr.mjs';
 
 /** ctx: { api, lab: { slug, repo, role }, me, policy, role, may(action), guarded(action, detail, fn, done), reload(),
  *  lending() (the owner's: the lab's lending forks → { list }, for each administrator's mark) } */
@@ -27,9 +28,11 @@ export function membersTab(body, ctx) {
           h('span', { class: 'grow' }, h('strong', {}, x.login), x.login.toLowerCase() === m.owner.toLowerCase() ? h('span', { class: 'chip' }, '持ち主') : null, c.ok ? null : h('div', { class: 'muted' }, c.why)),
           sel, admin && c.ok ? h('button', { class: 'danger', onclick: () => confirm(`${x.login} をこのラボから外しますか`) && ctx.guarded('members', { user: x.login, permission: 'none' }, () => MB.removeMember(api, lab.slug, x.login), `${x.login} を外しました`).then(load) }, '外す') : null);
       }),
-      m.invitations.map((i) => h('li', { class: 'row' }, h('span', { class: 'grow' }, h('strong', {}, i.login), ' ', h('span', { class: 'chip' }, '招待中'), h('div', { class: 'muted' }, `${MB.PERMISSION_WORDS[i.permission] ?? i.permission}・相手が GitHub の通知かメールで受けると入ります`)),
+      m.invitations.map((i) => { const qr = h('div', {}); let shown = false; return h('li', {}, h('div', { class: 'row' }, h('span', { class: 'grow' }, h('strong', {}, i.login), ' ', h('span', { class: 'chip' }, '招待中'), h('div', { class: 'muted' }, `${MB.PERMISSION_WORDS[i.permission] ?? i.permission}・相手が GitHub の通知かメールで受けると入ります`)),
         h('button', { title: '相手に渡すアドレス（GitHub の通知とメールにも届きます）', onclick: () => copy(MB.invitationUrl(lab.slug), '招待を受けるアドレスを写しました') }, '🔗 アドレス'),
-        admin ? h('button', { onclick: () => ctx.guarded('members', { user: i.login, permission: 'none' }, () => MB.cancelInvitation(api, lab.slug, i.id), `${i.login} への招待を取り消しました`).then(load) }, '取り消す') : null))));
+        // (the invitation as a QR code and three steps in words, for a phone: ui/inviteqr.mjs)
+        h('button', { onclick: () => { shown = !shown; qr.replaceChildren(...(shown ? [inviteQrCard({ api, lab, panelUrl: ctx.panelUrl }, { login: i.login, role: i.permission })] : [])); } }, '📱 QR'),
+        admin ? h('button', { onclick: () => ctx.guarded('members', { user: i.login, permission: 'none' }, () => MB.cancelInvitation(api, lab.slug, i.id), `${i.login} への招待を取り消しました`).then(load) }, '取り消す') : null), qr); })));
     // (outsiders asking to join — issues on the lab, ui/lend.mjs: invited here with the role chosen above, or closed)
     if (admin) api.issues(lab.slug).then((is) => {
       const rq = M.joinRequests(is ?? []);
