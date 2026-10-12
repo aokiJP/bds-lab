@@ -12,6 +12,7 @@ import os from 'node:os';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fakeCheck } from '../panel/lib/ghrules.mjs';
 
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imp = (p) => import(pathToFileURL(path.join(TOP, p)).href);
@@ -127,6 +128,7 @@ async function fakeGitHub({ defaultBranch = 'trunk', repoStatus = 200, refuse = 
       const send = (code, j) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(j === null ? '' : JSON.stringify(j)); };
       st.seen.push({ m: req.method, u: req.url, auth: req.headers.authorization === `Bearer ${TOKEN}`, version: req.headers['x-github-api-version'] });
       if (req.headers.authorization !== `Bearer ${TOKEN}`) return send(401, { message: 'Bad credentials' });
+      { const bad = fakeCheck(req.method, req.url, b ? JSON.parse(b) : null); if (bad) return send(422, { message: bad.message }); } // (GitHub's rules for a write: ghrules)
       let x;
       if (req.method === 'GET' && req.url === '/repos/o/lab') return repoStatus === 200 ? send(200, { full_name: 'o/lab', default_branch: defaultBranch }) : send(repoStatus, { message: 'Server Error' });
       if (req.method === 'POST' && (x = /^\/repos\/o\/lab\/actions\/workflows\/([^/?]+)\/dispatches$/.exec(req.url))) {

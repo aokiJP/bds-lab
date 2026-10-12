@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fakeCheck } from '../panel/lib/ghrules.mjs';
 
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imp = (p) => import(pathToFileURL(path.join(TOP, p)).href);
@@ -145,6 +146,7 @@ function fakeFetch(routes, seen) {
     if (!u.startsWith('https://api.github.com')) return new Response('', { status: 404 });
     const p = u.slice('https://api.github.com'.length);
     seen.push(`${method} ${p}`);
+    { let jb = null; try { jb = opts.body ? JSON.parse(opts.body) : null; } catch { /* not JSON */ } const bad = fakeCheck(method, p, jb); if (bad) return new Response(JSON.stringify({ message: bad.message }), { status: 422, headers: { 'content-type': 'application/json' } }); } // (GitHub's rules for a write: ghrules)
     for (const [key, fn] of routes) {
       const [m, re] = key.split(' '); const x = new RegExp(`^${re}$`).exec(p.split('?')[0]);
       if (m === method && x) {

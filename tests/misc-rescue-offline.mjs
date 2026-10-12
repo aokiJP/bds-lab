@@ -4,6 +4,7 @@
 // node tests/misc-rescue-offline.mjs
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fakeCheck } from '../panel/lib/ghrules.mjs';
 
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imp = (p) => import(pathToFileURL(path.join(TOP, p)).href);
@@ -72,7 +73,8 @@ await t('「統計」: the runs not read → the words, the page\'s next step an
   const D = await imp('panel/ui/dom.mjs'), UI = await imp('panel/ui/stats.mjs');
   await withWay(D);
   let boom = Object.assign(new Error('GitHub: 502 Bad Gateway'), { status: 502 });
-  const api = { async call(method, p) { if (boom && !/host\.yml/.test(p)) throw boom; if (/host\.yml/.test(p)) throw new Error('nope'); return { workflow_runs: [] }; } };
+  const api = { async call(method, p, body) { { const bad = fakeCheck(method, p, body); if (bad) throw Object.assign(new Error(bad.message), { status: 422 }); } // (GitHub's rules for a write: ghrules)
+    if (boom && !/host\.yml/.test(p)) throw boom; if (/host\.yml/.test(p)) throw new Error('nope'); return { workflow_runs: [] }; } };
   const body = new E('div');
   const hosts = [{ slug: 'bob/lab', repo: { html_url: 'https://github.com/bob/lab' } }];
   await UI.statsTab(body, { api, lab: { slug: 'o/lab' }, hosts, now: Date.parse('2026-10-08T00:00:00Z') });
@@ -121,7 +123,8 @@ await t('「メンバー」: the people not read → the words, the page\'s next
   await withWay(D);
   let down = true;
   const api = {
-    async call(method, p) { if (/collaborators\?/.test(p)) { if (down) throw Object.assign(new Error('GitHub: 502'), { status: 502 }); return [{ login: 'o', permissions: { admin: true }, role_name: 'admin' }, { login: 'amy', permissions: { push: true }, role_name: 'write' }]; } return []; },
+    async call(method, p, body) { { const bad = fakeCheck(method, p, body); if (bad) throw Object.assign(new Error(bad.message), { status: 422 }); } // (GitHub's rules for a write: ghrules)
+      if (/collaborators\?/.test(p)) { if (down) throw Object.assign(new Error('GitHub: 502'), { status: 502 }); return [{ login: 'o', permissions: { admin: true }, role_name: 'admin' }, { login: 'amy', permissions: { push: true }, role_name: 'write' }]; } return []; },
     async issues() { throw new Error('no'); }, async commits() { throw new Error('no'); },
   };
   const ctx = { api, lab: { slug: 'o/lab', role: 'admin', repo: { owner: { login: 'o' } } }, me: { login: 'o' }, policy: P.DEFAULT_POLICY, may: () => true, guarded: async (a, d, fn) => fn(), reload() {}, lending: async () => { throw new Error('no'); } };

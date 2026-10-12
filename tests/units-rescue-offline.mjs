@@ -5,6 +5,7 @@
 // node tests/units-rescue-offline.mjs
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fakeCheck } from '../panel/lib/ghrules.mjs';
 
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imp = (p) => import(pathToFileURL(path.join(TOP, p)).href);
@@ -45,8 +46,9 @@ function fakeApi({ files = {}, fail = {}, releases = [] } = {}) {
   const dirs = (p) => { const names = new Set(Object.keys(files).filter((f) => f.startsWith(`${p}/`)).map((f) => f.slice(p.length + 1).split('/')[0])); return [...names].map((name) => ({ type: 'dir', name })); };
   return {
     calls,
-    async call(method, url) {
+    async call(method, url, body) {
       const p = url.replace('/repos/o/lab/', ''); calls.push(`${method} ${p}`);
+      { const bad = fakeCheck(method, url, body); if (bad) throw err(422, bad.message); } // (GitHub's rules for a write: ghrules)
       const e = bad(p); if (e) throw e;
       if (p.startsWith('releases')) return releases;
       if (p.startsWith('git/matching-refs')) return [];

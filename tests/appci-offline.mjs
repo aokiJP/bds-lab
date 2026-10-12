@@ -10,6 +10,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fakeCheck } from '../panel/lib/ghrules.mjs';
 
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imp = (p) => import(pathToFileURL(path.join(TOP, p)).href);
@@ -41,6 +42,7 @@ const srv = http.createServer((req, res) => {
     const jwt = String(req.headers.authorization ?? '').replace(/^Bearer /, ''), [h, b, s] = jwt.split('.');
     let good = false; try { good = crypto.verify('RSA-SHA256', Buffer.from(`${h}.${b}`), publicKey, Buffer.from(s, 'base64url')) && JSON.parse(Buffer.from(b, 'base64url')).iss === '77'; } catch { /* no */ }
     seen.push({ method: req.method, url: req.url, good, body: body ? JSON.parse(body) : null });
+    { const bad = fakeCheck(req.method, req.url, body ? JSON.parse(body) : null); if (bad) return send(422, { message: bad.message }); } // (GitHub's rules for a write: ghrules)
     if (!good) return send(401, { message: 'A JSON web token could not be decoded' });
     if (req.url === '/repos/lender1/bds-lab-host/installation') return send(200, { id: 555 });
     if (req.url === '/repos/someone/elsewhere/installation') return send(404, { message: 'Not Found' });

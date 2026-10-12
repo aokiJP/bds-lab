@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fakeCheck } from '../panel/lib/ghrules.mjs';
 
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imp = (p) => import(pathToFileURL(path.join(TOP, p)).href);
@@ -399,8 +400,9 @@ function fakeGitHub({ lab = labRuns(), hosts = {}, fail = {} } = {}) {
   const log = [];
   const api = {
     log,
-    call: async (method, p) => {
+    call: async (method, p, body) => {
       log.push(`${method} ${p}`);
+      { const bad = fakeCheck(method, p, body); if (bad) throw Object.assign(new Error(bad.message), { status: 422 }); } // (GitHub's rules for a write: ghrules)
       const u = new URL(`https://x${p}`), m = /^\/repos\/([^/]+\/[^/]+)\/actions\/(?:workflows\/([^/]+)\/)?runs$/.exec(u.pathname);
       if (m) {
         if (fail[m[1]]) throw Object.assign(new Error(fail[m[1]]), { status: 404 });

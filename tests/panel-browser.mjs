@@ -15,6 +15,7 @@ import http from 'node:http';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fakeCheck, check as ghCheck } from '../panel/lib/ghrules.mjs';
 
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imp = (p) => import(pathToFileURL(path.join(TOP, p)).href);
@@ -92,6 +93,7 @@ async function api(route) {
   const req = route.request(), u = new URL(req.url()), p = u.pathname, who = people[String(req.headers().authorization ?? '').replace(/^Bearer /, '')];
   const send = (status, j) => route.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*', 'x-ratelimit-remaining': '4900', 'x-ratelimit-reset': '1' }, body: j === null ? '' : JSON.stringify(j) });
   if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST,PUT,DELETE,PATCH' } });
+  { let jb = null; try { jb = req.postData() ? JSON.parse(req.postData()) : null; } catch { /* not JSON */ } const bad = fakeCheck(req.method(), p, jb); if (bad) return send(422, { message: bad.message }); } // (GitHub's rules for a write: ghrules)
   // (the App made from its manifest: the code alone is the proof — asked without a token)
   const mc = /^\/app-manifests\/([^/]+)\/conversions$/.exec(p);
   if (mc && req.method() === 'POST') { G.corp.conversions.push({ code: mc[1], auth: req.headers().authorization ?? null }); return mc[1] === 'mcode' ? send(201, { id: 4242, slug: 'acme-bds-lab', client_id: 'Iv1.madeapp', client_secret: 'made-client-secret', pem: PEM, html_url: 'https://github.com/apps/acme-bds-lab', owner: { login: 'acme' } }) : send(404, { message: 'Not Found' }); }
@@ -261,6 +263,8 @@ const hop = (to) => `<!doctype html><meta http-equiv="refresh" content="0;url=${
 async function githubRoute(route) {
   const req = route.request(), u = new URL(req.url());
   if (u.pathname === '/login/oauth/authorize') { OA.authorize.push(Object.fromEntries(u.searchParams)); return route.fulfill({ status: 200, contentType: 'text/html', body: hop(`${AUTH}/callback?code=good-code&state=${encodeURIComponent(u.searchParams.get('state'))}`) }); }
+  // (a manifest GitHub's rules refuse: its own page, "Invalid GitHub App configuration", the App not made)
+  if (/\/settings\/apps\/new$/.test(u.pathname) && req.method() === 'POST') { const bad = ghCheck('appManifest', JSON.parse(new URLSearchParams(req.postData()).get('manifest'))); if (bad.length) return route.fulfill({ status: 422, contentType: 'text/html', body: `<p>Invalid GitHub App configuration</p><ul>${bad.map((x) => `<li>${x.replace(/</g, '&lt;')}</li>`).join('')}</ul>` }); }
   if (/\/settings\/apps\/new$/.test(u.pathname) && req.method() === 'POST') { G.corp.manifests.push({ path: u.pathname, state: u.searchParams.get('state'), manifest: JSON.parse(new URLSearchParams(req.postData()).get('manifest')) }); return route.fulfill({ status: 200, contentType: 'text/html', body: '<p>GitHub: Create GitHub App for acme</p>' }); }
   return route.fulfill({ status: 404, body: 'not here' });
 }

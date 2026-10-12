@@ -13,6 +13,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fakeCheck } from '../panel/lib/ghrules.mjs';
 
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imp = (p) => import(pathToFileURL(path.join(TOP, p)).href);
@@ -37,6 +38,7 @@ function fakeGitHub({ files = {}, releases = [], big = [], fail = {} } = {}) {
   const fetchImpl = async (url, init) => {
     const u = new URL(url), p = decodeURIComponent(u.pathname), body = init.body ? JSON.parse(init.body) : null;
     st.seen.push({ method: init.method, path: p + u.search, raw: u.pathname, body, auth: init.headers.authorization });
+    { const bad = fakeCheck(init.method, p, body); if (bad) return send(422, { message: bad.message }); } // (GitHub's rules for a write: ghrules)
     const no = typeof fail[p] === 'object' ? fail[p] : fail[p] ? { status: fail[p] } : null;
     if (no && (!no.method || no.method === init.method)) return send(no.status, { message: no.message ?? 'Resource not accessible by integration' });
     let m;

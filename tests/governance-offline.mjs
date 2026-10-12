@@ -9,6 +9,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fakeCheck } from '../panel/lib/ghrules.mjs';
 
 const TOP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const imp = (p) => import(pathToFileURL(path.join(TOP, p)).href);
@@ -103,6 +104,7 @@ async function fakeGitHub({ policyText = null, policyStatus = 200, teams = {} } 
       const u = req.url, m = req.method, body = b ? JSON.parse(b) : null, me = who(req);
       st.seen.push({ m, u, me, body: b });
       if (!me) return send(res, 401, { message: 'Bad credentials' });
+      { const bad = fakeCheck(m, u, body); if (bad) return send(res, 422, { message: bad.message }); } // (GitHub's rules for a write: ghrules)
       let x;
       if (u === '/repos/o/lab/contents/.github/bds-lab-panel.json') return st.policyStatus !== 200 ? send(res, st.policyStatus, { message: 'Resource not accessible' }) : st.policyText === null ? send(res, 404, { message: 'Not Found' }) : send(res, 200, { content: Buffer.from(st.policyText).toString('base64'), sha: 'S' });
       if ((x = /^\/orgs\/acme\/teams\/([\w.-]+)\/memberships\/(\w+)$/.exec(u))) { const s = st.teams[x[1]]; return s === 403 ? send(res, 403, { message: 'Resource not accessible by integration' }) : s?.includes(x[2]) ? send(res, 200, { state: 'active', role: 'member' }) : send(res, 404, { message: 'Not Found' }); }
