@@ -99,8 +99,10 @@ await t('the App\'s manifest: no webhook, no events, public (a lender puts it on
   eq(S.appMissing({ ...S.APP_PERMISSIONS }), []); eq(S.appMissing(null).length, Object.keys(S.APP_PERMISSIONS).length);
   ok(Object.isFrozen(S.APP_PERMISSIONS), 'one constant, not changed by anyone');
   const m = S.appManifest({ owner: 'aokiJP', repo: 'bds-lab', panelUrl: 'https://aokijp.github.io/bds-lab/#runs', authUrl: 'https://bds-lab-auth.aoki.workers.dev/' });
-  eq(m, { name: 'bds-lab-aokiJP', url: 'https://aokijp.github.io/bds-lab/', hook_attributes: { url: 'https://aokijp.github.io/bds-lab/', active: false }, redirect_url: 'https://aokijp.github.io/bds-lab/#setup', callback_urls: ['https://bds-lab-auth.aoki.workers.dev/callback'], setup_url: 'https://aokijp.github.io/bds-lab/#setup',
+  eq(m, { name: 'bds-lab-aokiJP', url: 'https://aokijp.github.io/bds-lab/', hook_attributes: { url: 'https://aokijp.github.io/bds-lab/', active: false }, redirect_url: 'https://aokijp.github.io/bds-lab/', callback_urls: ['https://bds-lab-auth.aoki.workers.dev/callback'], setup_url: 'https://aokijp.github.io/bds-lab/',
     public: true, default_permissions: S.APP_PERMISSIONS, default_events: [], request_oauth_on_install: false });
+  // (GitHub refuses a #fragment in the ways back: 「redirect_url must be a valid URL」)
+  ok(![m.url, m.redirect_url, m.setup_url, m.hook_attributes.url, ...m.callback_urls].some((u) => u.includes('#')), 'no #fragment in any address of the manifest');
   for (const k of ['organization_administration', 'emails', 'checks']) ok(!(k in m.default_permissions), `no ${k}`);
   ok(m.default_permissions.administration === 'write', 'administration: the repositories it is put on (a lending fork, the lab), nothing of the account');
   eq(m.default_permissions.members, 'read', 'teams read, never written');

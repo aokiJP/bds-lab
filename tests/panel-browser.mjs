@@ -761,6 +761,11 @@ try {
   const k2 = await kept2(), shown = await text2();
   check(!p2.url().includes('code=') && !k2.includes('made-client-secret') && !k2.includes('BEGIN RSA') && !shown.includes('made-client-secret') && !shown.includes('BEGIN RSA'), 'the code out of the address; the App\'s secret and key neither kept nor shown', p2.url());
 
+  // back from installing the App (its setup_url, no #fragment: GitHub refuses one): 「準備」, the numbers out of the address
+  await p2.goto(`${URL2}?installation_id=5&setup_action=install`);
+  await p2.waitForTimeout(1500);
+  check(!p2.url().includes('setup_action') && p2.url().endsWith('#setup') && (await text2()).includes('準備と診断'), 'back from installing: 「準備」, the address clean', p2.url());
+
   // leaving: the token revoked on GitHub through the service, nothing of the account left
   await p2.locator('#who button', { hasText: '出る' }).click();
   await p2.waitForSelector('#oauth');
