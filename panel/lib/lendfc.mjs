@@ -24,6 +24,8 @@ export function availability(runsByHost = {}, opts = {}) {
     if (!rules) return { ...out, reason: '.lab-host.json がないか正しくありません: 貸し手に「貸し借り」で条件を保存してもらってください' };
     if (!Array.isArray(runs)) return { ...out, reason: `実行を読めませんでした（${runs?.message ?? '理由は分かりません'}）` };
     const tz = opts.tz ?? rules.timezone ?? 'UTC';
+    // (past the lender's last day, in the lender's own zone: nothing is free any more)
+    if (rules.until && M.dayOf(now, rules.timezone ?? 'UTC') > rules.until) return { ...out, tz, left: 0, reason: `貸す期限（${rules.until}）を過ぎました` };
     // (the minutes: this month in the lender's own zone, as 「貸し借り」 counts them)
     const used = M.monthMinutes(runs, M.monthOf(now, rules.timezone ?? 'UTC'), rules.timezone ?? 'UTC');
     const left = M.hostNow(rules, used, new Date(now)).remaining;
