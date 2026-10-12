@@ -73,7 +73,7 @@ export function setPref(prefs, login, kind, on, discord) {
 export function mentions(prefs, kind) {
   if (!KINDS.includes(kind)) return [];
   const out = [];
-  for (const [login, v] of Object.entries(prefs?.members ?? {})) if (v.discord && v.kinds.includes(kind) && DISCORD_ID.test(String(v.discord))) out.push(`<@${v.discord}>`);
+  for (const v of Object.values(prefs?.members ?? {})) if (v.discord && v.kinds.includes(kind) && DISCORD_ID.test(String(v.discord))) out.push(`<@${v.discord}>`);
   return [...new Set(out)];
 }
 
