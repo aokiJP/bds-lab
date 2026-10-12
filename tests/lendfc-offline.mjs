@@ -54,6 +54,14 @@ await t('availability: no rules, unreadable runs, an used-up month, and runs out
   eq(L.availability(undefined, {}), []);
 });
 
+await t('availability: past the lender\'s last day (in its own zone) nothing is offered', () => {
+  const r = rulesOf({ hours: '09:00-23:00', timezone: 'Asia/Tokyo', until: '2026-10-11' });
+  const [a] = L.availability({ x: [] }, { now: NOW, tz: 'UTC', rules: { x: r } }); // 12:00 on 10-12 in Tokyo
+  eq([a.best, a.left, a.free.length], [[], 0, 0]); ok(/貸す期限（2026-10-11）を過ぎました/.test(a.reason), a.reason);
+  const [b] = L.availability({ x: [] }, { now: NOW, tz: 'UTC', rules: { x: rulesOf({ hours: '09:00-23:00', timezone: 'Asia/Tokyo', until: '2026-10-12' }) } });
+  eq(b.reason, ''); eq(b.best.length, 3);
+});
+
 // ---- the card ----
 function fakeDom() {
   class N { get textContent() { return ''; } }
@@ -82,7 +90,8 @@ function fakeGitHub(byRepo) {
     if (bad) return send(422, { message: bad.message });
     const x = /^\/repos\/([^/]+\/[^/]+)\/actions\/workflows\/host\.yml\/runs\?/.exec(u);
     if (x && byRepo[x[1]] === 'boom') return send(500, { message: 'boom' });
-    if (x && byRepo[x[1]]) return send(200, { workflow_runs: byRepo[x[1]] });
+    const pg = Number(/[?&]page=(\d+)/.exec(u)?.[1] ?? 1);
+    if (x && byRepo[x[1]]) return send(200, { workflow_runs: byRepo[x[1]].slice((pg - 1) * 100, pg * 100) });
     return send(404, { message: `Not Found ${m} ${u}` });
   };
   return { seen, api: G.gh({ token: 'ghu_usertoken0123456789', base: 'http://fake', fetchImpl }) };
@@ -118,6 +127,21 @@ await t('the card: a lender whose runs cannot be read is named with the reason (
   ok(/まだ貸し手がありません/.test(none.textContent), none.textContent);
   const bad = U.lendForecastCard({ api: g.api, now: NOW, hosts: 5 }); await bad.ready;
   ok(bad.all((e) => e.attrs.role === 'alert').length === 1 && /もう一度読む/.test(bad.textContent), bad.textContent);
+});
+
+await t('the card: reads from the day before this month began when that is earlier, page after page; says so when it cannot read it all', async () => {
+  const U = await imp('panel/ui/lendfc.mjs');
+  const late = Date.parse('2026-10-30T03:00:00Z'); // four weeks back is 10-02: the month began before that
+  const many = Array.from({ length: 230 }, (_, i) => run(i + 1, '2026-10-05T10:00:00Z', 1));
+  const g = fakeGitHub({ 'o/a': many });
+  const el = U.lendForecastCard({ api: g.api, now: late, tz: 'UTC', hosts: [{ slug: 'o/a', rules: A }] });
+  await el.ready;
+  ok(g.seen.length === 3 && g.seen.every((s) => /created=%3E%3D2026-09-30/.test(s)), `3 pages from 09-30: ${g.seen}`);
+  ok(/今月あと \d+ 分/.test(el.textContent) && !/読めませんでした/.test(el.textContent), el.textContent);
+  const huge = Array.from({ length: 2100 }, (_, i) => run(i + 1, '2026-10-05T10:00:00Z', 0));
+  const h2 = fakeGitHub({ 'o/a': huge });
+  const e2 = U.lendForecastCard({ api: h2.api, now: late, tz: 'UTC', hosts: [{ slug: 'o/a', rules: A }] }); await e2.ready;
+  eq(h2.seen.length, 20); ok(/o\/a は実行が多く、2000 件までしか読めませんでした/.test(e2.textContent), e2.textContent);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
