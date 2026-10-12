@@ -38,7 +38,12 @@ const DETAIL = {
   // (a member added, changed or removed: their login and GitHub's role for them)
   user: (v) => /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(v),
   permission: (v) => /^(admin|maintain|push|triage|pull|none)$/.test(v),
+  // (a variable's value before it was changed — only of the lab's own settings that are no secret, BEFORE_NAMES: the 「↩️ 取り消す」
+  // of lib/undo.mjs puts it back; one line, short, never a token's look)
+  before: (v) => typeof v === 'string' && v.length <= 1000 && !/[\u0000-\u001f]/.test(v),
 };
+/** the variables whose value before may be kept (they are the lab's settings: which lenders, which runs are told — no secret) */
+export const BEFORE_NAMES = ['LAB_HOSTS', 'LAB_NOTIFY', 'LAB_NOTIFY_FILES'];
 export const DETAIL_KEYS = Object.keys(DETAIL);
 export const AUDIT_WORDS = { dispatch: 'ワークフローを始めた', hostrun: '貸し手の Actions で走らせた', 'secrets.put': '秘密を登録した', 'secrets.delete': '秘密を消した', variables: '変数を変えた', 'run.cancel': '実行を止めた', 'run.rerun': '失敗したジョブをやり直した', lend: '貸す条件を変えた', members: 'メンバーを変えた', policy: '役割（ポリシー）を変えた',
   'setup.app': 'App を作った', 'setup.pages': 'Pages を有効にした', 'setup.auth': 'サインインのサービスの URL を変えた', 'setup.deploy': 'サインインのサービスを置いた' };
@@ -53,6 +58,7 @@ export function entry({ actor, action, target = '', detail = {}, at } = {}) {
   const d = {};
   for (const [k, v] of Object.entries(detail ?? {})) {
     if (!Object.hasOwn(DETAIL, k) || v === undefined || v === null) continue;
+    if (k === 'before' && !BEFORE_NAMES.includes(String(detail.name ?? ''))) continue;
     const val = Array.isArray(v) ? v.map(String) : String(v);
     if (DETAIL[k](val) && ![].concat(val).some((x) => TOKENISH.test(x))) d[k] = val;
   }

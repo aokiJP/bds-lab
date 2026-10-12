@@ -3,6 +3,8 @@
 import { h, toast, act, link, failView } from './dom.mjs';
 import * as AU from '../lib/audit.mjs';
 import * as P from '../lib/policy.mjs';
+import * as UN from '../lib/undo.mjs';
+import { undoCard } from './undo.mjs';
 
 /** the 「監査」 tab. ctx: { api, lab: { slug, repo }, policy, role (policy.roleFor's answer; else the lab's GitHub role) }
  *  → a promise of the entries read */
@@ -14,13 +16,17 @@ export function auditTab(body, ctx) {
   const who = h('select', { 'aria-label': '誰' }), what = h('select', { 'aria-label': '何' }, h('option', { value: '' }, 'すべての操作'), Object.entries(AU.AUDIT_WORDS).map(([k, v]) => h('option', { value: k }, `${v}（${k}）`)));
   const since = h('input', { type: 'date', 'aria-label': 'この日から' }), count = h('span', { class: 'muted grow' }), list = h('div', {}, h('p', { class: 'muted' }, '読んでいます…'));
   let all = [];
+  // (a change that can be taken back — the policy, the timetable, who is told, a variable whose value before was kept — its card
+  // here, above the list; the undoing goes through the guard and is kept in the log too)
+  const undoSlot = h('div', { id: 'undoslot' });
+  const undo = (e) => { undoSlot.replaceChildren(undoCard({ api, lab, guarded: ctx.guarded, may: ctx.may, onUndone: () => { undoSlot.replaceChildren(); load(); } }, e)); undoSlot.scrollIntoView?.({ block: 'start' }); };
   const shown = () => AU.filter(all, { actor: who.value, action: what.value, since: since.value });
   const draw = () => {
     const xs = shown();
     count.replaceChildren(`${xs.length} 件（全部で ${all.length} 件）`);
     list.replaceChildren(xs.length ? h('table', {}, h('thead', {}, h('tr', {}, ['いつ', '誰', '何', 'どこ', '詳しく', ''].map((t) => h('th', {}, t)))),
       h('tbody', {}, [...xs].reverse().map((e) => h('tr', {}, h('td', {}, e.at.replace('T', ' ').slice(0, 19)), h('td', {}, e.actor), h('td', {}, AU.AUDIT_WORDS[e.action] ?? e.action), h('td', {}, e.target),
-        h('td', {}, Object.entries(e.detail).map(([k, v]) => `${k}=${[].concat(v).join(',')}`).join(' ')), h('td', {}, e.edited ? h('span', { class: 'warn' }, '✎ 編集あり ') : null, e.url ? link(e.url, 'GitHub') : null)))))
+        h('td', {}, Object.entries(e.detail).map(([k, v]) => `${k}=${[].concat(v).join(',')}`).join(' ')), h('td', {}, e.edited ? h('span', { class: 'warn' }, '✎ 編集あり ') : null, e.url ? link(e.url, 'GitHub') : null, ctx.guarded && UN.undoable(e).ok ? h('button', { onclick: () => undo(e) }, '↩️ 取り消す') : null)))))
       : h('p', { class: 'muted' }, all.length ? '当てはまるものがありません。「誰」「何」「この日から」をゆるめてください。' : mode === 'issue' ? 'まだ記録がありません。パネルで何か操作をすると、ここに出ます。' : 'まだ記録がありません。残すには、.github/bds-lab-panel.json に "audit": "issue" と書いて保存します（「メンバー」の「役割」の「監査ログ」でも選べます）。'));
   };
   for (const el of [who, what, since]) el.addEventListener('change', draw);
@@ -35,7 +41,7 @@ export function auditTab(body, ctx) {
   body.append(h('div', { class: 'card' }, h('h2', {}, `監査ログ（${lab.slug}）`),
     h('p', { class: 'muted' }, mode === 'issue' ? `パネルでの操作を、issue「${AU.AUDIT_TITLE}」（ラベル ${AU.AUDIT_LABEL}。ロックしてコメントはリポジトリの協力者だけ、${AU.ROTATE_AT} 件ごとに番号付きの次の issue へ）にコメントで残しています。書いた人と記録の人が違うものは数えず、後から編集されたものは「編集あり」と出ます。issue はリポジトリの管理者なら消せます: 消せない記録が要るなら GitHub Enterprise の監査ログを。`
       : '記録していません（公開リポジトリの既定。.github/bds-lab-panel.json の "audit": "issue" で残します）。前の記録があれば下に出ます。'),
-    h('div', { class: 'row' }, who, what, since, h('button', { onclick: () => load() }, '読み直す'), h('button', { class: 'primary', onclick: csv }, 'CSV で取り出す')), h('div', { class: 'row' }, count)), list);
+    h('div', { class: 'row' }, who, what, since, h('button', { onclick: () => load() }, '読み直す'), h('button', { class: 'primary', onclick: csv }, 'CSV で取り出す')), h('div', { class: 'row' }, count)), undoSlot, list);
   const load = () => act(async () => {
     try { all = (await AU.readAudit(api, lab.slug)).entries; } catch (e) { list.replaceChildren(failView(e, load), h('button', { onclick: () => load() }, '読み直す')); return undefined; }
     const keep = who.value;

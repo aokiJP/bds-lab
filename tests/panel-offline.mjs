@@ -267,7 +267,8 @@ await t('panel check: a changed file → the checks it needs (ESLint, the offlin
     'tests/rescue-offline.mjs', 'tests/shell-rescue-offline.mjs', 'tests/setup-rescue-offline.mjs', 'tests/units-rescue-offline.mjs', 'tests/misc-rescue-offline.mjs',
     'tests/ghrules-offline.mjs', 'tests/fakes-rules-offline.mjs', 'tests/connect-ui-offline.mjs',
     'tests/qr-offline.mjs', 'tests/playcard-offline.mjs', 'tests/relnotes-offline.mjs', 'tests/packdiff-offline.mjs', 'tests/revert-offline.mjs', 'tests/drafts-offline.mjs', 'tests/tutorial-offline.mjs', 'tests/progress-offline.mjs',
-    'tests/failsum-offline.mjs', 'tests/runissue-offline.mjs', 'tests/runcompare-offline.mjs', 'tests/testhist-offline.mjs', 'tests/secretwatch-offline.mjs', 'tests/connectdaily-offline.mjs', 'tests/weekly-offline.mjs', 'tests/notifyprefs-offline.mjs'];
+    'tests/failsum-offline.mjs', 'tests/runissue-offline.mjs', 'tests/runcompare-offline.mjs', 'tests/testhist-offline.mjs', 'tests/secretwatch-offline.mjs', 'tests/connectdaily-offline.mjs', 'tests/weekly-offline.mjs', 'tests/notifyprefs-offline.mjs',
+    'tests/minutes-offline.mjs', 'tests/lendfc-offline.mjs', 'tests/nlsched-offline.mjs', 'tests/wizard-offline.mjs', 'tests/a11y-offline.mjs', 'tests/inviteqr-offline.mjs', 'tests/undo-offline.mjs'];
   eq(PN.plan(['panel/lib/members.mjs']), { lint: ['panel/lib/members.mjs'], tests: ['tests/panel-offline.mjs', 'tests/governance-offline.mjs', ...LANES, 'tests/panel-browser.mjs'] });
   eq(PN.plan(['panel/ui/signin.mjs', 'auth/handler.mjs'], { quick: true }).tests, ['tests/panel-offline.mjs', 'tests/session-offline.mjs', 'tests/auth-offline.mjs', ...LANES]);
   eq(PN.plan(['common/unitci.mjs', 'common/schedule.mjs']), { lint: ['common/unitci.mjs', 'common/schedule.mjs'], tests: ['tests/units-offline.mjs', 'tests/schedule-offline.mjs'] }, 'the CLI side of 「アドオン」 and 「予約」');

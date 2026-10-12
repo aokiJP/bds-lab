@@ -7,6 +7,8 @@
 import { h, toast, link, failView } from './dom.mjs';
 import * as S from '../lib/schedule.mjs';
 import * as M from '../lib/model.mjs';
+import { nlScheduleCard } from './nlsched.mjs';
+import { localZone } from '../lib/stats.mjs';
 
 const HOSTRUN = 'hostrun.yml';
 const localTz = () => { try { const z = Intl.DateTimeFormat().resolvedOptions().timeZone; return S.validTimezone(z) ? z : 'UTC'; } catch { return 'UTC'; } };
@@ -221,6 +223,16 @@ export function scheduleTab(body, ctx) {
   };
 
   const sch = wfs.find((w) => w.file === S.SCHEDULER);
+  // (a sentence in Japanese → the job(s): written the tab's own way — the guard, the sha, hostrun's right and AI's fees asked —
+  // once for all of them, 平日's five too)
+  const addJobs = async (jobs) => {
+    if (st.raw.length + jobs.length > S.MAX_JOBS) { toast(`予約は ${S.MAX_JOBS} 件までです。使わない予約を「消す」と、足せます`, true); return undefined; }
+    if (jobs.some((j) => j.workflow === HOSTRUN) && !may('hostrun')) { toast(`貸し手の Actions で走らせる（${HOSTRUN}）予約は、あなたの役割には許されていません`, true); return undefined; }
+    const ai = jobs.find((j) => S.AI_WORKFLOWS.includes(j.workflow));
+    if (ai && !confirm(aiAsk(ai))) return undefined;
+    return save([...st.raw, ...jobs], { workflow: jobs[0].workflow, done: `予約を足しました（${jobs.length} 件）`, message: `足す ${jobs.map((j) => j.id).join(' ')}` });
+  };
+  body.append(nlScheduleCard({ workflows: ctx.workflows, tz: ctx.tz ?? localZone(), ids: () => st.raw.map((x) => x?.id), may, now: ctx.now }, { onJobs: addJobs }));
   body.append(h('div', { class: 'card', id: 'schedule' }, h('h2', {}, '⏰ 予約'),
     h('p', { class: 'muted' }, `決めた時刻に、ラボのワークフローを自動で始めます。予約は ${S.SCHEDULE_FILE} に書き、毎時の ${S.SCHEDULER} がラボの Actions で、既定の枝に始めます（パソコンも、だれかのトークンも要りません）。時刻は 1 時間ごとで、GitHub が混んでいると数分〜数十分遅れることがあります。`),
     may('dispatch') ? null : h('p', { class: 'muted' }, '見るだけです: 予約を変えるには、役割に「ワークフローを始める」が要ります。ラボの管理者に、「メンバー」の役割で足してもらってください。'),

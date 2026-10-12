@@ -41,7 +41,7 @@ export function nlScheduleCard(ctx = {}, opts = {}) {
         : !String(input.value).trim() ? 'いつ・何を、を書いてください'
           : cur.ask ? '上の ❓ に答えるように書き直してください' : busy ? '足しています…' : '';
     add.disabled = Boolean(no);
-    why.textContent = no;
+    why.replaceChildren(no);
     return cur;
   };
 
