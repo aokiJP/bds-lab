@@ -59,7 +59,14 @@ await t('the App-creation page: a manifest with a #fragment in redirect_url or n
 });
 
 await t('every test file with a fake GitHub passes its writes through fakeCheck, and panel-browser\'s App page through the appManifest rules', () => {
-  const files = ['setup', 'units', 'schedule', 'governance', 'panel', 'shell-rescue', 'units-rescue', 'stats', 'appci', 'misc-rescue'].map((n) => `tests/${n}-offline.mjs`).concat('tests/panel-browser.mjs');
+  // (found, not listed: every test whose fake answers GitHub's API — a new one is held to the same rule)
+  const files = fs.readdirSync(path.join(TOP, 'tests')).filter((f) => /\.mjs$/.test(f) && f !== 'fakes-rules-offline.mjs').map((f) => `tests/${f}`)
+    .filter((f) => { const s = fs.readFileSync(path.join(TOP, f), 'utf8'); return /(createServer|fetchImpl)/.test(s) && /\/repos\/[^'"`]*\/(issues|actions\/secrets|actions\/variables|contents|pages)/.test(s) && /method === '(POST|PUT|PATCH)'|m === '(POST|PUT|PATCH)'|'(POST|PUT|PATCH)'/.test(s); });
+  ok(files.includes('tests/setup-offline.mjs') && files.includes('tests/app-offline.mjs'), `the search finds the fake GitHubs: ${files}`);
+  // (and the ones it may not find by their look: listed too; ghrules-offline is the rules' own test)
+  for (const n of ['setup', 'units', 'schedule', 'governance', 'panel', 'shell-rescue', 'units-rescue', 'stats', 'appci', 'misc-rescue', 'app']) files.push(`tests/${n}-offline.mjs`);
+  files.push('tests/panel-browser.mjs');
+  files.splice(0, files.length, ...new Set(files.filter((f) => f !== 'tests/ghrules-offline.mjs')));
   for (const f of files) {
     const s = fs.readFileSync(path.join(TOP, f), 'utf8');
     ok(/import \{[^}]*fakeCheck[^}]*\} from '\.\.\/panel\/lib\/ghrules\.mjs'/.test(s) && /fakeCheck\(/.test(s), `${f}: no fakeCheck on its fake GitHub`);

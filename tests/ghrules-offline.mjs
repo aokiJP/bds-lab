@@ -155,5 +155,22 @@ await t('lib/gh.mjs: a sure problem is stopped before sending (422, rescue\'s ne
   eq(await api.createLabel('o/lab', { name: '' }), null);
 });
 
+await t('the sure rules never stop what GitHub takes: no name, a name in emoji, projects at admin, base64 with newlines, a commit message of spaces, a callback of its own scheme, a slug with _ (only the fakes are stricter); a manifest GitHub would refuse is said before the form goes, the install link falls back to the plain page', () => {
+  const m = S.appManifest({ owner: 'o', repo: 'bds-lab', panelUrl: PANEL, authUrl: AUTH });
+  eq(R.check('appManifest', { ...m, name: undefined }, { strictOnly: true }), [], 'no name: GitHub\'s page asks for one');
+  eq(R.check('appManifest', { ...m, name: '🧪'.repeat(34) }, { strictOnly: true }), [], '34 characters in emoji');
+  ok(R.check('appManifest', { ...m, name: '🧪'.repeat(35) }, { strictOnly: true }).length === 1, '35: too long');
+  eq(R.check('appManifest', { ...m, default_permissions: { ...m.default_permissions, repository_projects: 'admin' } }, { strictOnly: true }), [], 'projects at admin');
+  ok(R.check('appManifest', { ...m, default_permissions: { contents: 'admin' } }, { strictOnly: true }).length === 1, 'contents at admin: refused');
+  eq(R.check('appManifest', { ...m, callback_urls: ['myapp://cb'] }, { strictOnly: true }), [], 'a callback of its own scheme: not stopped in earnest');
+  ok(R.check('appManifest', { ...m, callback_urls: ['myapp://cb'] }).length === 1, '…the fakes still want http(s)');
+  eq(R.check('contents.put', { path: { file: 'a.txt' }, body: { message: '   ', content: 'aGVs\nbG8=' } }, { strictOnly: true }), [], 'newlines in base64, a message of spaces');
+  eq(R.check('secrets.put', { path: { name: 'A_B' }, body: { encrypted_value: 'aGVs\nbG8=', key_id: '1' } }, { strictOnly: true }), [], 'a sealed value with a newline');
+  eq(R.check('installLink', 'https://github.com/apps/my_app/installations/new', { strictOnly: true }), [], 'a slug with _: not stopped in earnest');
+  eq(S.manifestProblems(m), [], 'the panel\'s own manifest: nothing');
+  ok(S.manifestProblems({ ...m, redirect_url: `${PANEL}#setup` }).some((x) => /redirect_url/.test(x)), 'a #fragment: said');
+  eq(S.installLink('lab-o', 11, 22), 'https://github.com/apps/lab-o/installations/new/permissions?suggested_target_id=11&repository_ids[]=22');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

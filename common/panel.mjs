@@ -29,13 +29,14 @@ const RULES = [
   [/^common\/(panel-config|ghapp)\.mjs$/, ['tests/appci-offline.mjs', 'tests/panel-offline.mjs']],
   [/^common\/panel\.mjs$/, ['tests/panel-offline.mjs']],
   [/^app\/(app\.mjs|lib\/runfiles\.mjs)$/, ['tests/panel-offline.mjs']],
-  [/^panel\/(lib|ui)\/|^panel\/panel\.js$/, ['tests/rescue-offline.mjs', 'tests/shell-rescue-offline.mjs', 'tests/setup-rescue-offline.mjs', 'tests/units-rescue-offline.mjs', 'tests/misc-rescue-offline.mjs']],
-  [/^tests\/(panel-offline|panel-browser|governance-offline|setup-offline|session-offline|auth-offline|appci-offline|units-offline|schedule-offline|stats-offline|inbox-offline|rescue-offline|shell-rescue-offline|setup-rescue-offline|units-rescue-offline|misc-rescue-offline)\.mjs$/, (f) => [f]],
+  [/^panel\/(lib|ui)\/|^panel\/panel\.js$/, ['tests/rescue-offline.mjs', 'tests/shell-rescue-offline.mjs', 'tests/setup-rescue-offline.mjs', 'tests/units-rescue-offline.mjs', 'tests/misc-rescue-offline.mjs', 'tests/ghrules-offline.mjs', 'tests/fakes-rules-offline.mjs']],
+  [/^tests\/(panel-offline|panel-browser|governance-offline|setup-offline|session-offline|auth-offline|appci-offline|units-offline|schedule-offline|stats-offline|inbox-offline|rescue-offline|shell-rescue-offline|setup-rescue-offline|units-rescue-offline|misc-rescue-offline|ghrules-offline|fakes-rules-offline)\.mjs$/, (f) => [f]],
 ];
 export const ALL = ['tests/panel-offline.mjs', 'tests/governance-offline.mjs', 'tests/setup-offline.mjs', 'tests/session-offline.mjs', 'tests/auth-offline.mjs', 'tests/appci-offline.mjs',
   'tests/units-offline.mjs', 'tests/schedule-offline.mjs', 'tests/stats-offline.mjs', 'tests/inbox-offline.mjs',
-  'tests/rescue-offline.mjs', 'tests/shell-rescue-offline.mjs', 'tests/setup-rescue-offline.mjs', 'tests/units-rescue-offline.mjs', 'tests/misc-rescue-offline.mjs', BROWSER];
-const LINTABLE = /^(panel|auth)\/.*\.(m?js)$|^common\/(panel|panel-config|ghapp|hosts|schedule|unitci)\.mjs$|^tests\/(panel|governance|setup|session|auth|appci|host|units|schedule|stats|inbox|rescue|shell|misc)-[a-z-]+\.mjs$/;
+  'tests/rescue-offline.mjs', 'tests/shell-rescue-offline.mjs', 'tests/setup-rescue-offline.mjs', 'tests/units-rescue-offline.mjs', 'tests/misc-rescue-offline.mjs',
+  'tests/ghrules-offline.mjs', 'tests/fakes-rules-offline.mjs', BROWSER];
+const LINTABLE = /^(panel|auth)\/.*\.(m?js)$|^common\/(panel|panel-config|ghapp|hosts|schedule|unitci)\.mjs$|^tests\/(panel|governance|setup|session|auth|appci|host|units|schedule|stats|inbox|rescue|shell|misc|ghrules|fakes)-[a-z-]+\.mjs$/;
 
 /** the changed files → { lint: [files], tests: [files] } (pure); quick leaves the browser out */
 export function plan(files, { quick = false } = {}) {

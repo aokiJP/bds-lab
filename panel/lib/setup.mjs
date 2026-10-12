@@ -9,6 +9,7 @@
 // fix this person may not do fails with GitHub's own answer. No DOM and no node: (Node 22, browsers and Workers alike); its
 // screen is ui/setup.mjs.
 import { SLUG } from './model.mjs';
+import { check as ghCheck } from './ghrules.mjs';
 
 /** the App's permissions on the repositories it is put on: the least the panel and the workflows use (the keys are GitHub's
  *  names for an App's permissions — 要実測 on GitHub: this is the one place to change them). members: read is the
@@ -146,8 +147,13 @@ export function cfProblem(cf) {
 export function installLink(appSlug, ownerId, repoId) {
   const base = installUrl(appSlug);
   if (!base || !Number.isInteger(ownerId) || !Number.isInteger(repoId)) return base;
-  return `https://github.com/apps/${appSlug}/installations/new/permissions?suggested_target_id=${ownerId}&repository_ids[]=${repoId}`;
+  const chosen = `https://github.com/apps/${appSlug}/installations/new/permissions?suggested_target_id=${ownerId}&repository_ids[]=${repoId}`;
+  // (GitHub's sure rules for its page: one the page would not take → the plain page, never a broken one)
+  return ghCheck('installLink', chosen, { strictOnly: true }).length ? base : chosen;
 }
+/** what GitHub's App page would refuse in this manifest (its sure rules, lib/ghrules.mjs) → [words]: checked before the form
+ *  goes, so a wrong manifest is said here, not as GitHub's 「Invalid GitHub App configuration」 */
+export const manifestProblems = (m) => ghCheck('appManifest', m, { strictOnly: true });
 /** the next step of 「全自動で準備する」 from the checks (pure): what the panel does itself (run a row's fix), the two GitHub
  *  pages only a person can press (make the App, install it), done, or where it stops and why. installed: the person came
  *  back from installing (the token's sign-in cannot see the installation: taken as done) */

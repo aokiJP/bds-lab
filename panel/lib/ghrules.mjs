@@ -16,6 +16,7 @@ const filled = (x) => str(x) && x.trim() !== '';
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const size = (s) => new TextEncoder().encode(String(s ?? '')).length;
 const B64 = /^[A-Za-z0-9+/]*={0,2}$/;
+const b64ok = (x) => str(x) && B64.test(x.replace(/\s+/g, ''));   // (newlines and spaces between: GitHub's own base64 carries them)
 /** an absolute http(s) address (null: fine; else the problem in words) */
 const absUrl = (u, what) => { if (!str(u) || !u) return `${what} がありません`; let x; try { x = new URL(u); } catch { return `${what} が URL の形ではありません`; } return /^https?:$/.test(x.protocol) ? null : `${what} は http(s) の URL で`; };
 const noFrag = (u, what) => (str(u) && u.includes('#') ? `${what} に #（fragment）は入れられません` : null);
@@ -28,6 +29,8 @@ const nameRules = (prefix, what, get) => [
   { id: `${prefix}.name-github`, strict: true, source: '広く知られた決まり', test: (p) => (/^GITHUB_/i.test(String(get(p) ?? '')) ? `${what}の名前は GITHUB_ で始められません` : null) },
 ];
 const permValue = (v) => v === 'read' || v === 'write';
+// (repository_projects and organization_projects take admin too: GitHub's own levels for them)
+const permValueOf = (k, v) => permValue(v) || (v === 'admin' && /^(repository|organization)_projects$/.test(k));
 /** the permissions an App may ask for (GitHub's names): only the tests' fakes use the list — GitHub adds new ones */
 export const APP_PERMISSION_NAMES = Object.freeze(['actions', 'actions_variables', 'administration', 'attestations', 'checks', 'codespaces', 'contents', 'dependabot_secrets', 'deployments', 'environments', 'issues', 'merge_queues', 'metadata', 'packages', 'pages', 'pull_requests', 'repository_custom_properties', 'repository_hooks', 'repository_projects', 'secret_scanning_alerts', 'secrets', 'security_events', 'single_file', 'statuses', 'vulnerability_alerts', 'workflows',
   'members', 'organization_administration', 'organization_custom_roles', 'organization_hooks', 'organization_plan', 'organization_projects', 'organization_secrets', 'organization_self_hosted_runners', 'organization_user_blocking', 'organization_events', 'organization_announcement_banners', 'organization_copilot_seat_management', 'organization_personal_access_tokens', 'organization_personal_access_token_requests', 'organization_packages', 'organization_actions_variables', 'organization_custom_org_roles', 'organization_custom_properties', 'team_discussions',
@@ -41,7 +44,7 @@ export const RULES = Object.freeze({
   'secrets.put': [
     ...nameRules('secrets', '秘密', (p) => p?.path?.name),
     // 広く知られた決まり: 中身は repository の公開鍵で封じた base64 と、その鍵の key_id
-    { id: 'secrets.sealed', strict: true, source: '広く知られた決まり', test: (p) => (filled(p?.body?.encrypted_value) && B64.test(p.body.encrypted_value) && filled(String(p?.body?.key_id ?? '')) ? null : `秘密 ${p?.path?.name ?? ''} の中身が封じられていません（encrypted_value と key_id）`) },
+    { id: 'secrets.sealed', strict: true, source: '広く知られた決まり', test: (p) => (filled(p?.body?.encrypted_value) && b64ok(p.body.encrypted_value) && filled(String(p?.body?.key_id ?? '')) ? null : `秘密 ${p?.path?.name ?? ''} の中身が封じられていません（encrypted_value と key_id）`) },
     // 広く知られた決まり（どこで量るかは推測）: 秘密は 48 KB まで — 封じたもの（base64、封の 48 バイト込み）から元の大きさを見積もる
     { id: 'secrets.size', strict: false, source: '広く知られた決まり（量り方は推測）', test: (p) => { const n = Math.floor(String(p?.body?.encrypted_value ?? '').replace(/=+$/, '').length * 3 / 4) - 48; return n > KB48 ? `秘密 ${p?.path?.name ?? ''} が大きすぎます（約 ${n} バイト: 48 KB まで）` : null; } },
   ],
@@ -72,9 +75,9 @@ export const RULES = Object.freeze({
     // 広く知られた決まり: path は repository の中のファイル
     { id: 'contents.path', strict: true, source: '広く知られた決まり', test: (p) => { const f = String(p?.path?.file ?? ''); return !f || f.startsWith('/') || f.endsWith('/') || f.split('/').some((x) => x === '' || x === '.' || x === '..') ? `ファイルの場所が正しくありません（${JSON.stringify(f.slice(0, 120))}）` : null; } },
     // 広く知られた決まり: message（commit の文）は要る
-    { id: 'contents.message', strict: true, source: '広く知られた決まり', test: (p) => (filled(p?.body?.message) ? null : 'commit の文（message）が空です') },
+    { id: 'contents.message', strict: true, source: '広く知られた決まり', test: (p) => (str(p?.body?.message) && p.body.message.length > 0 ? null : 'commit の文（message）が空です') },
     // 広く知られた決まり: content は base64
-    { id: 'contents.content', strict: true, source: '広く知られた決まり', test: (p) => (str(p?.body?.content) && B64.test(p.body.content) ? null : 'ファイルの中身（content）は base64 で') },
+    { id: 'contents.content', strict: true, source: '広く知られた決まり', test: (p) => (b64ok(p?.body?.content) ? null : 'ファイルの中身（content）は base64 で') },
     // 広く知られた決まり: 置き換えるときの sha は文字列
     { id: 'contents.sha', strict: true, source: '広く知られた決まり', test: (p) => (p?.body?.sha === undefined || filled(p.body.sha) ? null : '置き換えるファイルの sha が正しくありません') },
   ],
@@ -151,7 +154,7 @@ export const RULES = Object.freeze({
   // ---- what the panel hands GitHub's pages (lib/setup.mjs) ----
   appManifest: [
     // 広く知られた決まり（GitHub の「Name is too long (maximum is 34 characters)」）: 名前は 1〜34 文字
-    { id: 'manifest.name', strict: true, source: '広く知られた決まり', test: (m) => (str(m?.name) && m.name.trim().length >= 1 && m.name.length <= 34 ? null : `App の名前は 1〜34 文字で（${String(m?.name ?? '').length} 文字）`) },
+    { id: 'manifest.name', strict: true, source: '広く知られた決まり', test: (m) => (m?.name === undefined || (str(m.name) && m.name.trim().length >= 1 && [...m.name].length <= 34) ? null : `App の名前は 1〜34 文字で（${[...String(m?.name ?? '')].length} 文字）`) },   // (no name: GitHub's page asks for one; counted in characters, not UTF-16 units)
     // 広く知られた決まり: url（App のページ）は要る、http(s) の絶対 URL
     { id: 'manifest.url', strict: true, source: '広く知られた決まり', test: (m) => absUrl(m?.url, 'url') },
     // 推測: url に #fragment
@@ -171,11 +174,13 @@ export const RULES = Object.freeze({
     // 推測: setup_url の #fragment（redirect_url と同じく断ると見る）
     { id: 'manifest.setup-fragment', strict: false, source: '推測', test: (m) => noFrag(m?.setup_url, 'setup_url') },
     // 広く知られた決まり: callback_urls は URL の並びで 10 個まで
-    { id: 'manifest.callbacks', strict: true, source: '広く知られた決まり', test: (m) => (m?.callback_urls === undefined ? null : !Array.isArray(m.callback_urls) ? 'callback_urls は URL の並びで' : m.callback_urls.length > 10 ? `callback_urls は 10 個まで（${m.callback_urls.length} 個）` : m.callback_urls.map((u, i) => absUrl(u, `callback_urls[${i}]`)).find(Boolean) ?? null) },
+    { id: 'manifest.callbacks', strict: true, source: '広く知られた決まり', test: (m) => (m?.callback_urls === undefined ? null : !Array.isArray(m.callback_urls) ? 'callback_urls は URL の並びで' : m.callback_urls.length > 10 ? `callback_urls は 10 個まで（${m.callback_urls.length} 個）` : m.callback_urls.map((u, i) => (urlOf(u) ? null : `callback_urls[${i}] が URL の形ではありません`)).find(Boolean) ?? null) },
+    // 推測: callback_urls は http(s)（独自スキームを GitHub が受けるかは要実測: 本番では止めない）
+    { id: 'manifest.callbacks-http', strict: false, source: '推測', test: (m) => (Array.isArray(m?.callback_urls) ? m.callback_urls.map((u, i) => absUrl(u, `callback_urls[${i}]`)).find(Boolean) ?? null : null) },
     // 広く知られた決まり（OAuth の戻り先に #fragment は使えない）
     { id: 'manifest.callback-fragment', strict: true, source: '広く知られた決まり', test: (m) => (Array.isArray(m?.callback_urls) ? m.callback_urls.map((u, i) => noFrag(u, `callback_urls[${i}]`)).find(Boolean) ?? null : null) },
     // 広く知られた決まり: 権限の値は read か write
-    { id: 'manifest.permission-values', strict: true, source: '広く知られた決まり', test: (m) => { if (m?.default_permissions === undefined) return null; if (!isObj(m.default_permissions)) return 'default_permissions は 名前 → read / write の表で'; const bad = Object.entries(m.default_permissions).filter(([, v]) => !permValue(v)).map(([k]) => k); return bad.length ? `権限の値は read か write（${bad.join('・')}）` : null; } },
+    { id: 'manifest.permission-values', strict: true, source: '広く知られた決まり', test: (m) => { if (m?.default_permissions === undefined) return null; if (!isObj(m.default_permissions)) return 'default_permissions は 名前 → read / write の表で'; const bad = Object.entries(m.default_permissions).filter(([k, v]) => !permValueOf(k, v)).map(([k]) => k); return bad.length ? `権限の値は read か write（${bad.join('・')}）` : null; } },
     // 広く知られた決まり（一覧は GitHub が増やす: 本番では止めない）: 権限の名前
     { id: 'manifest.permission-names', strict: false, source: '広く知られた決まり', test: (m) => { const bad = Object.keys(isObj(m?.default_permissions) ? m.default_permissions : {}).filter((k) => !APP_PERMISSION_NAMES.includes(k)); return bad.length ? `GitHub に無い権限の名前です（${bad.join('・')}）` : null; } },
     // 広く知られた決まり: public は真偽
@@ -199,7 +204,9 @@ export const RULES = Object.freeze({
   ],
   installLink: [
     // 広く知られた決まり: App を入れる GitHub の画面（/apps/<slug>/installations/new、選んだ先つきは /permissions）
-    { id: 'install.page', strict: true, source: '広く知られた決まり', test: (s) => { const u = urlOf(s); return u && u.origin === 'https://github.com' && /^\/apps\/[a-z0-9][a-z0-9-]{0,99}\/installations\/new(\/permissions)?$/.test(u.pathname) && !u.hash ? null : 'App を入れる画面の URL ではありません'; } },
+    { id: 'install.page', strict: true, source: '広く知られた決まり', test: (s) => { const u = urlOf(s); return u && u.origin === 'https://github.com' && /^\/apps\/[^/]+\/installations\/new(\/permissions)?$/.test(u.pathname) && !u.hash ? null : 'App を入れる画面の URL ではありません'; } },
+    // 推測: App の slug の文字（英小文字・数字・-）: 本番では止めない
+    { id: 'install.slug', strict: false, source: '推測', test: (s) => { const u = urlOf(s); return !u || /^\/apps\/[a-z0-9][a-z0-9-]{0,99}\//.test(u.pathname) ? null : 'App の slug は英小文字・数字・-'; } },
     // 推測: 選んだ先（suggested_target_id）と repository_ids[] は数で、/permissions の画面と一緒に
     { id: 'install.ids', strict: false, source: '推測', test: (s) => { const u = urlOf(s); if (!u) return null; const t = u.searchParams.get('suggested_target_id'), r = u.searchParams.getAll('repository_ids[]'); if (t === null && !r.length) return null; return /\/permissions$/.test(u.pathname) && /^\d+$/.test(t ?? '') && r.length && r.every((x) => /^\d+$/.test(x)) ? null : 'suggested_target_id と repository_ids[] は数で、/installations/new/permissions に'; } },
   ],
