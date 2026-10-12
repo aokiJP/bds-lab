@@ -12,7 +12,8 @@ const API = 'https://api.github.com';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const iso = (s) => { const d = new Date(s); return Number.isNaN(d.getTime()) ? null : d.toISOString(); };
 /** a run's conclusion → 'ok' | 'bad' | 'run' | 'none' (pure) */
-export const verdict = (r) => !r ? 'none' : r.status && r.status !== 'completed' ? 'run' : r.conclusion === 'success' ? 'ok' : r.conclusion ? 'bad' : 'run';
+export const verdict = (r) => !r ? 'none' : r.status && r.status !== 'completed' ? 'run' : r.conclusion === 'success' ? 'ok' : ['failure', 'timed_out', 'startup_failure'].includes(r.conclusion) ? 'bad' : r.conclusion ? 'skip' : 'run';
+const pick = (rs) => rs.find((r) => verdict(r) !== 'skip'); // cancelled / skipped say nothing: look at the one before
 const brief = (r) => r ? { state: verdict(r), at: iso(r.updated_at ?? r.created_at) } : { state: 'none', at: null };
 
 /** GitHub → the page's data (the only part that asks). fetchImpl: fetch; env: GITHUB_TOKEN, GITHUB_REPOSITORY.
@@ -25,18 +26,28 @@ export async function collect(fetchImpl, env = {}, now = new Date()) {
   const soft = async (fn, def) => { try { return await fn(); } catch { return def; } };
   const meta = await get('');
   if (meta.private !== false) return { private: true };
-  const runs = (wf, extra = '') => soft(async () => (await get(`/actions/workflows/${wf}/runs?per_page=30&status=completed${extra}`)).workflow_runs ?? [], []);
-  const verifyRuns = await runs('verify.yml');
-  const unitRuns = await runs('unit.yml');
+  const runs = (wf, extra = '', per = 30, pages = 1) => soft(async () => {
+    const all = [];
+    for (let n = 1; n <= pages; n++) {
+      const got = (await get(`/actions/workflows/${wf}/runs?per_page=${per}&page=${n}&status=completed${extra}`)).workflow_runs ?? [];
+      all.push(...got);
+      if (got.length < per) break;
+    }
+    return all;
+  }, []);
+  const branch = /^[\w./-]+$/.test(meta.default_branch ?? '') ? `&branch=${encodeURIComponent(meta.default_branch)}` : '';
+  const mine = (r) => ['push', 'schedule'].includes(r.event); // not a pull request's run
+  const verifyRuns = (await runs('verify.yml', branch)).filter(mine);
+  const unitRuns = (await runs('unit.yml', '', 100, 3)).filter((r) => /^unit test /.test(r.display_title ?? ''));
   const units = {};
   for (const r of unitRuns) { // newest first: the first of each unit is its last
     const m = /^unit\s+test\s+([\w.-]+)/.exec(r.display_title ?? ''); // (a run's title: display_title, not the workflow's name)
-    if (m && !units[m[1]]) units[m[1]] = brief(r);
+    if (m && !units[m[1]] && verdict(r) !== 'skip') units[m[1]] = brief(r);
   }
   const rel = await soft(() => get('/releases/latest'), null);
   const connectRuns = await runs('connect.yml');
   const connect = await soft(async () => {
-    const run = connectRuns[0];
+    const run = pick(connectRuns);
     if (!run) return { state: 'none', at: null, services: {} };
     const jobs = (await get(`/actions/runs/${run.id}/jobs`)).jobs ?? [];
     let services = {};
@@ -51,7 +62,7 @@ export async function collect(fetchImpl, env = {}, now = new Date()) {
   }, { state: 'none', at: null, services: {} });
   return {
     private: false, repo, at: now.toISOString(),
-    verify: brief(verifyRuns[0]),
+    verify: brief(pick(verifyRuns)),
     units: Object.fromEntries(Object.entries(units).sort(([a], [b]) => a.localeCompare(b))),
     release: rel && rel.tag_name ? { tag: String(rel.tag_name), at: iso(rel.published_at ?? rel.created_at) } : null,
     connect,
@@ -60,7 +71,7 @@ export async function collect(fetchImpl, env = {}, now = new Date()) {
 }
 
 const MARK = { ok: ['✅', 'うまくいっています'], bad: ['❌', 'うまくいっていません'], run: ['⏳', '動いています'], none: ['❔', 'まだ結果がありません'] };
-const when = (at) => at ? `<time datetime="${esc(at)}">${esc(at.replace('T', ' ').slice(0, 16))} UTC</time>` : '';
+const when = (at) => at ? `<time datetime="${esc(at)}">${esc(at.replace('T', ' ').slice(0, 16))} UTC（日本時間 ${esc(new Date(new Date(at).getTime() + 9 * 36e5).toISOString().replace('T', ' ').slice(0, 16))}）</time>` : '';
 const row = (name, st) => `<tr><th scope="row">${esc(name)}</th><td>${MARK[st.state][0]} ${MARK[st.state][1]}</td><td>${when(st.at)}</td></tr>`;
 
 /** the data → one HTML page (pure). Every value is escaped; nothing is loaded from outside */
