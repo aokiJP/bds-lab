@@ -299,7 +299,7 @@ export async function checks(ctx) {
     else if (!secrets) c('deploy', label, null, noRight('秘密の名前を見られません（Secrets: Read and write が要ります）'), fixMore);
     else if (!appReady) c('deploy', label, false, 'まず上の「GitHub App」の行で App を作ります（サービスは App の client ID と秘密で動きます）。作ってあるのに足りないなら、秘密に APP_CLIENT_SECRET・AUTH_STATE_SECRET を、変数に APP_CLIENT_ID を入れます', appSlug ? secretsPage : null, appSlug ? null : toApp);
     else if (cfReady) c('deploy', label, true, '', { label: 'Cloudflare に置く（auth-deploy.yml）', needs: deployNeeds(false), run: deploy(null) });
-    else c('deploy', label, false, 'Cloudflare の API トークンとアカウント ID を入れると、ここで封じて登録し、auth-deploy.yml で置き、その URL を LAB_AUTH_URL に入れて pages.yml でページに渡します', cfFix);
+    else c('deploy', label, false, 'なくても使えます（そのときは今と同じトークンで入ります）。Cloudflare の API トークンとアカウント ID を入れると、ここで封じて登録し、auth-deploy.yml で置き、その URL を LAB_AUTH_URL に入れて pages.yml でページに渡します', cfFix);
   }
 
   // ---- the workflows: the App's own token instead of a person's (hostrun, secrets) ----
