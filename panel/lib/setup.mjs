@@ -30,14 +30,14 @@ export function cleanAuthUrl(u) {
 const strip = (u) => String(u ?? '').replace(/#.*$/, '');
 
 /** the App's manifest (pure): GitHub makes the App from it — public, so a lender can put it on their own account; no
- *  webhook, no events; its user sign-in comes back to the sign-in service (callback_urls: none yet when there is no service:
+ *  webhook (GitHub still wants its url: the panel's, never called — active: false), no events; its user sign-in comes back to the sign-in service (callback_urls: none yet when there is no service:
  *  set in the App's settings later, the check 'callback' says so) */
 export function appManifest({ owner, repo, panelUrl, authUrl, name } = {}) {
   const url = strip(panelUrl), auth = cleanAuthUrl(authUrl);
   // (GitHub's names for an App: unique on GitHub, 34 characters at most — the lab and its owner, letters, digits and -)
   const named = String(name ?? `${repo || 'bds-lab'}-${owner ?? ''}`).replace(/[^A-Za-z0-9 _.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 34);
   return {
-    name: named, url, hook_attributes: { active: false }, redirect_url: `${url}#setup`, callback_urls: auth ? [`${auth}/callback`] : [], setup_url: `${url}#setup`,
+    name: named, url, hook_attributes: { url, active: false }, redirect_url: `${url}#setup`, callback_urls: auth ? [`${auth}/callback`] : [], setup_url: `${url}#setup`,
     public: true, default_permissions: { ...APP_PERMISSIONS }, default_events: [], request_oauth_on_install: false,
   };
 }

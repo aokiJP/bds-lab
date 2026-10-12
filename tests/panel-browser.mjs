@@ -750,7 +750,7 @@ try {
   await p2.locator('[data-check="app"] button[type=submit]').click();
   await p2.waitForURL(/github\.com/);
   const mf = G.corp.manifests[0];
-  check(mf && mf.path === '/organizations/acme/settings/apps/new' && mf.manifest.callback_urls?.[0] === `${AUTH}/callback` && mf.manifest.public === true && mf.manifest.hook_attributes?.active === false && mf.manifest.default_permissions?.secrets === 'write' && mf.state, 'the App\'s form posted to GitHub with its manifest (the organization\'s, its callback the service, no webhook)', JSON.stringify(mf));
+  check(mf && mf.path === '/organizations/acme/settings/apps/new' && mf.manifest.callback_urls?.[0] === `${AUTH}/callback` && mf.manifest.public === true && mf.manifest.hook_attributes?.active === false && mf.manifest.hook_attributes?.url === mf.manifest.url && /^https?:\/\/./.test(mf.manifest.url) && mf.manifest.default_permissions?.secrets === 'write' && mf.state, 'the App\'s form posted to GitHub with its manifest (the organization\'s, its callback the service, no webhook)', JSON.stringify(mf));
   // (as GitHub sends the person back after they press its button)
   await p2.goto(`${URL2}?code=mcode&state=${encodeURIComponent(mf.state)}`);
   await p2.waitForTimeout(2500);
