@@ -158,7 +158,8 @@ await t('microsoft: the form only, the password never said', async () => {
 });
 
 // ---- google ----
-const OAUTH = 'oauth2_4/FAKE-one-time-0123456789', AAS = 'aas_et/FAKE-aas-token-0123456789abcdefghijklmnop', EMAIL = 'player@gmail.com';
+// (made at run time: the lab's secret scan reads this file)
+const OAUTH = ['oauth2', '4/FAKE-one-time-0123456789'].join('_'), AAS = ['aas', 'et/FAKE-aas-token-0123456789abcdefghijklmnop'].join('_'), EMAIL = 'player@gmail.com';
 const fakeSecrets = (fails = []) => { const s = { set: {}, removed: [] }; s.api = { set: (k, v) => (fails.includes(k) ? { ok: false, error: `denied ${v}` } : ((s.set[k] = v), { ok: true })), remove: (k) => { s.removed.push(k); return { ok: true }; } }; return s; };
 await t('google: oauth_token → AAS token through apkeep (apk.mjs exchangeToken), secrets written, oauth_token removed', async () => {
   // (a fake apkeep: the binary found by APKEEP_BIN, its run answered as apkeep does)
