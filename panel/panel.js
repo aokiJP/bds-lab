@@ -39,6 +39,7 @@ import { healthCard, reportButton } from './ui/health.mjs';
 import * as IB from './lib/inbox.mjs';
 import { bellButton, toggleInbox } from './ui/inbox.mjs';
 import { bulkCard } from './ui/bulk.mjs';
+import { progressCard } from './ui/progress.mjs';
 
 // ---- the browser's storage (one that refuses it — a private window may — still works for the tab) ----
 const storage = (name) => { try { const s = window[name]; s.setItem('bdslab.probe', '1'); s.removeItem('bdslab.probe'); return s; } catch { return memoryStorage(); } };
@@ -370,6 +371,9 @@ const TABS = [['overview', '概要'], ['runs', '進み具合'], ['start', '実�
   ['live', '端末'], ['hosts', '貸し借り'], ['members', 'メンバー'], ['setup', '準備'], ['connect', '連携'], ['audit', '監査'], ['settings', '設定']];
 function render() {
   clearInterval(st.timer);
+  // (an AI run's progress cards read GitHub on their own: stopped when the page is drawn anew)
+  for (const c of st.progress?.values() ?? []) c.stop();
+  st.progress = new Map();
   renderWho();
   const tabs = TABS.filter(([k]) => (k === 'audit' ? may('audit.read') : canLab() || ['overview', 'hosts', 'settings'].includes(k)));
   if (!tabs.some(([k]) => k === st.tab)) st.tab = tabs[0][0];
@@ -398,11 +402,11 @@ function audit(body) { auditTab(body, { api: st.api, lab: st.lab, policy: st.pol
 /** a workflow of the lab started on its default branch — GitHub's call alone: the tab that calls it guards it, once */
 const dispatchRaw = (wf, inputs) => st.api.dispatch(st.lab.slug, wf, st.lab.repo.default_branch, inputs);
 function units(body) {
-  unitsTab(body, { api: st.api, lab: st.lab, gate, guarded, go, dispatch: dispatchRaw,
+  unitsTab(body, { api: st.api, lab: st.lab, me: st.me, policy: st.policy, role: st.role, record, gate, guarded, go, dispatch: dispatchRaw,
     // (「AI で変える」 and 「AI で作る」: the 「実行」 tab's idea card, the unit to change filled in)
     aiMake: hasWf('ai-make.yml') ? ({ unit } = {}) => { st.makeUnit = unit ?? ''; go('start'); setTimeout(() => { $('make')?.scrollIntoView({ block: 'start' }); $('idea')?.focus(); }, 50); } : null });
 }
-function releases(body) { releasesTab(body, { api: st.api, lab: st.lab, gate, guarded, dispatch: dispatchRaw, caps: capsOf() }); }
+function releases(body) { releasesTab(body, { api: st.api, lab: st.lab, me: st.me, policy: st.policy, role: st.role, record, gate, guarded, go, dispatch: dispatchRaw, caps: capsOf() }); }
 // ---- 予約 (ui/schedule.mjs): the lab's timetable, .github/bds-lab-schedule.json — what is due started each hour by schedule.yml ----
 function schedule(body) {
   scheduleTab(body, { api: st.api, lab: st.lab, workflows: st.lab.workflows ?? [], may, gate, guarded,
@@ -759,7 +763,13 @@ async function detail(slug, r, box, show) {
   await fill(box, async () => {
     const [jobs, arts] = await Promise.all([st.api.jobs(slug, r.id), r.status === 'completed' ? st.api.artifacts(slug, { run: r.id }).catch(() => null /* said below, with GitHub's page */) : []]);
     const p = M.progress(r, jobs);
-    const parts = [h('div', { class: 'bar' + (p.state === 'failure' ? ' bad' : '') }, h('i', { style: { width: `${p.pct}%` } })), h('div', { class: 'muted' }, `${p.done}/${p.total} 段 · ${M.fmtMs(p.ms)}${p.now ? ` · いま: ${p.now}` : ''}`)];
+    // (an AI run of the lab: its five stages, what is left and the way to the release — one card a run, read on its own)
+    let pc = null;
+    if (slug === st.lab?.slug && String(r.path ?? '').endsWith('/ai-make.yml')) {
+      pc = st.progress?.get(r.id) ?? progressCard({ api: st.api, lab: st.lab, me: st.me, policy: st.policy, role: st.role, guarded, record }, r);
+      st.progress?.set(r.id, pc);
+    }
+    const parts = [pc, h('div', { class: 'bar' + (p.state === 'failure' ? ' bad' : '') }, h('i', { style: { width: `${p.pct}%` } })), h('div', { class: 'muted' }, `${p.done}/${p.total} 段 · ${M.fmtMs(p.ms)}${p.now ? ` · いま: ${p.now}` : ''}`)];
     for (const j of p.jobs) parts.push(h('div', {}, `${M.STATE_ICON[j.state] ?? '•'} ${j.name} — ${j.done}/${j.total}${j.now ? `（${j.now}）` : ''}`));
     // (a failed job's own words: its check run's annotations)
     const said = [];
@@ -777,7 +787,7 @@ async function detail(slug, r, box, show) {
     }
     if (arts === null) parts.push(h('p', { class: 'muted' }, '成果物を読めませんでした: ', link(`${r.html_url}#artifacts`, 'GitHub で見る')));
     else if (arts.length) parts.push(artifactList(slug, r.id, arts, r.html_url));
-    box.replaceChildren(...parts);
+    box.replaceChildren(...parts.filter(Boolean));
   });
 }
 /** a run's artifacts: names and sizes, GitHub's page to take them, and (the lab's runs) sent to Discord by notify */

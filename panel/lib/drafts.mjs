@@ -13,7 +13,7 @@ export function draftKey({ account, slug, unit, path } = {}) {
   return p.some((x) => !x) ? null : PREFIX + p.map(encodeURIComponent).join('|');
 }
 /** a path that holds secrets by its name (pure): .env, keys, tokens, credentials */
-export const isSecretPath = (path) => /(^|\/)(\.env(\..*)?|.*\.(pem|key|p12|pfx|keystore)|id_(rsa|ed25519|ecdsa)|.*(secret|token|credential|password)s?[^/]*|\.npmrc|\.netrc)$/i.test(String(path ?? ''));
+export const isSecretPath = (path) => /(^|\/)(\.env(\..*)?|.*\.(pem|key|p12|pfx|keystore)|id_(rsa|ed25519|ecdsa)|\.npmrc|\.netrc|([^/]*[_.-])?(secrets?|credentials?|tokens?|passwords?)(\.(json|txt|ya?ml|ini|cfg|toml|env))?)$/i.test(String(path ?? ''));
 /** a text that holds a secret by its look (GitHub / Discord / Anthropic / private-key shapes) */
 export const looksSecret = (text) => /(gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/.test(String(text ?? ''));
 const bytes = (s) => new TextEncoder().encode(String(s)).length;

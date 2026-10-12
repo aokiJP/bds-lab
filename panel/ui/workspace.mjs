@@ -7,6 +7,7 @@ import * as W from '../lib/workspace.mjs';
 import * as U from '../lib/units.mjs';
 import { fmtBytes } from '../lib/model.mjs';
 import * as D from '../lib/drafts.mjs';
+import { revertCard } from './revert.mjs';
 
 /** a failure drawn in place (a list that could not be read, a file that could not be opened): GitHub's words as they came
  *  and, under them, what to do — lib/rescue.mjs's next step, with its GitHub page as a link or 「もう一度」 as a button
@@ -127,6 +128,11 @@ export function editorView(ctx, unit) {
   pick.value = files[0];
   const text = h('textarea', { id: 'edit-text', 'aria-label': 'ファイルの中身', spellcheck: 'false', rows: 22 });
   const note = h('p', { class: 'muted' }), state = h('div', { class: 'muted', id: 'edit-state' }), gh = h('span', {});
+  // (the file's history and one click back to a version of it: ui/revert.mjs — read when opened, for the file chosen)
+  const back = h('details', { id: 'edit-revert' });
+  let backFor = null;
+  const backOf = () => { backFor = null; back.open = false; back.replaceChildren(h('summary', {}, `↩️ ${pick.value} を前の版に戻す`)); };
+  back.addEventListener('toggle', () => { if (back.open && backFor !== pick.value) { backFor = pick.value; back.append(revertCard(ctx, { path: `${u.dir}/${pick.value}`, branch: branch(ctx), onRestored: () => { U.forgetUnits(ctx.api, slug); load(); } })); } });
   // (the file as it was read: its sha, and its text — null: nothing read, nothing to save over)
   let sha = null, loaded = null;
   // (the draft: what was typed and not yet saved, kept in this browser — ctx.draftStore / draftWait for a test)
@@ -145,6 +151,9 @@ export function editorView(ctx, unit) {
         h('button', { onclick: () => { text.value = d.text; box.replaceChildren(h('span', { class: 'muted' }, '下書きを戻しました（保存するまで GitHub は変わりません）')); } }, '戻す'),
         h('button', { onclick: () => { saver.cancel(); D.dropDraft(store$, keyOf(f)); box.replaceChildren(h('span', { class: 'muted' }, '下書きを捨てました')); } }, '捨てる')));
   };
+  // (the tab closed or put away within the second a draft waits: what was typed is kept now)
+  globalThis.addEventListener?.('pagehide', () => saver.flush());
+  globalThis.document?.addEventListener?.('visibilitychange', () => { if (globalThis.document.visibilityState === 'hidden') saver.flush(); });
   text.addEventListener('input', () => {
     const f = pick.value;
     if (loaded === null) return;
@@ -154,6 +163,7 @@ export function editorView(ctx, unit) {
   const load = async () => {
     const f = pick.value;
     saver.flush();   // (what was typed in the file just left is kept before this one is read)
+    backOf();
     box.replaceChildren();
     sha = null; loaded = null; text.value = ''; text.disabled = true;
     note.replaceChildren(W.EDIT_NOTES[f] ?? (f === u.entry || f === 'bp/scripts/main.js' ? W.EDIT_NOTES.script : ''));
@@ -193,5 +203,5 @@ export function editorView(ctx, unit) {
     h('h2', {}, `✏️ ファイルを直す: ${u.title}`, h('span', { class: 'chip' }, u.dir)),
     h('div', { class: 'row' }, pick, h('button', { onclick: load }, '読み直す'), gh), note, box, text, state,
     h('div', { class: 'row' }, h('button', { class: 'primary', ...g, onclick: () => store(false) }, '保存'),
-      h('button', { ...(ctx.runUnit ? g : startAttrs(ctx)), onclick: () => store(true) }, '保存して試験'), close));
+      h('button', { ...(ctx.runUnit ? g : startAttrs(ctx)), onclick: () => store(true) }, '保存して試験'), close), back);
 }

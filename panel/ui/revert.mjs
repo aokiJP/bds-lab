@@ -24,6 +24,8 @@ export function revertCard(ctx, { path, branch, onRestored } = {}) {
     let old, now;
     try { [old, now] = await Promise.all([R.contentAt(api, lab.slug, path, c.sha), api.file(lab.slug, path, branch || undefined)]); } catch (e) { fill(detail, failView(e, () => pick(c, i))); return; }
     if (old === null) { fill(detail, h('p', { class: 'bad' }, 'この版にはこのファイルがありません。ほかの版を選んでください。')); return; }
+    // (GitHub gives no text for a file over 1 MB: an empty version over a file with text is not written — it would empty it)
+    if (old === '' && (now?.text ?? '') !== '') { fill(detail, h('p', { class: 'bad' }, 'この版の中身を読めませんでした（空か、大きすぎます）: 空で上書きしないよう、ここからは戻せません。GitHub の履歴から戻してください。')); return; }
     const d = R.lineDiff(now?.text ?? '', old), same = now?.text === old;
     const why = same ? '今と同じ中身です（戻す必要はありません）' : null;
     const go = h('button', {
@@ -31,9 +33,10 @@ export function revertCard(ctx, { path, branch, onRestored } = {}) {
       onclick: async () => {
         const run = () => R.restore(api, lab.slug, path, c.sha, branch);
         const done = `${path} を ${R.shortSha(c.sha)} の版に戻しました（新しい commit として）`;
-        const r = ctx.guarded ? await ctx.guarded('contents', { file: path, sha: R.shortSha(c.sha) }, run, done) : await act(run, done);
+        const r = ctx.guarded ? await ctx.guarded('dispatch', { file: path, sha: R.shortSha(c.sha) }, run, done) : await act(run, done);
         if (r === undefined) return;
-        ctx.record?.('revert', { file: path, sha: R.shortSha(c.sha), changed: r.changed });
+        // (guarded keeps it in the audit log already: once)
+        if (!ctx.guarded) ctx.record?.('revert', { file: path, sha: R.shortSha(c.sha), changed: r.changed });
         fill(detail, h('p', {}, r.changed ? `戻しました。次は「試す」で確かめましょう。` : '今と同じ中身だったので、何も変えていません。'));
         onRestored?.(r); load();
       },

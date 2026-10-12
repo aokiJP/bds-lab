@@ -212,8 +212,15 @@ await t('a failure is shown in place with its words (failView), the button usabl
   await go.click();
   ok(alert() && /見つからない/.test(alert().textContent), alert()?.textContent);
   const no = UI.packdiffCard({ api: { call: async () => null }, lab: { slug: 'o/lab' } }, { releases: RELS });
-  await button(no, /比べる/).click();
-  ok(/手元のファイル/.test(no.all((e) => e.attrs.role === 'alert')[0]?.textContent ?? ''), no.textContent);
+  // (an api that cannot read a release's file — the panel's own: GitHub sends it from another host — no release to choose; each
+  // pack a link to take it from GitHub, and 比べる says to choose the two downloaded files)
+  eq(selects(no).length, 0, 'no release to choose where it cannot be read');
+  const takes = no.all((e) => e.tagName === 'A').map((e) => e.attrs.href);
+  ok(takes.length === 3 && takes.every((u) => /^https:\/\/github\.com\//.test(u)), JSON.stringify(takes));
+  const nb = button(no, /比べる/);
+  ok(nb.disabled && /手元のファイル|ダウンロードした/.test(nb.attrs.title ?? ''), JSON.stringify(nb.attrs));
+  await nb.click();
+  ok(!no.all((e) => e.attrs.role === 'alert').length, 'nothing asked of GitHub');
   const same = fakeApi({ 20: addon(packV1()), 30: addon(packV1()) });
   const s = UI.packdiffCard({ api: same.api, lab: { slug: 'o/lab' } }, { releases: RELS });
   await button(s, /比べる/).click();

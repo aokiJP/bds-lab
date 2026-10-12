@@ -34,6 +34,7 @@ await t('save / load / drop / list; 1 MB at most; 30 days; secrets and secret-li
   ok(D.saveDraft(s, K, { text: 'a'.repeat(1_000_000), path: 'src/main.ts' }).ok, 'exactly 1 MB');
   for (const p of ['.env', 'bds/.env.local', 'x/server.pem', 'secrets.json', 'api_token.txt']) ok(!D.saveDraft(s, K, { text: 'a', path: p }).ok && D.isSecretPath(p), p);
   ok(!D.isSecretPath('src/main.ts') && !D.isSecretPath('tests.txt'), 'plain files are kept');
+  for (const p of ['bp/items/token_coin.json', 'rp/textures/items/secret_door.png', 'bp/entities/password_parrot.json']) ok(!D.isSecretPath(p), `an addon's own file named so is kept: ${p}`);
   const bad = D.saveDraft(s, K, { text: `const t = "ghp_${'a'.repeat(36)}"`, path: 'src/main.ts' });
   ok(!bad.ok && !bad.why.includes('ghp_'), bad.why);
   ok(!D.saveDraft(null, K, { text: 'a' }).ok && !D.saveDraft(s, null, { text: 'a' }).ok, 'no store / no key: said, not thrown');
@@ -97,7 +98,7 @@ const byId = (c, id) => c.all((e) => e.attrs.id === id)[0];
 const KEY = (f = 'src/main.ts') => D.draftKey({ account: 'o', slug: 'o/lab', unit: 'ruby', path: f });
 
 await t('typing keeps a draft; opening the file again offers it: 戻す puts it back, 捨てる drops it; saving removes it', async () => {
-  const { E } = fakeDom(), UI = await imp('panel/ui/workspace.mjs'), store = memStore(), f = fakeApi({ 'bds/addons/ruby/src/main.ts': { text: 'v1\n', sha: 's1' } });
+  fakeDom(); const UI = await imp('panel/ui/workspace.mjs'), store = memStore(), f = fakeApi({ 'bds/addons/ruby/src/main.ts': { text: 'v1\n', sha: 's1' } });
   const ed = UI.editorView(ctxOf(f.api, store), 'ruby'); await settle();
   const ta = byId(ed, 'edit-text'); eq(ta.value, 'v1\n');
   ok(!byId(ed, 'edit-draft').textContent, 'no draft at first');
@@ -118,7 +119,7 @@ await t('typing keeps a draft; opening the file again offers it: 戻す puts it 
   ok(!(await btn(ed3, /^保存$/)).disabled);
 });
 await t('typing back to the original leaves no draft; a changed GitHub is told; leaving a file keeps its draft', async () => {
-  const { E } = fakeDom(), UI = await imp('panel/ui/workspace.mjs'), store = memStore(), f = fakeApi({ 'bds/addons/ruby/src/main.ts': { text: 'v1\n', sha: 's1' }, 'bds/addons/ruby/tests.txt': { text: 't\n', sha: 't1' } });
+  fakeDom(); const UI = await imp('panel/ui/workspace.mjs'), store = memStore(), f = fakeApi({ 'bds/addons/ruby/src/main.ts': { text: 'v1\n', sha: 's1' }, 'bds/addons/ruby/tests.txt': { text: 't\n', sha: 't1' } });
   const ed = UI.editorView(ctxOf(f.api, store), 'ruby'); await settle();
   const ta = byId(ed, 'edit-text'); ta.value = 'x'; await ta.fire('input'); ta.value = 'v1\n'; await ta.fire('input'); await settle();
   eq(store.length, 0, 'same as GitHub: nothing kept');
@@ -133,7 +134,7 @@ await t('typing back to the original leaves no draft; a changed GitHub is told; 
   eq(byId(ed2, 'edit-text').value, 't\n');
 });
 await t('a storage that cannot keep it is said, not thrown; no storage at all still edits', async () => {
-  const { E } = fakeDom(), UI = await imp('panel/ui/workspace.mjs'), f = fakeApi({ 'bds/addons/ruby/src/main.ts': { text: 'v1\n', sha: 's1' } });
+  fakeDom(); const UI = await imp('panel/ui/workspace.mjs'), f = fakeApi({ 'bds/addons/ruby/src/main.ts': { text: 'v1\n', sha: 's1' } });
   const full = { ...memStore(), setItem() { throw new Error('quota'); } };
   const ed = UI.editorView(ctxOf(f.api, full), 'ruby'); await settle();
   const ta = byId(ed, 'edit-text'); ta.value = 'v9\n'; await ta.fire('input'); await settle();

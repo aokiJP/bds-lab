@@ -20,9 +20,22 @@ const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n+
 export function crc32(u8) { let c = 0xffffffff; for (let i = 0; i < u8.length; i++) c = CRC[(c ^ u8[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
 
 /** the browser's raw deflate (DecompressionStream) → the bytes */
-export async function inflateRaw(u8) {
+export async function inflateRaw(u8, limit = Infinity) {
   if (typeof DecompressionStream !== 'function') throw new PackError('このブラウザは圧縮されたファイルを開けません（DecompressionStream がありません）: 新しいブラウザで開いてください');
-  return new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+  // (read as it comes and stopped the moment it is more than the directory said: a file that lies small is not opened to the end)
+  const reader = new Blob([u8]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader(), parts = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.length;
+    if (n > limit) { await reader.cancel().catch(() => {}); throw new PackError('中身が目次と合いません（目次より大きい）: 壊れているか、開くと膨らむように作られた zip です'); }
+    parts.push(value);
+  }
+  const out = new Uint8Array(n);
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
 }
 
 const u8of = (x) => (x instanceof Uint8Array ? x : x instanceof ArrayBuffer ? new Uint8Array(x) : ArrayBuffer.isView(x) ? new Uint8Array(x.buffer, x.byteOffset, x.byteLength) : null);
@@ -63,7 +76,7 @@ export async function readZip(bytes, { inflate = inflateRaw, budget = { left: MA
     if (from + csize > b.length) throw new PackError(`zip が途中で切れています（${name}）`);
     const raw = b.subarray(from, from + csize);
     let data;
-    try { data = method === 0 ? raw : await inflate(raw); } catch (e) { throw e instanceof PackError ? e : new PackError(`開けませんでした（${name}）: 壊れています`); }
+    try { data = method === 0 ? raw : await inflate(raw, usize); } catch (e) { throw e instanceof PackError ? e : new PackError(`開けませんでした（${name}）: 壊れています`); }
     if (data.length !== usize || crc32(data) !== crc) throw new PackError(`中身が目次と合いません（${name}）: 壊れています`);
     out.set(name, data);
   }

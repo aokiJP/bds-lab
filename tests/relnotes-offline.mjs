@@ -114,7 +114,7 @@ function fakeDom() {
 const settle = () => new Promise((r) => setTimeout(r, 80));
 const btn = (c, re) => c.all((e) => e.tagName === 'BUTTON' && re.test(e.textContent))[0];
 
-await t('the card: the draft shown, the copy button waits for it then copies; the record has no text', async () => {
+await t('the card: the draft shown, the copy button waits for it then copies; nothing is recorded', async () => {
   const { toast } = fakeDom(), UI = await imp('panel/ui/relnotes.mjs'), f = await fakeGitHub();
   const rec = [], copied = [];
   try {
@@ -124,7 +124,7 @@ await t('the card: the draft shown, the copy button waits for it then copies; th
     ok(/ルビーの店を追加/.test(c.textContent) && !btn(c, /写す/).disabled, c.textContent);
     await btn(c, /写す/).click();
     ok(copied.length === 1 && /直したこと/.test(copied[0]) && /写しました/.test(toast.textContent), 'copied');
-    eq(rec, [['relnotes', { unit: 'shop', count: 3 }]]);
+    eq(rec, [], 'only reading: nothing for the audit log (each record is a comment on GitHub)');
   } finally { f.close(); }
 });
 await t('the card: no tag → the first version; a lab that cannot be read → the words and 「もう一度」; nothing to say → how to fill', async () => {

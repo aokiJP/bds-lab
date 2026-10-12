@@ -53,5 +53,5 @@ export function qrCard(ctx, text, label) {
     h('b', {}, title),
     h('div', { class: 'qr-pic' }, pic),
     h('p', { class: 'muted' }, 'スマホのカメラを向けて、出てきたリンクを開きます。'),
-    h('div', { class: 'row' }, /^https:\/\//.test(s) ? link(s, s) : h('code', {}, s), h('button', { type: 'button', onclick: () => copy(s) }, '📋 リンクを写す')));
+    h('div', { class: 'row' }, /^https:\/\/github\.com\//.test(s) ? link(s, s) : h('code', {}, s), h('button', { type: 'button', onclick: () => copy(s) }, '📋 リンクを写す')));
 }

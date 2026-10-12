@@ -110,7 +110,7 @@ await t('revertCard: the history listed; choosing a version shows the line diffe
   const { toast } = fakeDom(), UI = await imp('panel/ui/revert.mjs'), f = await fakeGitHub();
   try {
     const calls = [];
-    const guarded = async (action, detail, fn, done) => { calls.push([action, detail]); try { const r = await fn(); if (done) toast.append(document.createTextNode(done)); return r; } catch (e) { toast.append(document.createTextNode(e.message)); return undefined; } };
+    const guarded = async (action, detail, fn, done) => { calls.push([action, detail]); try { const r = await fn(); if (done) toast.append(globalThis.document.createTextNode(done)); return r; } catch (e) { toast.append(globalThis.document.createTextNode(e.message)); return undefined; } };
     const recs = [];
     const c = UI.revertCard({ api: f.api, lab: { slug: 'o/lab', role: 'admin' }, guarded, record: (a, d) => recs.push([a, d]) }, { path: F });
     await tick();
@@ -118,9 +118,9 @@ await t('revertCard: the history listed; choosing a version shows the line diffe
     await btn(c, /^aaaaaaa/).click(); await tick();
     ok(/1 行増え、3 行減ります/.test(c.textContent), c.textContent);
     await btn(c, /この版に戻す/).click(); await tick();
-    eq(calls, [['contents', { file: F, sha: 'aaaaaaa' }]]); eq(f.st.puts.length, 1);
+    eq(calls, [['dispatch', { file: F, sha: 'aaaaaaa' }]]); eq(f.st.puts.length, 1);
     ok(/戻しました/.test(c.textContent) && /新しい commit/.test(toast.textContent), c.textContent);
-    eq(recs, [['revert', { file: F, sha: 'aaaaaaa', changed: true }]]);
+    eq(recs, [], 'kept in the audit log by guarded alone: not twice');
   } finally { f.close(); }
 });
 

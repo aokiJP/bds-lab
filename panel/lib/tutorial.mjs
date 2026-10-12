@@ -1,7 +1,7 @@
 // tutorial: 「最初のアドオンを 5 分で」 — the steps from nothing to a pack given out, and which one a person stands on now,
 // decided from how things are (is there a unit, how did unit.yml's last run end, is there a release). Pure: no DOM, no fetch
 // (the screen reads GitHub through lib/gh.mjs and hands the facts in), no node:.
-import { holds, latestByUnit } from './releases.mjs';
+import { latestByUnit } from './releases.mjs';
 
 /** the steps in order: id, a short name, what happens there (words for a beginner) */
 export const STEPS = [
@@ -13,10 +13,11 @@ export const STEPS = [
 ];
 export const stepIndex = (id) => STEPS.findIndex((s) => s.id === id);
 
-/** how unit.yml's runs ended (pure; runs: GitHub's workflow_runs, newest first; a run whose title names another unit is
- *  not counted) → 'none' | 'running' | 'passed' | 'failed' */
+/** how the unit's last test on unit.yml ended (pure; runs: GitHub's workflow_runs, newest first). Only a test of this unit
+ *  counts — unit.yml's run-name is "unit <job> <unit>": its 「作る」 (job new) or 「仕上げる」 (job go) is not a test, and a run
+ *  with no title says nothing of whose it is → 'none' | 'running' | 'passed' | 'failed' */
 export function tryState(runs, unit) {
-  const mine = (runs ?? []).filter((r) => r && (!r.display_title || !unit || holds(r.display_title, unit)));
+  const mine = (runs ?? []).filter((r) => r && unit && /^unit test \S+$/.test(String(r.display_title ?? '')) && String(r.display_title).slice('unit test '.length) === unit);
   const r = mine[0];
   if (!r) return 'none';
   if (r.status !== 'completed') return 'running';

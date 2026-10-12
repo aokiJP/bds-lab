@@ -27,7 +27,6 @@ export function relnotesCard(ctx, { unit = null, fromTag } = {}) {
       if (!d.count) { out.replaceChildren(h('p', { class: 'muted' }, '遊ぶ人に伝える変更がまだありません。アドオンを直してから、もう一度作ってください。')); return; }
       out.replaceChildren(h('pre', { 'aria-label': 'リリースノートの下書き' }, md));
       copy.disabled = false; copy.removeAttribute?.('title');
-      ctx.record?.('relnotes', { unit: unit?.name ?? null, count: d.count });
     } catch (e) { say.replaceChildren(); out.replaceChildren(failView(e, draw)); }
   }
   const card = h('div', { class: 'card', 'data-card': 'relnotes' }, h('h3', {}, `📝 リリースノートの下書き${unit ? `（${unit.name}）` : ''}`),

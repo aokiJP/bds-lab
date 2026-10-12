@@ -35,7 +35,7 @@ function fakeDom() {
   return { E, toast };
 }
 
-const run = (status, conclusion = null, title = 'unit ruby') => ({ status, conclusion, display_title: title });
+const run = (status, conclusion = null, title = 'unit test ruby') => ({ status, conclusion, display_title: title });
 const rel = (tag, asset) => ({ tag_name: tag, draft: false, published_at: '2026-10-01T00:00:00Z', assets: asset ? [{ name: asset }] : [] });
 
 await t('the steps are five, in order; stepOf puts a person on the right one from the facts (pure)', () => {
@@ -48,6 +48,9 @@ await t('the steps are five, in order; stepOf puts a person on the right one fro
   eq(T.stepOf({ unit: 'ruby', exists: true, runs: [run('completed', 'failure')] }).tried, 'failed');
   eq(T.stepOf({ unit: 'ruby', exists: true, runs: [run('completed', 'success')] }).id, 'share');
   eq(T.stepOf({ unit: 'ruby', exists: true, runs: [run('completed', 'success', 'other')] }).id, 'try', 'another unit\'s run is not counted');
+  eq(T.stepOf({ unit: 'ruby', exists: true, runs: [run('completed', 'success', 'unit new ruby')] }).id, 'try', 'its 「作る」 is not a test');
+  eq(T.stepOf({ unit: 'ruby', exists: true, runs: [run('in_progress', null, 'unit go ruby'), run('completed', 'success')] }).id, 'share', 'a 「仕上げる」 going does not undo a passed test');
+  eq(T.stepOf({ unit: 'ruby', exists: true, runs: [run('completed', 'success', 'unit test ruby_sword')] }).id, 'try', 'a unit whose name starts the same is another');
   eq(T.stepOf({ unit: 'ruby', exists: true, released: true }).id, 'done');
   const s = T.stateOf({ unit: 'ruby', units: [{ name: 'ruby', title: 'Ruby', kind: 'bds' }], releases: [rel('addon-ruby', 'Ruby.mcaddon')] });
   ok(s.exists && s.released, 'released from a release with a pack');
@@ -76,7 +79,7 @@ const button = (c, re) => buttons(c).find((b) => re.test(b.textContent));
 const settle = () => new Promise((r) => setTimeout(r, 20));
 
 await t('the card walks name → make → try → share → done, each step with its words and one button; making and trying go through the guard', async () => {
-  const { E } = fakeDom(), UI = await imp('panel/ui/tutorial.mjs'), g = fakeGitHub(), seen = [];
+  fakeDom(); const UI = await imp('panel/ui/tutorial.mjs'), g = fakeGitHub(), seen = [];
   const guarded = async (action, detail, fn) => { seen.push([action, detail.job]); return (await fn()) ?? true; };
   const card = UI.tutorialCard({ api: g.api, lab: LAB, me: { login: 'o' }, guarded, go() {} });
   await settle();
@@ -95,10 +98,10 @@ await t('the card walks name → make → try → share → done, each step with
   ok(/できました。次は試験/.test(card.textContent), 'on the try step');
   await button(card, /^試す/).click(); await settle();
   eq(g.st.dispatched.at(-1), { job: 'test', unit: 'ruby_sword' });
-  g.st.runs = [run('in_progress', null, 'unit ruby_sword')];
+  g.st.runs = [run('in_progress', null, 'unit test ruby_sword')];
   await button(card, /見直す/).click(); await settle();
   ok(/試している途中/.test(card.textContent), 'running');
-  g.st.runs = [run('completed', 'success', 'unit ruby_sword')];
+  g.st.runs = [run('completed', 'success', 'unit test ruby_sword')];
   await button(card, /見直す/).click(); await settle();
   ok(button(card, /仕上げて/), 'on the share step');
   await button(card, /仕上げて/).click(); await settle();
@@ -110,8 +113,8 @@ await t('the card walks name → make → try → share → done, each step with
 });
 
 await t('a failed trial says so with the next step; a refused guard starts nothing; a lab without unit.yml and a policy that says no give the reason', async () => {
-  const { E } = fakeDom(), UI = await imp('panel/ui/tutorial.mjs');
-  const g = fakeGitHub({ units: ['ruby'], runs: [run('completed', 'failure', 'unit ruby')] });
+  fakeDom(); const UI = await imp('panel/ui/tutorial.mjs');
+  const g = fakeGitHub({ units: ['ruby'], runs: [run('completed', 'failure', 'unit test ruby')] });
   const card = UI.tutorialCard({ api: g.api, lab: LAB, guarded: async () => undefined }, { unit: 'ruby' });
   await settle();
   ok(/通りませんでした/.test(card.textContent), 'failed told');

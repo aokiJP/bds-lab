@@ -16,7 +16,7 @@ export function progressCard(ctx, run) {
   const slug = ctx.lab.slug, now = () => (ctx.now ? ctx.now() : Date.now()), timers = ctx.timers ?? globalThis;
   const list = h('ol', { class: 'plain' }), say = h('div', { class: 'muted', role: 'status' }), more = h('div', {});
   const card = h('div', { class: 'card', 'data-progress': String(run.id) }, h('h3', {}, '💡 AI が作っています'), say, list, more);
-  let cur = run, timer = null, history = null, busy = false;
+  let cur = run, timer = null, history = null, busy = false, grace = 0;
   const stop = () => { if (timer !== null) { timers.clearInterval(timer); timer = null; } };
   card.stop = stop;
   // (may this person run the failed jobs again? — and if not, why)
@@ -36,6 +36,7 @@ export function progressCard(ctx, run) {
       h('span', {}, `${MARK[g.state]} `), h('strong', {}, g.label), h('span', { class: 'muted' }, ` — ${g.state === 'now' ? g.word : STATE_WORD[g.state]}`))));
     const left = PG.etaWords(PG.etaOf(cur, history ?? [], now()));
     if (!over) { say.replaceChildren(`${s.percent}% ${s.estimated ? '（目安）' : ''}${left ? ` · ${left}` : ' · 前の実行がないので、時間は分かりません'}`); more.replaceChildren(link(cur.html_url, '実行の様子を GitHub で見る')); return; }
+    if (grace > 0) { grace -= 1; return; }
     stop();
     if (!failedRun) {
       say.replaceChildren('✅ できました。リリースに届いています');
@@ -55,8 +56,11 @@ export function progressCard(ctx, run) {
     const go = () => ctx.api.rerunFailed(slug, cur.id);
     const r = ctx.guarded ? await ctx.guarded('dispatch', { run: String(cur.id), workflow: 'ai-make.yml' }, go, 'やり直しを始めました') : await act(go, 'やり直しを始めました');
     if (r === undefined) return;
-    ctx.record?.('progress.rerun', { run: cur.id });
+    if (!ctx.guarded) ctx.record?.('progress.rerun', { run: cur.id });   // (guarded keeps it in the audit log already)
+    // (GitHub may still say 「completed」 for a moment after: read a few more times before taking that as the end)
+    grace = 4;
     await refresh(true);
+    if (timer === null) timer = timers.setInterval(refresh, EVERY);
   }
   async function refresh(again = false) {
     if (busy) return;
