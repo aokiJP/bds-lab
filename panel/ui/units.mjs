@@ -7,6 +7,9 @@ import * as U from '../lib/units.mjs';
 import * as R from '../lib/releases.mjs';
 import { fmtBytes } from '../lib/model.mjs';
 import { newUnitCard, importCard, editorView, startUnit, startAttrs, wayOut } from './workspace.mjs';
+import { playcardCard } from './playcard.mjs';
+import { relnotesCard } from './relnotes.mjs';
+import { tutorialCard } from './tutorial.mjs';
 
 /** the 「アドオン」 tab. ctx: ui/workspace.mjs's (api, lab: { slug, repo, workflows? }, gate(action), guarded(action, detail,
  *  fn, done), go(tab), dispatch(workflow, inputs): GitHub's call alone — the guard is this tab's) and:
@@ -30,6 +33,10 @@ export function unitsTab(body, ctx) {
   let units = [], latest = {};
   const card = (u) => {
     const last = latest[u.ref], bds = u.kind === 'bds', a = last?.asset;
+    // (the unit's card for players and its next release's words, opened under it — one at a time)
+    const extra = h('div', {});
+    let shown = null;
+    const show = (which, make) => { shown = shown === which ? null : which; extra.replaceChildren(...(shown ? [make()] : [])); };
     return h('div', { class: 'card', 'data-unit': u.ref },
       h('h2', {}, u.title, bds ? null : h('span', { class: 'chip' }, U.KIND_WORDS[u.kind] ?? u.kind), u.version ? h('span', { class: 'chip' }, `v${u.version}`) : null,
         u.unread?.includes('tests.txt') ? h('span', { class: 'chip bad', title: 'tests.txt を読めませんでした: 「読み直す」を押してください' }, 'tests.txt 読めず')
@@ -43,9 +50,11 @@ export function unitsTab(body, ctx) {
         bds ? h('button', { class: 'primary', ...g, onclick: () => run({ job: 'go', unit: u.name }) }, '📦 仕上げる（.mcaddon）') : null,
         bds ? h('button', { onclick: () => edit(u) }, '✏️ ファイルを直す') : null,
         ctx.aiMake ? h('button', { onclick: () => ctx.aiMake({ unit: u.ref }) }, '💡 AI で変える') : null,
+        bds ? h('button', { onclick: () => show('play', () => playcardCard(ctx, u)) }, '🎮 遊び方カード') : null,
+        bds ? h('button', { onclick: () => show('notes', () => relnotesCard(ctx, { unit: u.name })) }, '📝 リリースの説明') : null,
         last ? h('button', { onclick: () => ctx.go('releases') }, '配布を見る') : null,
         link(`https://github.com/${slug}/tree/${branch}/${u.dir}`, 'GitHub')),
-      bds ? null : h('p', { class: 'muted' }, '試験と仕上げは「AI で変える」から（AI が本物のサーバーで確かめます）。'));
+      bds ? null : h('p', { class: 'muted' }, '試験と仕上げは「AI で変える」から（AI が本物のサーバーで確かめます）。'), extra);
   };
   const none = () => h('div', { class: 'card', id: 'nounits' }, h('h2', {}, 'まだアドオンがありません'),
     h('p', {}, '始め方は 3 つ。どれも手元の PC は要りません:'),
@@ -53,7 +62,9 @@ export function unitsTab(body, ctx) {
       h('li', { class: 'row' }, h('span', { class: 'grow' }, h('strong', {}, '💡 AI で作る'), h('div', { class: 'muted' }, 'やりたいことを日本語で書くだけ。AI が作って本物のサーバーで確かめ、リリースに届けます（ai-make）。')),
         h('button', { onclick: () => (ctx.aiMake ? ctx.aiMake({}) : ctx.go('start')) }, '開く')),
       h('li', { class: 'row' }, h('span', { class: 'grow' }, h('strong', {}, '🆕 新しく作る'), h('div', { class: 'muted' }, '名前と題を決めて、ひな形から。')), h('button', { onclick: () => open(made) }, '開く')),
-      h('li', { class: 'row' }, h('span', { class: 'grow' }, h('strong', {}, '📥 取り込む'), h('div', { class: 'muted' }, '人のアドオン（.mcaddon・.mcpack・.zip）を直して仕上げる。')), h('button', { onclick: () => open(taken) }, '開く'))));
+      h('li', { class: 'row' }, h('span', { class: 'grow' }, h('strong', {}, '📥 取り込む'), h('div', { class: 'muted' }, '人のアドオン（.mcaddon・.mcpack・.zip）を直して仕上げる。')), h('button', { onclick: () => open(taken) }, '開く'))),
+    // (the first one by hand, in five steps on this one screen: ui/tutorial.mjs)
+    tutorialCard(ctx));
   const draw = () => {
     const shown = U.filterUnits(units, q.value);
     count.replaceChildren(`${shown.length} 件${units.length >= U.UNIT_LIMIT ? `（最初の ${U.UNIT_LIMIT} 件）` : ''}`);

@@ -5,6 +5,32 @@
 スマホの Discord から CI の端末を画面とボタンで動かせ、リポジトリの秘密も Discord のフォームで登録できる（node も PC も要らない）。**
 
 ### 管理パネル: 今の約 2 倍に — git clone も PC もなしで、作る・取り込む・直す・試験・仕上げ・配る・予約・統計・お知らせ
+- 管理パネル: **作る・配るの 8 機能**（追加機能 A）。
+  - 📱 **配布の QR コード**（`lib/qr.mjs`・`ui/qr.mjs`）: 「配布」のパックの行の「📱 QR」で、スマホのカメラで受け取れる。QR の符号化は
+    自前（型番 1〜10・誤り訂正 M・213 バイトまで）で、ISO の公表値と、試験の中に別に書いた復号器で確かめる。github.com 以外の文は
+    リンクにしない。
+  - 🎮 **遊び方カード**（`lib/playcard.mjs`・`ui/playcard.mjs`）: ユニットの TASK.md・tests.txt・manifest から「何ができるか・コマンド・
+    アイテム」を遊ぶ人向けに（日本語・English、Markdown で写せる）。「アドオン」の各ユニットの「🎮 遊び方カード」。
+  - 📝 **リリースの説明の下書き**（`lib/relnotes.mjs`・`ui/relnotes.mjs`）: 前のリリースのタグから今までの commit を「新しい・直した・
+    そのほか」に分けて下書き。ユニットごと（そのフォルダに触れた commit だけ）と、ラボ全体（「配布」）。読むだけで、監査ログにも
+    書かない。
+  - 🔍 **版の比較**（`lib/packdiff.mjs`・`ui/packdiff.mjs`）: 2 つの .mcaddon の中身（増えた・消えた・変わったファイル、大きさ、JSON の
+    値の違い）をブラウザの中だけで。zip の読み取りは自前（stored・deflate、CRC と大きさの照合、中の .mcpack を 1 段、Zip64・鍵付きは
+    言葉で断る）。展開は読みながら目次の大きさを超えた時点で止める（膨らむ zip でタブが落ちない）。リリースのファイルは GitHub が
+    別のホストから返し、パネルはそこへ通信しないので、各パックはダウンロードのリンクにして手元のファイル 2 つで比べる。
+  - ↩️ **前の版に戻す**（`lib/revert.mjs`・`ui/revert.mjs`）: 「ファイルを直す」でそのファイルの履歴を出し、選んだ版との違い
+    （N 行増え・M 行減る）を見て「この版に戻す」（新しい commit）。保存と同じ守り（ポリシーの dispatch・監査ログ 1 回）。今と同じなら
+    押せず、中身の読めない版（1 MB 超）で空に上書きしない。
+  - 💾 **編集の下書き**（`lib/drafts.mjs`、`ui/workspace.mjs` の editorView）: 打った途中はこのブラウザに残り（1 秒まとめ、閉じる・隠す
+    ときはすぐ）、開き直すと「📝 下書きがあります: 戻す / 捨てる」。GitHub がその後に変わっていたら知らせる。.env・鍵・
+    `*_token.txt` のようなファイルと、トークンの形の中身は残さない（`token_coin.json` のようなアドオンのファイルは残す）。
+  - 🎓 **最初のアドオンを 5 分で**（`lib/tutorial.mjs`・`ui/tutorial.mjs`）: ユニットがまだ無いラボの「アドオン」に、名前 → 作る → 試す →
+    配る → できた を 1 画面で。「試した」は unit.yml の `unit test <名前>` の実行だけで数える（作る・仕上げるの実行は数えない）。
+  - 🧩 **AI 作成の進み具合**（`lib/progress.mjs`・`ui/progress.mjs`）: 「進み具合」で ai-make.yml の実行を開くと、考える → 作る → 本物の
+    サーバーで遊ぶ → 配る → 知らせる の段・残りの目安・落ちた理由と次の 1 手・「落ちたところからやり直す」、できたらリリースへ。
+    段の中は 1 つの step なので前の実行の時間からの目安（画面にも「目安」）。画面を描き直すと読むのを止める。
+  - 試験: `tests/{qr,playcard,relnotes,packdiff,revert,drafts,tutorial,progress}-offline.mjs`（8・7・9・10・5・7・3・10）。偽の GitHub は
+    全部 `fakeCheck` を通す。`panel check` が回す。
 - 管理パネル: **🔗 連携**（`panel/ui/connect.mjs`・`panel/lib/connect.mjs`・`common/connect.mjs`・`.github/workflows/connect.yml`）。Discord・
   Cloudflare・Microsoft（Xbox）・Google Play・AI（Claude / OpenAI）を「全部つなぐ」で上から順に: 公式の画面を開く → 本人が確認を押して
   1 つ貼る → パネルが封じて秘密に → connect.yml が本物か確かめ（`node lab.mjs connect check <service>`、結果は注釈 connect-<service>、

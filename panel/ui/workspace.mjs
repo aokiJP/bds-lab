@@ -6,6 +6,8 @@ import { h, toast, link, failView } from './dom.mjs';
 import * as W from '../lib/workspace.mjs';
 import * as U from '../lib/units.mjs';
 import { fmtBytes } from '../lib/model.mjs';
+import * as D from '../lib/drafts.mjs';
+import { revertCard } from './revert.mjs';
 
 /** a failure drawn in place (a list that could not be read, a file that could not be opened): GitHub's words as they came
  *  and, under them, what to do — lib/rescue.mjs's next step, with its GitHub page as a link or 「もう一度」 as a button
@@ -126,10 +128,43 @@ export function editorView(ctx, unit) {
   pick.value = files[0];
   const text = h('textarea', { id: 'edit-text', 'aria-label': 'ファイルの中身', spellcheck: 'false', rows: 22 });
   const note = h('p', { class: 'muted' }), state = h('div', { class: 'muted', id: 'edit-state' }), gh = h('span', {});
+  // (the file's history and one click back to a version of it: ui/revert.mjs — read when opened, for the file chosen)
+  const back = h('details', { id: 'edit-revert' });
+  let backFor = null;
+  const backOf = () => { backFor = null; back.open = false; back.replaceChildren(h('summary', {}, `↩️ ${pick.value} を前の版に戻す`)); };
+  back.addEventListener('toggle', () => { if (back.open && backFor !== pick.value) { backFor = pick.value; back.append(revertCard(ctx, { path: `${u.dir}/${pick.value}`, branch: branch(ctx), onRestored: () => { U.forgetUnits(ctx.api, slug); load(); } })); } });
   // (the file as it was read: its sha, and its text — null: nothing read, nothing to save over)
   let sha = null, loaded = null;
+  // (the draft: what was typed and not yet saved, kept in this browser — ctx.draftStore / draftWait for a test)
+  const store$ = ctx.draftStore ?? D.browserStorage(), box = h('div', { id: 'edit-draft' });
+  const keyOf = (f) => D.draftKey({ account: ctx.me?.login, slug, unit: u.name, path: f });
+  const saver = D.draftSaver(store$, { wait: ctx.draftWait ?? D.WAIT, onSaved: (r) => { if (!r.ok) box.replaceChildren(h('span', { class: 'muted' }, `下書きは残せませんでした: ${r.why}`)); } });
+  const showDraft = (f) => {
+    box.replaceChildren();
+    const d = D.loadDraft(store$, keyOf(f));
+    if (!d) return;
+    if (W.sameText(d.text, loaded)) return D.dropDraft(store$, keyOf(f));
+    const stale = D.staleDraft(d, sha);
+    box.append(h('p', { class: stale ? 'warn' : 'muted' }, `📝 下書きがあります（${D.ago(d.at)}）`,
+      stale ? ' ※ 下書きを作ったあとに GitHub の中身が変わっています: 戻して保存すると、その変更の上に重なります（先に GitHub で見比べてください）' : ''),
+      h('div', { class: 'row' },
+        h('button', { onclick: () => { text.value = d.text; box.replaceChildren(h('span', { class: 'muted' }, '下書きを戻しました（保存するまで GitHub は変わりません）')); } }, '戻す'),
+        h('button', { onclick: () => { saver.cancel(); D.dropDraft(store$, keyOf(f)); box.replaceChildren(h('span', { class: 'muted' }, '下書きを捨てました')); } }, '捨てる')));
+  };
+  // (the tab closed or put away within the second a draft waits: what was typed is kept now)
+  globalThis.addEventListener?.('pagehide', () => saver.flush());
+  globalThis.document?.addEventListener?.('visibilitychange', () => { if (globalThis.document.visibilityState === 'hidden') saver.flush(); });
+  text.addEventListener('input', () => {
+    const f = pick.value;
+    if (loaded === null) return;
+    if (W.sameText(W.withEol(text.value, W.eolOf(loaded)), loaded)) { saver.cancel(); return D.dropDraft(store$, keyOf(f)); }
+    saver.push(keyOf(f), { text: text.value, baseSha: sha, path: f });
+  });
   const load = async () => {
     const f = pick.value;
+    saver.flush();   // (what was typed in the file just left is kept before this one is read)
+    backOf();
+    box.replaceChildren();
     sha = null; loaded = null; text.value = ''; text.disabled = true;
     note.replaceChildren(W.EDIT_NOTES[f] ?? (f === u.entry || f === 'bp/scripts/main.js' ? W.EDIT_NOTES.script : ''));
     gh.replaceChildren(link(`https://github.com/${slug}/blob/${branch(ctx)}/${u.dir}/${f}`, 'GitHub で見る'));
@@ -140,6 +175,7 @@ export function editorView(ctx, unit) {
       if (!r) return state.replaceChildren(`${f} はこのユニットにありません。足すなら `, link(`https://github.com/${slug}/new/${branch(ctx)}/${u.dir}?filename=${encodeURIComponent(f)}`, 'GitHub で新しく作る'), '（または「AI で変える」で作らせる）');
       sha = r.sha; loaded = r.text; text.value = r.text; text.disabled = false;
       state.replaceChildren(`${u.dir}/${f}`);
+      showDraft(f);
     } catch (e) { if (pick.value === f) state.replaceChildren(wayOut(e, ctx, load)); }
   };
   pick.addEventListener('change', load);
@@ -151,12 +187,13 @@ export function editorView(ctx, unit) {
     const now = W.withEol(text.value, W.eolOf(loaded));
     const c = W.checkEdit(f, now, u);
     if (!c.ok) return toast(c.error, true);
-    if (W.sameText(now, loaded)) { if (!thenTest) toast('変わっていません'); }
+    if (W.sameText(now, loaded)) { if (!thenTest) toast('変わっていません'); saver.cancel(); D.dropDraft(store$, keyOf(f)); }
     else {
       const path = `${u.dir}/${f}`;
       const r = await ctx.guarded('dispatch', { file: path }, () => W.saveUnitFile(ctx.api, slug, path, now, sha, `panel: ${path} を直す`), `${f} を保存しました（既定の枝に）`);
       if (r === undefined) return;
       sha = r.sha ?? sha; loaded = now;
+      saver.cancel(); D.dropDraft(store$, keyOf(f)); box.replaceChildren();   // (saved: the draft has done its work)
       U.forgetUnits(ctx.api, slug);
     }
     if (thenTest) await runOf(ctx)({ job: 'test', unit: u.name });
@@ -164,7 +201,7 @@ export function editorView(ctx, unit) {
   load();
   return h('div', { class: 'card', id: 'editor', 'data-unit': u.ref },
     h('h2', {}, `✏️ ファイルを直す: ${u.title}`, h('span', { class: 'chip' }, u.dir)),
-    h('div', { class: 'row' }, pick, h('button', { onclick: load }, '読み直す'), gh), note, text, state,
+    h('div', { class: 'row' }, pick, h('button', { onclick: load }, '読み直す'), gh), note, box, text, state,
     h('div', { class: 'row' }, h('button', { class: 'primary', ...g, onclick: () => store(false) }, '保存'),
-      h('button', { ...(ctx.runUnit ? g : startAttrs(ctx)), onclick: () => store(true) }, '保存して試験'), close));
+      h('button', { ...(ctx.runUnit ? g : startAttrs(ctx)), onclick: () => store(true) }, '保存して試験'), close), back);
 }
