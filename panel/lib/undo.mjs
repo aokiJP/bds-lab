@@ -1,7 +1,7 @@
 // undo: one entry of the audit log (lib/audit.mjs) taken back — a variable changed, the policy, the timetable (予約) or who
 // hears what (通知) — to what it was before. undoable(entry) says, without asking GitHub, what would be put back and with
 // which of the policy's actions (pure); a file is put back to its text in the parent of the commit that changed it (that
-// commit found by the entry's time and person), written over the file as a NEW commit with the current sha (nothing is erased,
+// commit found by the entry's time and person), written over the file as a NEW commit with the sha prepare read (nothing is erased,
 // a change made elsewhere in between is refused by GitHub, never written over). A variable is put back only when the entry
 // carries its value from before (detail.before); a secret's value and what was deleted are never in the log: those say why
 // not. Pure but for prepare and apply (GitHub only through `api`, lib/gh.mjs). Undoing is kept in the audit log by the
@@ -73,11 +73,12 @@ export const shortSha = (sha) => String(sha ?? '').slice(0, 7);
 /** the commit message apply() writes (pure) */
 export const undoMessage = (path, sha) => `panel: ${path} を ${shortSha(sha)} の前に戻す（監査ログから取り消し）`;
 
-/** what undoing would do, read from GitHub → { ...undoable(entry), now, before, same, problems, commit? } — now: the current
- *  text or value (null: not there), before: what it would become, same: nothing would change, problems: why the text from
- *  before is not written (not JSON, the policy's or the timetable's errors) — an entry that cannot be undone is handed back
- *  as undoable said, nothing read. A file made by the change (nothing in the commit before) or a commit not found: ok false
- *  and why */
+/** what undoing would do, read from GitHub → { ...undoable(entry), now, before, same, problems, commit?, nowSha?, later? } —
+ *  now: the current text or value (null: not there), before: what it would become, same: nothing would change, problems: why
+ *  the text from before is not written (not JSON, the policy's or the timetable's errors); a file's nowSha: the sha of the
+ *  text read now (apply writes over that one only), later: how many commits changed the same file after the one undone
+ *  (undoing puts those back too) — an entry that cannot be undone is handed back as undoable said, nothing read. A file made
+ *  by the change (nothing in the commit before) or a commit not found: ok false and why */
 export async function prepare(api, slug, entry) {
   const u = undoable(entry);
   if (!u.ok) return u;
@@ -92,14 +93,20 @@ export async function prepare(api, slug, entry) {
   if (!c) return { ...u, ok: false, why: `${u.path} をこのとき変えた commit が見つかりません（履歴が書き換えられたか、変更が保存されなかったか）。GitHub の履歴から戻してください。` };
   const old = c.parent ? await api.file(slug, u.path, c.parent) : null;
   if (old === null) return { ...u, ok: false, commit: c, why: `${u.path} はこの変更で作られました。取り消すとファイルを消すことになるので、ここからは戻せません。` };
+  // (the commits of the same file since that one: undoing goes back past them too)
+  const since = await api.call('GET', `/repos/${slug}/commits?per_page=100&path=${encodeURIComponent(u.path)}&since=${encodeURIComponent(c.date)}`);
+  const later = (Array.isArray(since) ? since : []).filter((x) => x?.sha && String(x.sha) !== c.sha).length;
   const cur = await api.file(slug, u.path);
   let problems;
   try { problems = UNDO_FILES[u.path].check(old.text); } catch (e) { problems = [`前の版が正しい JSON ではありません（${e.message}）`]; }
-  return { ...u, commit: c, now: cur?.text ?? null, before: old.text, same: cur?.text === old.text, problems };
+  return { ...u, commit: c, now: cur?.text ?? null, nowSha: cur?.sha ?? null, later, before: old.text, same: cur?.text === old.text, problems };
 }
 
-/** put back what prepare() read: a file written over as a new commit with the sha read just before (a change made in between
- *  is refused by GitHub), a variable set to its value from before. The same as now: nothing is written → { changed: false } */
+/** the words when the file changed after prepare() read it (GitHub refused the sha read then) */
+export const CHANGED_SINCE = '開いた後に変わりました。読み直してください';
+/** put back what prepare() read: a file written over as a new commit with the sha prepare() read (nowSha — not read again: a
+ *  change made since is refused by GitHub, nothing written, CHANGED_SINCE; already as it was before: { changed: false }), a
+ *  variable set to its value from before. The same as now: nothing is written → { changed: false } */
 export async function apply(api, slug, p) {
   if (!p?.ok) throw new Error(p?.why || '戻せません');
   if (p.problems?.length) throw new Error(`前の版に誤りがあるので戻しません: ${p.problems.join('・')}`);
@@ -108,8 +115,14 @@ export async function apply(api, slug, p) {
     await api.setVariable(slug, p.name, p.before);
     return { changed: true };
   }
-  const cur = await api.file(slug, p.path);
-  if (cur && cur.text === p.before) return { changed: false, sha: cur.sha };
-  const r = await api.putFile(slug, p.path, p.before, cur?.sha ?? undefined, undoMessage(p.path, p.commit?.sha));
+  if (p.same) return { changed: false, sha: p.nowSha ?? null };
+  let r;
+  try { r = await api.putFile(slug, p.path, p.before, p.nowSha ?? undefined, undoMessage(p.path, p.commit?.sha)); } catch (e) {
+    if (!(e?.status === 409 || (e?.status === 422 && /sha/i.test(String(e?.message ?? ''))))) throw e;
+    // (refused for the sha: only to say whether it is already as it was before — nothing is written either way)
+    const cur = await api.file(slug, p.path);
+    if (cur && cur.text === p.before) return { changed: false, sha: cur.sha };
+    throw new Error(CHANGED_SINCE);
+  }
   return { changed: true, sha: r?.commit?.sha ?? null };
 }

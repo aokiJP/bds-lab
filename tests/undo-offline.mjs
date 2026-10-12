@@ -23,6 +23,14 @@ const POL2 = `${JSON.stringify({ version: 1, roles: { write: ['dispatch', 'varia
 const S0 = '0'.repeat(40), S1 = '1'.repeat(40), S2 = '2'.repeat(40), S3 = '3'.repeat(40);
 const AT = '2026-10-10T09:00:30Z';
 const ent = (action, detail, at = AT, actor = 'alice') => AU.entry({ actor, action, target: 'o/lab', detail, at });
+// (the requests to the fake GitHub counted where they start and end: a wait ends when none is open and none has come or gone
+// for a while — not after a fixed time, which a busy CI runner can outlast)
+const net = { busy: 0, at: 0 };
+const settle = async () => {
+  const until = Date.now() + 10_000;
+  await new Promise((r) => setTimeout(r, 30));
+  while (Date.now() < until && (net.busy > 0 || Date.now() - net.at < 60)) await new Promise((r) => setTimeout(r, 15));
+};
 
 /** a fake GitHub: per file, commits (newest first) each with its text; variables by name. Every write through fakeCheck */
 function fakeGitHub({ down = false } = {}) {
@@ -38,15 +46,15 @@ function fakeGitHub({ down = false } = {}) {
   // (the parent of a commit: the next older one of that file)
   const parentOf = (f, i) => st.files[f][i + 1]?.sha ?? null;
   const textAt = (f, ref) => { const xs = st.files[f] ?? []; const x = ref ? xs.find((c) => c.sha === ref) : xs[0]; return x ? x.text : null; };
-  const fetchImpl = async (url, init) => {
+  const answer = async (url, init) => {
     const u = String(url).replace(/^https:\/\/fake/, ''), m = init.method, body = init.body ? JSON.parse(init.body) : null;
     const send = (status, j) => ({ status, ok: status < 300, headers: { get: () => null }, text: async () => (j === null ? '' : JSON.stringify(j)) });
     st.seen.push(`${m} ${u}`);
     { const bad = fakeCheck(m, u, body); if (bad) return send(422, { message: bad.message }); }
     if (down) return send(500, { message: 'boom' });
     let x;
-    if (m === 'GET' && (x = /^\/repos\/o\/lab\/commits\?per_page=\d+&path=([^&]+)&since=([^&]+)&until=([^&]+)$/.exec(u))) {
-      const f = decodeURIComponent(x[1]), a = Date.parse(decodeURIComponent(x[2])), b = Date.parse(decodeURIComponent(x[3]));
+    if (m === 'GET' && (x = /^\/repos\/o\/lab\/commits\?per_page=\d+&path=([^&]+)&since=([^&]+)(?:&until=([^&]+))?$/.exec(u))) {
+      const f = decodeURIComponent(x[1]), a = Date.parse(decodeURIComponent(x[2])), b = x[3] ? Date.parse(decodeURIComponent(x[3])) : Infinity;
       return send(200, (st.files[f] ?? []).map((c, i) => ({ c, i })).filter(({ c }) => Date.parse(c.date) >= a && Date.parse(c.date) <= b)
         .map(({ c, i }) => ({ sha: c.sha, author: { login: c.login }, commit: { author: { date: c.date }, committer: { date: c.date } }, parents: parentOf(f, i) ? [{ sha: parentOf(f, i) }] : [] })));
     }
@@ -68,6 +76,7 @@ function fakeGitHub({ down = false } = {}) {
     if (m === 'POST' && u === '/repos/o/lab/actions/variables') { st.patches.push(body); st.vars[body.name] = body.value; return send(201, null); }
     return send(404, { message: `Not Found ${m} ${u}` });
   };
+  const fetchImpl = async (url, init) => { net.busy++; net.at = Date.now(); try { return await answer(url, init); } finally { net.busy--; net.at = Date.now(); } };
   return { st, api: G.gh({ token: 'ghu_usertoken0123456789', base: 'https://fake', fetchImpl }) };
 }
 
@@ -167,8 +176,11 @@ function fakeDom() {
   globalThis.document = { createElement: (tag) => new E(tag), createTextNode: (s) => new T(s), getElementById: (id) => (id === 'toast' ? toast : null), body: new E('body') };
   return { E, toast };
 }
-const tick = () => new Promise((r) => setTimeout(r, 20));
 const btn = (c, re) => c.all((e) => e.tagName === 'BUTTON' && re.test(e.textContent))[0];
+/** 「取り消す…」 pressed: only then is GitHub read */
+const open = async (c) => { const b = btn(c, /^取り消す…$/); if (b) await b.click(); await settle(); };
+/** the check 「後の N 件の変更もまとめて戻す」 ticked */
+const tickBox = (c) => { const b = c.all((e) => e.tagName === 'INPUT' && e.attrs.type === 'checkbox')[0]; b.checked = true; for (const fn of b.on.change ?? []) fn({ target: b }); return b; };
 /** a guarded like panel.js's: the policy asked for the role, refused when not allowed, the done words, the record kept */
 const fakeGuarded = (role, calls, toast) => async (action, detail, fn, done) => {
   if (!P.can(P.DEFAULT_POLICY, role, action)) { calls.push(['refused', action]); return undefined; }
@@ -178,14 +190,15 @@ const fakeGuarded = (role, calls, toast) => async (action, detail, fn, done) => 
 await t('undoCard (a file): now and after shown line by line; 「この変更を取り消す」 through guarded(members, { file }) writes a new commit, then shows it the same as now', async () => {
   const { toast } = fakeDom(), UI = await imp('panel/ui/undo.mjs'), f = fakeGitHub(), calls = [];
   const c = UI.undoCard({ api: f.api, lab: { slug: 'o/lab' }, guarded: fakeGuarded('admin', calls, toast), may: () => true }, ent('members', { file: PF }));
-  await tick();
+  await open(c);
   ok(/役割（ポリシー）/.test(c.textContent) && /1111111 の前の版にすると/.test(c.textContent) && /\+ +"dispatch"/.test(c.textContent), c.textContent);
+  tickBox(c);
   const go = btn(c, /この変更を取り消す/); ok(!go.disabled, 'can be pressed');
-  await go.click(); await tick();
-  eq(calls, [['members', { file: PF }]]); eq(f.st.puts.length, 1);
+  await go.click(); await settle();
+  eq(calls, [['members', { file: PF, ref: '0000000' }]]); eq(f.st.puts.length, 1);
   ok(/取り消しました/.test(c.textContent) && /今と同じです/.test(c.textContent) && /新しい commit/.test(toast.textContent), c.textContent);
   const again = btn(c, /この変更を取り消す/); ok(again.disabled, 'the same as now: cannot be pressed');
-  await again.click(); await tick(); eq(f.st.puts.length, 1, 'a disabled button writes nothing');
+  await again.click(); await settle(); eq(f.st.puts.length, 1, 'a disabled button writes nothing');
 });
 
 await t('undoCard: the guard per file (the timetable: dispatch; notify: variables; a variable: variables) and a role the policy does not allow is refused by guarded', async () => {
@@ -193,16 +206,16 @@ await t('undoCard: the guard per file (the timetable: dispatch; notify: variable
   const e = { ...ent('variables', { name: 'LAB_HOSTS' }), detail: { name: 'LAB_HOSTS', before: 'o/old' } };
   // (a read role through guarded alone: the button is there, the policy refuses it)
   const c = UI.undoCard({ api: f.api, lab: { slug: 'o/lab' }, guarded: fakeGuarded('read', calls, toast) }, e);
-  await tick();
+  await open(c);
   ok(/今: o\/new/.test(c.textContent) && /取り消した後: o\/old/.test(c.textContent), c.textContent);
-  await btn(c, /この変更を取り消す/).click(); await tick();
+  await btn(c, /この変更を取り消す/).click(); await settle();
   eq(calls, [['refused', 'variables']]); eq(f.st.patches.length, 0);
   const c2 = UI.undoCard({ api: f.api, lab: { slug: 'o/lab' }, guarded: fakeGuarded('write', calls, toast) }, e);
-  await tick(); await btn(c2, /この変更を取り消す/).click(); await tick();
-  eq(calls.at(-1), ['variables', { name: 'LAB_HOSTS' }]); eq(f.st.vars.LAB_HOSTS, 'o/old');
+  await open(c2); await btn(c2, /この変更を取り消す/).click(); await settle();
+  eq(calls.at(-1), ['variables', { name: 'LAB_HOSTS', before: 'o/new' }]); eq(f.st.vars.LAB_HOSTS, 'o/old');
   // (may() says no first: the button cannot be pressed and says what is needed)
   const c3 = UI.undoCard({ api: f.api, lab: { slug: 'o/lab' }, guarded: fakeGuarded('admin', calls, toast), may: (a) => a !== 'members' }, ent('members', { file: PF }));
-  await tick();
+  await open(c3);
   const b3 = btn(c3, /この変更を取り消す/); ok(b3.disabled && /メンバーと役割を変える/.test(c3.textContent), c3.textContent);
   await b3.click(); eq(f.st.puts.length, 0);
 });
@@ -213,21 +226,88 @@ await t('undoCard: what cannot be undone says why with a button that cannot be p
   const g = fakeGuarded('admin', calls, toast);
   for (const [e, re] of [[ent('secrets.put', { name: 'X' }), /秘密の値/], [ent('variables', { name: 'LAB_HOSTS' }), /前の値が記録にありません/], [ent('variables', { file: NF }), /作られました/]]) {
     const c = UI.undoCard({ api: f.api, lab: { slug: 'o/lab' }, guarded: g }, e);
-    await tick();
+    await open(c);
     const b = btn(c, /この変更を取り消す/); ok(b.disabled && re.test(c.textContent), c.textContent);
     await b.click();
   }
   f.st.files[PF][3].text = '{"version":1,"roles":{"write":["fly"]}}\n';
   const c = UI.undoCard({ api: f.api, lab: { slug: 'o/lab' }, guarded: g }, ent('members', { file: PF }));
-  await tick();
+  await open(c);
   ok(btn(c, /この変更を取り消す/).disabled && /誤りがあるので戻せません/.test(c.textContent), c.textContent);
   const c0 = UI.undoCard({ api: f.api, lab: { slug: 'o/lab' } }, ent('members', { file: PF }));
-  await tick(); ok(btn(c0, /この変更を取り消す/).disabled, 'no guarded: nothing written');
+  await open(c0); ok(btn(c0, /この変更を取り消す/).disabled, 'no guarded: nothing written');
   eq(calls, []); eq(f.st.puts.length, 0);
   f = fakeGitHub({ down: true });
   const cd = UI.undoCard({ api: f.api, lab: { slug: 'o/lab' }, guarded: g }, ent('members', { file: PF }));
-  await tick();
+  await open(cd);
   ok(cd.all((e) => e.attrs.role === 'alert').length === 1 && btn(cd, /読み直す/), cd.textContent);
+});
+
+await t('apply: writes with the sha prepare read (not read again); changed after prepare → 「開いた後に変わりました」 and nothing written', async () => {
+  const f = fakeGitHub();
+  const p = await U.prepare(f.api, 'o/lab', ent('members', { file: PF }));
+  eq(p.nowSha, 'blob-4');
+  // (someone changes the policy after the card was opened)
+  f.st.files[PF].unshift({ sha: 'e'.repeat(40), login: 'dave', date: '2026-10-11T13:00:00Z', text: POL2 });
+  let e = null; try { await U.apply(f.api, 'o/lab', p); } catch (x) { e = x; }
+  ok(e && /開いた後に変わりました。読み直してください/.test(e.message), e?.message);
+  eq(f.st.puts.length, 0, 'nothing written'); eq(f.st.files[PF][0].text, POL2);
+  const seen = f.st.seen.length, p2 = await U.prepare(f.api, 'o/lab', ent('members', { file: PF }));
+  eq((await U.apply(f.api, 'o/lab', p2)).changed, true);
+  eq(f.st.seen.slice(seen).filter((x) => /^GET .*\/contents\/[^?]+$/.test(x)).length, 1, 'the current file read once, by prepare');
+});
+
+await t('prepare: the commits of the same file after the one undone are counted (later); none after: 0', async () => {
+  const f = fakeGitHub();
+  eq((await U.prepare(f.api, 'o/lab', ent('members', { file: PF }))).later, 2);
+  ok(f.st.seen.some((x) => /commits\?per_page=\d+&path=[^&]+&since=2026-10-10T09%3A00%3A20\.000Z$/.test(x)), f.st.seen.join('\n'));
+  const last = await U.prepare(f.api, 'o/lab', ent('members', { file: PF }, '2026-10-11T12:00:10Z', 'bob'));
+  eq([last.ok, last.commit.sha, last.later], [true, S2, 0]);
+});
+
+await t('undoCard: later changes of the same file are said ("それも戻ります") and the button waits for the check; none later: no check', async () => {
+  const { toast } = fakeDom(), UI = await imp('panel/ui/undo.mjs'), f = fakeGitHub(), calls = [];
+  const c = UI.undoCard({ api: f.api, lab: { slug: 'o/lab' }, guarded: fakeGuarded('admin', calls, toast) }, ent('members', { file: PF }));
+  await open(c);
+  ok(/2 件変わっています/.test(c.textContent) && /それも戻ります/.test(c.textContent) && /後の 2 件の変更もまとめて戻す/.test(c.textContent), c.textContent);
+  const go = btn(c, /この変更を取り消す/); ok(go.disabled && /チェックを入れてください/.test(c.textContent), c.textContent);
+  await go.click(); await settle(); eq(f.st.puts.length, 0, 'not ticked: nothing written'); eq(calls, []);
+  tickBox(c); ok(!go.disabled, 'ticked: can be pressed');
+  await go.click(); await settle(); eq(f.st.puts.length, 1);
+  const f2 = fakeGitHub();
+  const c2 = UI.undoCard({ api: f2.api, lab: { slug: 'o/lab' }, guarded: fakeGuarded('admin', [], toast) }, ent('members', { file: PF }, '2026-10-11T12:00:10Z', 'bob'));
+  await open(c2);
+  ok(!/それも戻ります/.test(c2.textContent) && c2.all((e) => e.tagName === 'INPUT').length === 0 && !btn(c2, /この変更を取り消す/).disabled, c2.textContent);
+});
+
+await t('undoCard: making the card reads nothing from GitHub; 「取り消す…」 pressed reads it', async () => {
+  fakeDom();
+  const UI = await imp('panel/ui/undo.mjs'), f = fakeGitHub();
+  const c = UI.undoCard({ api: f.api, lab: { slug: 'o/lab' }, guarded: async () => undefined }, ent('members', { file: PF }));
+  await settle();
+  eq(f.st.seen, [], 'nothing read yet'); ok(btn(c, /^取り消す…$/) && !btn(c, /この変更を取り消す/), c.textContent);
+  await open(c);
+  ok(f.st.seen.length > 0 && btn(c, /この変更を取り消す/), c.textContent);
+});
+
+await t('undoCard: the record keeps ref (the commit put back to) and a variable\'s value before the undo, so the undo can be undone too', async () => {
+  const { toast } = fakeDom(), UI = await imp('panel/ui/undo.mjs'), f = fakeGitHub(), calls = [];
+  const e = { ...ent('variables', { name: 'LAB_HOSTS' }), detail: { name: 'LAB_HOSTS', before: 'o/old' } };
+  const c = UI.undoCard({ api: f.api, lab: { slug: 'o/lab' }, guarded: fakeGuarded('admin', calls, toast) }, e);
+  await open(c); await btn(c, /この変更を取り消す/).click(); await settle();
+  eq(calls, [['variables', { name: 'LAB_HOSTS', before: 'o/new' }]]);
+  // (the record as the audit log keeps it: undoable again, back to o/new)
+  const back = U.undoable(ent('variables', calls[0][1]));
+  eq([back.ok, back.before], [true, 'o/new']);
+  // (a variable not of BEFORE_NAMES: no before)
+  f.st.vars.OTHER = 'now';
+  const c2 = UI.undoCard({ api: f.api, lab: { slug: 'o/lab' }, guarded: fakeGuarded('admin', calls, toast) }, { action: 'variables', detail: { name: 'OTHER', before: 'old' } });
+  await open(c2); await btn(c2, /この変更を取り消す/).click(); await settle();
+  eq(calls.at(-1), ['variables', { name: 'OTHER' }]);
+  const c3 = UI.undoCard({ api: f.api, lab: { slug: 'o/lab' }, guarded: fakeGuarded('admin', calls, toast) }, ent('members', { file: PF }));
+  await open(c3); tickBox(c3); await btn(c3, /この変更を取り消す/).click(); await settle();
+  eq(calls.at(-1), ['members', { file: PF, ref: '0000000' }]);
+  ok(AU.entry({ actor: 'alice', action: 'members', detail: calls.at(-1)[1] }).detail.ref === '0000000', 'the audit log keeps ref');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
