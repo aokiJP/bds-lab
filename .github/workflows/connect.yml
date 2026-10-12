@@ -4,8 +4,12 @@ name: connect
 # the account, workers.dev), Microsoft (the Xbox account's form), Google Play (a one-time oauth_token turned into the AAS
 # token, kept as a secret, the one-time value removed), AI (the API keys). The result: a notice `connect-<service>` (one
 # line of JSON: names, ids, yes or no — never a value), read back by the panel. Values are masked the moment they are read
-# and never printed. Started by hand only (the panel, or Run workflow).
+# and never printed. Started by hand (the panel, or Run workflow) for one service; and once a day for all that are set up
+# (`node lab.mjs connect-daily`: a notice `connect-daily` the panel's 「🔗 連携」 reads, and one Discord message when one is
+# broken — the job stays green: the notice and that message say it, not a failure of its own).
 on:
+  schedule:
+    - cron: '17 21 * * *'   # 06:17 in Tokyo
   workflow_dispatch:
     inputs:
       service:
@@ -15,10 +19,11 @@ on:
         default: discord
 permissions: { contents: read }
 concurrency:
-  group: connect-${{ inputs.service }}
+  group: connect-${{ inputs.service || 'daily' }}
   cancel-in-progress: false
 jobs:
   check:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -52,3 +57,39 @@ jobs:
           OPENAI_API_KEY: ${{ inputs.service == 'ai' && secrets.OPENAI_API_KEY || '' }}
           OPENAI_BASE_URL: ${{ inputs.service == 'ai' && vars.OPENAI_BASE_URL || '' }}
         run: node lab.mjs connect check "$SERVICE"
+  daily:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version: 22 }
+      # reads only: no token that may write (Google's one-time value is not used here — the AAS token alone)
+      - name: 毎日の確認
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_USER_ID: ${{ secrets.DISCORD_USER_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          MS_EMAIL: ${{ secrets.MS_EMAIL }}
+          MS_PASSWORD: ${{ secrets.MS_PASSWORD }}
+          GOOGLE_EMAIL: ${{ secrets.GOOGLE_EMAIL }}
+          GOOGLE_AAS_TOKEN: ${{ secrets.GOOGLE_AAS_TOKEN }}
+          GOOGLE_OAUTH_TOKEN: ${{ secrets.GOOGLE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+        run: node lab.mjs connect-daily --no-notify --text-out "$RUNNER_TEMP/daily.txt" || true
+      # one broken: one message, the lab's way (the bot's direct message first, else the webhook — as notify.yml)
+      - name: Discord に知らせる
+        if: vars.LAB_NOTIFY != 'off'
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_USER_ID: ${{ secrets.DISCORD_USER_ID }}
+          LAB_NOTIFY_WEBHOOK: ${{ secrets.LAB_NOTIFY_WEBHOOK }}
+        run: |
+          [ -s "$RUNNER_TEMP/daily.txt" ] || exit 0
+          [ -n "$DISCORD_BOT_TOKEN$LAB_NOTIFY_WEBHOOK" ] || { echo "W Discord がまだつながっていません: 不調は上の注釈だけです"; exit 0; }
+          node lab.mjs app notify --kind connect --text "$(cat "$RUNNER_TEMP/daily.txt")"

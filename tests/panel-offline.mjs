@@ -266,7 +266,8 @@ await t('panel check: a changed file → the checks it needs (ESLint, the offlin
   const LANES = ['tests/units-offline.mjs', 'tests/schedule-offline.mjs', 'tests/stats-offline.mjs', 'tests/inbox-offline.mjs',
     'tests/rescue-offline.mjs', 'tests/shell-rescue-offline.mjs', 'tests/setup-rescue-offline.mjs', 'tests/units-rescue-offline.mjs', 'tests/misc-rescue-offline.mjs',
     'tests/ghrules-offline.mjs', 'tests/fakes-rules-offline.mjs', 'tests/connect-ui-offline.mjs',
-    'tests/qr-offline.mjs', 'tests/playcard-offline.mjs', 'tests/relnotes-offline.mjs', 'tests/packdiff-offline.mjs', 'tests/revert-offline.mjs', 'tests/drafts-offline.mjs', 'tests/tutorial-offline.mjs', 'tests/progress-offline.mjs'];
+    'tests/qr-offline.mjs', 'tests/playcard-offline.mjs', 'tests/relnotes-offline.mjs', 'tests/packdiff-offline.mjs', 'tests/revert-offline.mjs', 'tests/drafts-offline.mjs', 'tests/tutorial-offline.mjs', 'tests/progress-offline.mjs',
+    'tests/failsum-offline.mjs', 'tests/runissue-offline.mjs', 'tests/runcompare-offline.mjs', 'tests/testhist-offline.mjs', 'tests/secretwatch-offline.mjs', 'tests/connectdaily-offline.mjs', 'tests/weekly-offline.mjs', 'tests/notifyprefs-offline.mjs'];
   eq(PN.plan(['panel/lib/members.mjs']), { lint: ['panel/lib/members.mjs'], tests: ['tests/panel-offline.mjs', 'tests/governance-offline.mjs', ...LANES, 'tests/panel-browser.mjs'] });
   eq(PN.plan(['panel/ui/signin.mjs', 'auth/handler.mjs'], { quick: true }).tests, ['tests/panel-offline.mjs', 'tests/session-offline.mjs', 'tests/auth-offline.mjs', ...LANES]);
   eq(PN.plan(['common/unitci.mjs', 'common/schedule.mjs']), { lint: ['common/unitci.mjs', 'common/schedule.mjs'], tests: ['tests/units-offline.mjs', 'tests/schedule-offline.mjs'] }, 'the CLI side of 「アドオン」 and 「予約」');
@@ -570,6 +571,18 @@ await t('app notify: a finished run told as a DM with link buttons and its .mcad
   const hook = await run(['--run', '5'], { LAB_NOTIFY_WEBHOOK: `http://127.0.0.1:${port}/hook` });
   const h0 = got.hook.at(-1);
   ok(hook.code === 0 && /OK Webhook に送りました$/m.test(hook.o) && got.hook.length === 2 && /verify 落ちました/.test(JSON.stringify(h0)) && /actions\/runs\/5/.test(JSON.stringify(h0)) && !h0.files.length && /Coins\.mcaddon/.test(JSON.stringify(h0)), `another webhook: the files named, not sent\n${hook.o}${JSON.stringify(got.hook)}`);
+  // (the panel's 「通知の設定」: a channel's webhook calls the people who asked for that kind by their Discord id — a failed run, a
+  // weekly report; no one else, and no file: no one)
+  const fsm = await import('node:fs'), os = await import('node:os'), pdir = fsm.mkdtempSync(path.join(os.tmpdir(), 'prefs-')), prefs = path.join(pdir, 'notify.json');
+  fsm.writeFileSync(prefs, JSON.stringify({ version: 1, members: { alice: { kinds: ['failed'], discord: '111111111111111111' }, bob: { kinds: ['weekly'], discord: '222222222222222222' } } }));
+  try {
+    await run(['--run', '5'], { LAB_NOTIFY_WEBHOOK: `http://127.0.0.1:${port}/hook`, LAB_NOTIFY_PREFS: prefs });
+    const f1 = JSON.stringify(got.hook.at(-1));
+    ok(f1.includes('<@111111111111111111>') && !f1.includes('<@222222222222222222>'), f1);
+    await run(['--kind', 'weekly', '--text', '📰 week'], { LAB_NOTIFY_WEBHOOK: `http://127.0.0.1:${port}/hook`, LAB_NOTIFY_PREFS: prefs });
+    const f2 = JSON.stringify(got.hook.at(-1));
+    ok(f2.includes('<@222222222222222222>') && !f2.includes('<@111111111111111111>'), f2);
+  } finally { fsm.rmSync(pdir, { recursive: true, force: true }); }
   const none = await run(['--run', '5'], {});
   ok(none.code === 0 && /通知先がありません/.test(none.o), none.o);
   srv.close();

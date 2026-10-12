@@ -5,6 +5,34 @@
 スマホの Discord から CI の端末を画面とボタンで動かせ、リポジトリの秘密も Discord のフォームで登録できる（node も PC も要らない）。**
 
 ### 管理パネル: 今の約 2 倍に — git clone も PC もなしで、作る・取り込む・直す・試験・仕上げ・配る・予約・統計・お知らせ
+- 管理パネル: **見張る・知らせるの 8 機能**（追加機能 B）。
+  - 🩺 **落ちた理由のまとめ**（`lib/failsum.mjs`・`ui/failsum.mjs`）: 「進み具合」で落ちた実行を開くと「どこで・なぜ・次の 1 手」の 3 行。
+    止められた・時間切れ（GitHub 自身の文だけ: 試験の timeout は試験の失敗）・秘密が無い（名前も）・BDS を取れない・試験の期待
+    が合わない・ワークフローが読めない。「🩺 考えられる原因」の直し方を次の 1 手に使う。ログは読まない（注釈と step だけ）。
+  - 🐛 **失敗から Issue**（`lib/runissue.mjs`・`ui/runissue.mjs`）: 落ちた実行から、まとめ・失敗したジョブと step・注釈・リンクの
+    Issue を 1 クリック（ラベル bds-lab-run、同じ実行の Issue があればそれを開くだけ: 読むだけなので守りも監査ログも通らない）。
+    秘密らしい文字は伏せ、題や注釈の @名前 で人を呼ばない。ポリシーに新しい操作 **issues**（GitHub の triage 以上）。
+  - ⚖️ **実行の比較**（`lib/runcompare.mjs`・`ui/runcompare.mjs`）: 「統計」で 2 つの実行（最初は最後に通ったものと最新）のジョブ・
+    step ごとの結果と時間（「2 分 → 7 分（+5 分）」大きい順）、枝・commit（GitHub の compare へ）・始め方の違い。同じ名前の step
+    が 2 つあっても両方比べる。
+  - 📈 **試験の履歴**（`lib/testhist.mjs`・`ui/testhist.mjs`）: ユニットごとの unit.yml の test・go を日ごとに（自前の SVG、✓ は塗った
+    上向きの棒・✗ は枠だけの下向きの棒、表つき）、通る割合・連続で通った回・最後に通った日。日はこのブラウザの暦（日本なら
+    朝 0〜9 時の実行もその日）。30 日分をページを送って読む。
+  - 🔑 **秘密の古さ**（`lib/secretwatch.mjs`・`ui/secretwatch.mjs`）: 「秘密」の上に、90 日で古い・180 日でとても古い秘密と入れ替え方
+    （GitHub のトークンは作り直しのページ、連携のものは「🔗 連携」）。値は読まない（名前と日付だけ）。
+  - 🔗 **連携の毎日の確認**（`common/connect-daily.mjs`・`lib/connectdaily.mjs`・`ui/connectdaily.mjs`）: connect.yml が毎朝（東京 6:17）
+    入っている連携だけを確かめる（`node lab.mjs connect-daily`、注釈 connect-daily、値は伏せてから）。だめなものがあれば 1 通、
+    notify.yml と同じ道（ボットの DM、無ければ Webhook）。ジョブは落とさない（知らせが 2 通にならない）。「🔗 連携」の上に最後の
+    確認の時刻と ✅/⚠️ と次の 1 手。
+  - 📰 **週報**（`common/weekly.mjs`・`lib/weekly.mjs`・`ui/weekly.mjs`・`.github/workflows/weekly.yml`）: 月曜の朝に 1 週間の実行の数・
+    通った割合（先週と）・使った分・よく落ちたもの・新しいリリース・貸し手の分を 1 通（2000 字に収める、@ で人を呼ばない）。
+    送り方は notify.yml と同じ。「統計」で下書きを見て「Discord に送る」もできる。`node lab.mjs weekly [--dry|--send] [--text-out]`。
+  - 🔔 **通知の設定**（`lib/notifyprefs.mjs`・`ui/notifyprefs.mjs`）: 「設定」で、落ちた・通った・リリース・週報・連携の不調・秘密の古さ
+    のどれを知らせてほしいか、人ごとに（自分の行、管理者は全員）。Discord のユーザー ID も。`.github/bds-lab-notify.json` に sha
+    つきで（守りは「変数を変える」と同じ）。別の人が先に変えていたら読み直し、守られた枝の断りはそのまま言う。Webhook の知らせ
+    （app notify）は、その種類を選んだ人を ID で呼ぶ（`--kind`、走った実行なら落ちた・通った）。
+  - 試験: `tests/{failsum,runissue,runcompare,testhist,secretwatch,connectdaily,weekly,notifyprefs}-offline.mjs`。偽の GitHub は全部
+    `fakeCheck` を通し、偽の guarded はポリシーを通す（無い操作名・許されない操作は断る）。`panel check` が回す。
 - 管理パネル: **作る・配るの 8 機能**（追加機能 A）。
   - 📱 **配布の QR コード**（`lib/qr.mjs`・`ui/qr.mjs`）: 「配布」のパックの行の「📱 QR」で、スマホのカメラで受け取れる。QR の符号化は
     自前（型番 1〜10・誤り訂正 M・213 バイトまで）で、ISO の公表値と、試験の中に別に書いた復号器で確かめる。github.com 以外の文は
