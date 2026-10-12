@@ -9,7 +9,11 @@
 
 1. この枝を既定の枝にマージし、パネルを開きます（Pages がまだなら、`pages.yml` を一度手で走らせるか、2 のあとで）。
    最初の 1 回だけ、トークンで入ります（「トークンで入る」: 下の表の権限の Fine-grained トークン）。
-2. 「準備」のタブを上から順に。⚠️ の行のボタンで、パネルから直せます:
+2. 「準備」のタブの **⚡ 全自動で準備する** を押します（サインインのサービスも置くなら、その前に Cloudflare の API トークン
+   「Edit Cloudflare Workers」とアカウント ID を入れる）。パネルが Pages を有効にし、GitHub の App を作る画面へ行きます。
+   あなたが押すのは GitHub の 2 つだけ: **Create GitHub App** と、ラボを選んである **Install**。戻ってくるたびに続きを
+   自動で（鍵を秘密に・App を入れる画面へ・サービスを Cloudflare に置いてページに渡す）。1 つずつやるなら、上から順に。
+   ⚠️ の行のボタンで、パネルから直せます:
    - **GitHub Pages** を有効に（Source: GitHub Actions）
    - **サインインのサービス**を置く: Cloudflare の API トークン（「Edit Cloudflare Workers」）と Account ID を入れると、その場で封じて
      秘密に登録し、`auth-deploy.yml` を始め、そのアドレスを変数 `LAB_AUTH_URL` に入れ、`pages.yml` でページに渡します。
