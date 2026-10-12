@@ -51,14 +51,23 @@ function fakeDom() {
   globalThis.document = { createElement: (tag) => new E(tag), createElementNS: (ns, tag) => new E(tag, ns), createTextNode: (s) => new T(s), getElementById: (id) => (id === 'toast' ? toast : null), body: new E('body') };
   return { toast };
 }
-const flush = () => new Promise((r) => setTimeout(r, 20));
-function api(invitations, { down = false } = {}) {
+// (the card's requests to the fake GitHub counted where they start and end: a wait ends when none is open and none has come or
+// gone for a while — not after a fixed time, which a busy CI runner can outlast)
+const net = { busy: 0, at: 0 };
+const flush = async () => {
+  const until = Date.now() + 10_000;
+  await new Promise((r) => setTimeout(r, 30));
+  while (Date.now() < until && (net.busy > 0 || Date.now() - net.at < 60)) await new Promise((r) => setTimeout(r, 15));
+};
+function api(invitations, { down = false, refused = 0 } = {}) {
   const seen = [];
-  const fetchImpl = async (url, init) => {
+  const fetchImpl = async (url, init) => { net.busy++; net.at = Date.now(); try { return await answer(url, init); } finally { net.busy--; net.at = Date.now(); } };
+  const answer = async (url, init) => {
     const u = url.replace('https://api.github.com', ''), m = init.method; seen.push(`${m} ${u}`);
     const json = (code, j) => ({ status: code, ok: code < 300, headers: { get: () => null }, text: async () => JSON.stringify(j), json: async () => j });
     const bad = fakeCheck(m, u, init.body ? JSON.parse(init.body) : null); if (bad) return json(422, { message: bad.message });
     if (down) return json(500, { message: 'boom' });
+    if (refused && /^\/repos\/o\/lab\/invitations\?/.test(u)) return json(refused, { message: refused === 403 ? 'Must have admin rights to Repository.' : 'Not Found' });
     if (/^\/repos\/o\/lab\/collaborators\?/.test(u)) return json(200, [{ login: 'o', permissions: { admin: true }, role_name: 'admin' }]);
     if (/^\/repos\/o\/lab\/invitations\?/.test(u)) return json(200, invitations);
     return json(404, { message: 'Not Found' });
@@ -89,6 +98,41 @@ await t('no invitation yet (or for someone else): "invite first", no QR, a butto
     ok(/先に「メンバー」で/.test(card.textContent) && !card.all((e) => e.tagName === 'svg').length, card.textContent);
     ok(card.all((e) => e.tagName === 'BUTTON' && /調べ直す/.test(e.textContent)).length === 1, 'look again');
   }
+});
+await t('the list unreadable (403/404: not an administrator) with a login: never "none yet" — the QR and words all the same', async () => {
+  for (const refused of [403, 404]) {
+    fakeDom(); const UI = await imp('panel/ui/inviteqr.mjs');
+    const card = UI.inviteQrCard({ api: api([], { refused }).api, lab: { slug: 'o/lab' } }, { login: 'kid', role: 'write' });
+    await flush();
+    const url = 'https://github.com/o/lab/invitations';
+    ok(!/まだありません|先に「メンバー」で/.test(card.textContent), `${refused}: ${card.textContent}`);
+    ok(card.all((e) => e.tagName === 'svg').length === 1 && card.all((e) => e.tagName === 'PRE').some((p) => /kid さん/.test(p.textContent) && p.textContent.includes(url)), `${refused}: ${card.textContent}`);
+    ok(/GitHub のページを開くと分かります/.test(card.textContent) && !card.all((e) => e.attrs.role === 'alert').length, card.textContent);
+  }
+});
+await t('the list unreadable with no login: says only administrators see it (not "none yet"), no QR', async () => {
+  fakeDom(); const UI = await imp('panel/ui/inviteqr.mjs');
+  const card = UI.inviteQrCard({ api: api([], { refused: 403 }).api, lab: { slug: 'o/lab' } }, {});
+  await flush();
+  ok(/管理者だけが招待の一覧を見られます/.test(card.textContent) && !/まだありません/.test(card.textContent), card.textContent);
+  ok(!card.all((e) => e.tagName === 'svg').length && card.all((e) => e.tagName === 'BUTTON' && /調べ直す/.test(e.textContent)).length === 1, card.textContent);
+});
+await t('no login: whoever was invited last (the newest created_at), whatever order GitHub lists them in', async () => {
+  fakeDom(); const UI = await imp('panel/ui/inviteqr.mjs');
+  const list = [
+    { id: 1, invitee: { login: 'Old' }, permissions: 'read', created_at: '2026-09-01T00:00:00Z' },
+    { id: 3, invitee: { login: 'Newest' }, permissions: 'write', created_at: '2026-10-05T00:00:00Z' },
+    { id: 2, invitee: { login: 'Mid' }, permissions: 'admin', created_at: '2026-10-01T00:00:00Z' },
+  ];
+  const card = UI.inviteQrCard({ api: api(list).api, lab: { slug: 'o/lab' } }, {});
+  await flush();
+  ok(card.all((e) => e.tagName === 'PRE').some((p) => /^Newest さん/.test(p.textContent) && /書き込み/.test(p.textContent)), card.textContent);
+});
+await t('a button that cannot be pressed is not pressed (disabled: click does nothing)', async () => {
+  fakeDom(); const { h } = await imp('panel/ui/dom.mjs'), pressed = [];
+  const off = h('button', { disabled: true, onclick: () => pressed.push('off') }, 'x'), on = h('button', { onclick: () => pressed.push('on') }, 'y');
+  await off.click(); eq(pressed, [], 'disabled');
+  await on.click(); eq(pressed, ['on'], 'enabled');
 });
 await t('GitHub down: the failure in words with a way on (role alert)', async () => {
   fakeDom(); const UI = await imp('panel/ui/inviteqr.mjs');
