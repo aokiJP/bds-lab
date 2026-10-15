@@ -621,7 +621,9 @@ await t('the cards (fake DOM, fake GitHub): 新しく作る starts unit.yml with
   ok(/JSON として読めません/.test(toast.textContent) && f.st.seen.filter((s) => s.method === 'PUT' && s.path.endsWith('manifest.json')).length === 0, 'a broken manifest is not saved');
   pick.value = 'rp/texts/ja_JP.lang'; await pick.fire('change'); await settle();
   ok(text.disabled && /このユニットにありません/.test(ed.byId('edit-state').textContent), 'a file it does not have');
-  await ed.button(/^保存$/).click(); ok(/まだ読めていません/.test(toast.textContent), 'nothing read: nothing saved');
+  const beforeUnread = f.st.seen.filter((x) => x.method === 'PUT').length;
+  ok(ed.button(/^保存$/).disabled, 'an unread file cannot be saved');
+  await ed.button(/^保存$/).click(); eq(f.st.seen.filter((x) => x.method === 'PUT').length, beforeUnread, 'nothing read: no write sent');
   // another's change since it was read: refused in words, theirs kept
   pick.value = 'tests.txt'; await pick.fire('change'); await settle();
   f.st.files.set('bds/addons/coins/tests.txt', { data: Buffer.from('## theirs\n'), sha: sha(Buffer.from('## theirs\n')) });
@@ -742,6 +744,75 @@ await t('reloading the units while a read is pending shares one request and re-e
   eq(reads, 1, 'no duplicated releases read');
   release(); await Promise.all([initial, again, twice]);
   ok(!reload.disabled && body.all((e) => e.attrs['data-unit']).length > 0, 'usable and loaded again');
+});
+
+await t('an ambiguous import dispatch or upload keeps its staged branch; definite refusal still cleans it up', async () => {
+  for (const phase of ['upload', 'dispatch']) {
+    const plan = W.importPlan({ fileName: 'recovery.mcpack', size: 4, now: Date.UTC(2026, 9, 15), nonce: 'safe' });
+    const target = phase === 'upload' ? `/repos/o/lab/contents/${plan.path}` : '/repos/o/lab/actions/workflows/unit.yml/dispatches';
+    const f = fakeGitHub({ files: LAB, fail: { [target]: { method: phase === 'upload' ? 'PUT' : 'POST', status: 503, message: 'response lost' } } });
+    let error;
+    try { await W.importUnit(f.api, 'o/lab', plan, 'UEs=', (wf, inputs) => f.api.dispatch('o/lab', wf, 'main', inputs)); } catch (e) { error = e; }
+    ok(f.st.refs.has(plan.branch), `${phase}: staged file is recoverable`);
+    ok(!f.st.seen.some((x) => x.method === 'DELETE'), 'no destructive cleanup after uncertain outcome');
+    ok(error?.incomingBranch === plan.branch && /残して/.test(error.message), 'the retained branch is identified');
+  }
+});
+await t('a malformed file response or missing save SHA never becomes an editable or saved empty file', async () => {
+  for (const reply of [{ type: 'file', encoding: 'base64', sha: 's' }, { type: 'file', encoding: 'base64', content: '' }]) {
+    let error;
+    try { await W.readUnitFile({ call: async () => reply }, 'o/lab', 'bds/addons/coins/src/main.ts'); } catch (e) { error = e; }
+    ok(error, 'unverifiable read refused');
+  }
+  let error;
+  try { await W.saveUnitFile({ putFile: async () => ({ content: {} }) }, 'o/lab', 'bds/addons/coins/src/main.ts', 'new', 's', 'save'); } catch (e) { error = e; }
+  ok(error?.uncertain && /確認/.test(error.message), 'no false saved state');
+});
+await t('new-unit clicks are single-flight and a failed existence check retains the form', async () => {
+  const { toast } = fakeDom(), UI = await imp('panel/ui/workspace.mjs');
+  let resolve, reads = 0, starts = 0;
+  const pending = new Promise((r) => { resolve = r; });
+  const f = fakeGitHub({ files: LAB });
+  const api = { ...f.api, call: async (...args) => { if (args[0] === 'GET' && args[1].includes('/contents/bds/addons/new_one')) { reads++; await pending; } return f.api.call(...args); } };
+  const ctx = ctxOf(api, { dispatch: async () => { starts++; } }).ctx;
+  const card = UI.newUnitCard(ctx), input = card.byId('newunit-name'); input.value = 'new_one';
+  const button = card.button(/^作る$/), a = button.click(), b = button.click();
+  ok(button.disabled && input.disabled, 'submission and fields locked'); eq(reads, 1);
+  resolve(); await Promise.all([a, b]); eq(starts, 1); ok(!button.disabled && !input.disabled);
+  const broken = ctxOf({ call: async () => { throw new Error('existence check failed'); } }, { dispatch: async () => { starts++; } }).ctx;
+  const fail = UI.newUnitCard(broken); fail.byId('newunit-name').value = 'keep_me';
+  await fail.button(/^作る$/).click(); eq(starts, 1); eq(fail.byId('newunit-name').value, 'keep_me'); ok(/existence check failed/.test(toast.textContent));
+});
+await t('starting a unit twice while dispatch is pending sends one workflow', async () => {
+  fakeDom(); const UI = await imp('panel/ui/workspace.mjs');
+  let resolve, starts = 0;
+  const pending = new Promise((r) => { resolve = r; }), ctx = ctxOf({}, { dispatch: async () => { starts++; await pending; return true; } }).ctx;
+  const a = UI.startUnit(ctx, { job: 'test', unit: 'coins' }), b = UI.startUnit(ctx, { job: 'test', unit: 'coins' });
+  eq(starts, 1); resolve(); await Promise.all([a, b]);
+});
+
+await t('import clicks share one upload and closing the unit tab immediately preserves the editor draft', async () => {
+  const { E } = fakeDom(), UI = await imp('panel/ui/workspace.mjs'), units = await imp('panel/ui/units.mjs'), f = fakeGitHub({ files: LAB });
+  let release, reads = 0;
+  globalThis.FileReader = class { readAsDataURL() { reads++; release = () => { this.result = 'data:application/octet-stream;base64,UEs='; this.onload(); }; } };
+  const card = UI.importCard(ctxOf(f.api).ctx);
+  card.byId('import-file').files = [{ name: 'recovery.mcpack', size: 2 }];
+  const button = card.button(/^取り込む$/), a = button.click(), b = button.click();
+  await settle(); ok(button.disabled && card.byId('import-file').disabled); eq(reads, 1);
+  release(); await Promise.all([a, b]);
+  eq(f.st.seen.filter((x) => x.method === 'POST' && x.path.endsWith('/dispatches')).length, 1);
+  const data = new Map(), draftStore = { getItem: (k) => data.get(k) ?? null, setItem: (k, v) => data.set(k, v), removeItem: (k) => data.delete(k) };
+  const body = new E('div'); await units.unitsTab(body, ctxOf(f.api, { me: { login: 'o' }, draftStore, draftWait: 100000 }).ctx);
+  await body.button(/ファイルを直す/).click(); await settle();
+  const text = body.byId('edit-text'); text.value = '// do not lose this'; await text.fire('input');
+  body.stop(); eq(JSON.parse([...data.values()][0]).text, '// do not lose this'); ok(!body.byId('editor'));
+});
+await t('leaving the active account during preflight sends no new workflow', async () => {
+  fakeDom(); const UI = await imp('panel/ui/workspace.mjs'); let starts = 0;
+  const f = fakeGitHub({ files: LAB });
+  const card = UI.newUnitCard(ctxOf(f.api, { isActive: () => false, dispatch: async () => { starts++; } }).ctx);
+  card.byId('newunit-name').value = 'stopped'; await card.button(/^作る$/).click();
+  eq(starts, 0); eq(card.byId('newunit-name').value, 'stopped');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

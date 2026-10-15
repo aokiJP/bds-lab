@@ -33,16 +33,19 @@ export function saveDraft(storage, key, { text, baseSha = null, path = '', now =
 /** the draft → { text, baseSha, at } | null (none, broken or older than 30 days: forgotten) */
 export function loadDraft(storage, key, now = Date.now()) {
   if (!storage || !key) return null;
-  let d = null; try { d = JSON.parse(storage.getItem(key) ?? 'null'); } catch { /* broken: dropped below */ }
-  if (d && typeof d.text === 'string' && Number.isFinite(d.at) && now - d.at <= MAX_AGE) return { text: d.text, baseSha: d.baseSha ?? null, at: d.at };
-  if (storage.getItem(key) !== null) dropDraft(storage, key);
+  let raw;
+  try { raw = storage.getItem(key); } catch { return null; }
+  let d = null; try { d = JSON.parse(raw ?? 'null'); } catch { /* broken: dropped below */ }
+  if (d && typeof d.text === 'string' && Number.isFinite(d.at) && d.at >= 0 && d.at <= now + 300_000 && now - d.at <= MAX_AGE) return { text: d.text, baseSha: d.baseSha ?? null, at: d.at };
+  if (raw !== null) dropDraft(storage, key);
   return null;
 }
 export function dropDraft(storage, key) { try { if (storage && key) storage.removeItem(key); } catch { /* nothing to drop */ } }
 /** every draft → [{ key, account, slug, unit, path, bytes, at }] newest first (the old ones dropped on the way) */
 export function listDrafts(storage, now = Date.now()) {
   if (!storage) return [];
-  const keys = []; for (let i = 0; i < storage.length; i++) { const k = storage.key(i); if (k?.startsWith(PREFIX)) keys.push(k); }
+  const keys = [];
+  try { for (let i = 0; i < storage.length; i++) { const k = storage.key(i); if (k?.startsWith(PREFIX)) keys.push(k); } } catch { return []; }
   const out = [];
   for (const key of keys) {
     const d = loadDraft(storage, key, now); if (!d) continue;
