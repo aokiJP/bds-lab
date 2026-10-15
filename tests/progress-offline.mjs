@@ -176,5 +176,23 @@ await t('GitHub cannot be read: the words and a way to try again, never an empty
   } finally { f.close(); }
 });
 
+await t('a jobs failure stays visible, and the same card recovers on the next read', async () => {
+  fakeDom(); const UI = await imp('panel/ui/progress.mjs'), tm = fakeTimers();
+  let broken = true;
+  const api = { call: async () => RUNNING, runs: async () => [], jobs: async () => { if (broken) throw new Error('jobs offline'); return []; } };
+  const c = UI.progressCard({ api, lab: LAB(), timers: tm }, RUNNING); await settle();
+  ok(c.textContent.includes('jobs offline') && c.all((e) => e.attrs.role === 'alert').length === 1, c.textContent);
+  broken = false; await tm.tick();
+  ok(!c.textContent.includes('jobs offline'), 'the next successful read clears the error'); c.stop();
+});
+await t('a stopped card never restarts its poller after an in-flight read completes', async () => {
+  fakeDom(); const UI = await imp('panel/ui/progress.mjs'), tm = fakeTimers();
+  let finish, reads = 0;
+  const api = { call: () => { reads++; return new Promise((r) => { finish = r; }); }, runs: async () => [], jobs: async () => [] };
+  const c = UI.progressCard({ api, lab: LAB(), timers: tm }, RUNNING);
+  c.stop(); finish(RUNNING); await settle();
+  eq(tm.fns.size, 0, 'no timer resurrected'); eq(reads, 1); eq(c.all((e) => e.attrs['data-stage']).length, 0, 'no late draw');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

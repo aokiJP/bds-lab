@@ -57,13 +57,23 @@ export function config(env = {}) {
 /** GitHub's token answer → the tokens the panel is handed, or null (pure): only these five fields, each checked */
 export function tokensOf(j) {
   const num = (v) => { const n = typeof v === 'string' && /^\d{1,9}$/.test(v) ? Number(v) : v; return typeof n === 'number' && Number.isFinite(n) && n > 0 && n < 1e9 ? Math.floor(n) : null; };
-  if (!j || typeof j !== 'object' || !TOKEN.test(String(j.access_token ?? '')) || (j.token_type !== undefined && !/^bearer$/i.test(String(j.token_type)))) return null;
-  return { access_token: j.access_token, expires_in: num(j.expires_in), refresh_token: TOKEN.test(String(j.refresh_token ?? '')) ? j.refresh_token : null, refresh_token_expires_in: num(j.refresh_token_expires_in), token_type: 'bearer' };
+  if (!j || typeof j !== 'object' || (typeof j.access_token !== 'string' || !TOKEN.test(j.access_token)) || (j.token_type !== undefined && !/^bearer$/i.test(String(j.token_type)))) return null;
+  return { access_token: j.access_token, expires_in: num(j.expires_in), refresh_token: typeof j.refresh_token === 'string' && TOKEN.test(j.refresh_token) ? j.refresh_token : null, refresh_token_expires_in: num(j.refresh_token_expires_in), token_type: 'bearer' };
 }
 
 /** env → async (Request) → Response. fetchImpl reaches GitHub (a fake in tests); now is the clock (tests move it) */
-export function handler(env, { fetchImpl = (...a) => globalThis.fetch(...a), now = () => Date.now() } = {}) {
+export function handler(env, { fetchImpl = (...a) => globalThis.fetch(...a), now = () => Date.now(), requestTimeoutMs = 15_000, bodyTimeoutMs = 10_000 } = {}) {
   const c = config(env ?? {}), subtle = () => globalThis.crypto.subtle;
+  // Bound the complete exchange, including the response body. Never retry a code or token exchange.
+  const timeout = (n, fallback) => Number.isFinite(n) && n > 0 ? n : fallback;
+  async function bounded(action, ms, control = new AbortController()) {
+    let timer;
+    try {
+      return await Promise.race([action(control.signal), new Promise((_, reject) => {
+        timer = setTimeout(() => { reject(new Error('deadline')); control.abort(); }, ms);
+      })]);
+    } finally { clearTimeout(timer); }
+  }
   let keyP = null;
   const key = () => (keyP ??= subtle().importKey('raw', enc.encode(c.stateSecret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']));
   // (one key, each use its own label: a state's signature is never a PKCE verifier, k's hash never the cookie's signature)
@@ -107,16 +117,34 @@ export function handler(env, { fetchImpl = (...a) => globalThis.fetch(...a), now
   async function exchange(params) {
     let r, j;
     try {
-      r = await fetchImpl(`${c.web}${GITHUB.token}`, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded', 'user-agent': UA }, body: new URLSearchParams({ client_id: c.clientId, client_secret: c.secret, ...params }).toString() });
-      j = await r.json();
+      await bounded(async (signal) => {
+        r = await fetchImpl(`${c.web}${GITHUB.token}`, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded', 'user-agent': UA }, body: new URLSearchParams({ client_id: c.clientId, client_secret: c.secret, ...params }).toString(), signal });
+        j = await r.json();
+      }, timeout(requestTimeoutMs, 15_000));
     } catch { return { ok: false, error: 'github' }; }
     const tokens = r.ok && !j?.error ? tokensOf(j) : null;
     return tokens ? { ok: true, tokens } : { ok: false, error: 'exchange' };
   }
   const readJson = async (req) => {
-    if (Number(req.headers.get('content-length') ?? 0) > 4096) return null;
-    const t = await req.text().catch(() => '');
-    try { const j = t.length <= 4096 ? JSON.parse(t) : null; return j && typeof j === 'object' && !Array.isArray(j) ? j : null; } catch { return null; }
+    if (Number(req.headers.get('content-length') ?? 0) > 4096 || !req.body) { req.body?.cancel().catch(() => {}); return null; }
+    const reader = req.body.getReader(), chunks = [];
+    let size = 0, complete = false;
+    try {
+      return await bounded(async () => {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) { complete = true; break; }
+          size += value.byteLength;
+          if (size > 4096) return null;
+          chunks.push(value);
+        }
+        const bytes = new Uint8Array(size); let pos = 0;
+        for (const chunk of chunks) { bytes.set(chunk, pos); pos += chunk.byteLength; }
+        const j = JSON.parse(dec.decode(bytes));
+        return j && typeof j === 'object' && !Array.isArray(j) ? j : null;
+      }, timeout(bodyTimeoutMs, 10_000));
+    } catch { return null; }
+    finally { if (!complete) reader.cancel().catch(() => {}); }
   };
 
   async function login(url) {
@@ -167,8 +195,10 @@ export function handler(env, { fetchImpl = (...a) => globalThis.fetch(...a), now
     if (typeof at !== 'string' || !TOKEN.test(at)) return reply(400, { error: 'body' }, cors);
     let r;
     try {
-      r = await fetchImpl(`${c.api}${GITHUB.revoke(c.clientId)}`, { method: 'DELETE', headers: { accept: 'application/vnd.github+json', authorization: `Basic ${btoa(`${c.clientId}:${c.secret}`)}`, 'content-type': 'application/json', 'x-github-api-version': GITHUB.apiVersion, 'user-agent': UA }, body: JSON.stringify({ access_token: at }) });
-      await r.text().catch(() => '');
+      await bounded(async (signal) => {
+        r = await fetchImpl(`${c.api}${GITHUB.revoke(c.clientId)}`, { method: 'DELETE', headers: { accept: 'application/vnd.github+json', authorization: `Basic ${btoa(`${c.clientId}:${c.secret}`)}`, 'content-type': 'application/json', 'x-github-api-version': GITHUB.apiVersion, 'user-agent': UA }, body: JSON.stringify({ access_token: at }), signal });
+        await r.text();
+      }, timeout(requestTimeoutMs, 15_000));
     } catch { return reply(502, { error: 'github' }, cors); }
     // (404 / 422: GitHub knows no such token any more — gone already, which is what was asked)
     return r.ok || r.status === 404 || r.status === 422 ? reply(204, null, cors) : reply(502, { error: 'github' }, cors);

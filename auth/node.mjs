@@ -13,10 +13,19 @@ export function server(env = process.env, opts = {}) {
   const h = handler(env, opts);
   // (the address people and GitHub see: PUBLIC_URL's origin; else what the request says it reached — fine on this machine)
   let pub = null; try { pub = env.PUBLIC_URL ? new URL(env.PUBLIC_URL).origin : null; } catch { /* not an address: the request's own */ }
-  return http.createServer(async (req, res) => {
+  const s = http.createServer(async (req, res) => {
+    const bodyMs = Number.isFinite(opts.bodyTimeoutMs) && opts.bodyTimeoutMs > 0 ? opts.bodyTimeoutMs : 10_000;
+    const timer = setTimeout(() => {
+      if (!res.writableEnded && !res.destroyed) {
+        res.writeHead(408, { ...HEADERS, 'content-type': 'application/json; charset=utf-8', connection: 'close' });
+        res.end('{"error":"request_timeout"}');
+      }
+    }, bodyMs);
     try {
       const chunks = []; let size = 0;
       for await (const c of req) { size += c.length; if (size > LIMIT) { res.writeHead(413, { ...HEADERS, 'content-type': 'application/json; charset=utf-8' }); res.end('{"error":"body"}'); req.destroy(); return; } chunks.push(c); }
+      clearTimeout(timer);
+      if (res.writableEnded || res.destroyed) return;
       // (only the path and query of what was asked: an absolute address in the request line names no other origin)
       const rel = new URL(req.url ?? '/', 'http://localhost'), url = `${pub ?? `http://${req.headers.host ?? '127.0.0.1'}`}${rel.pathname}${rel.search}`;
       const headers = new Headers();
@@ -27,10 +36,13 @@ export function server(env = process.env, opts = {}) {
       const sc = r.headers.getSetCookie?.() ?? []; if (sc.length) out['set-cookie'] = sc;
       res.writeHead(r.status, out); res.end(Buffer.from(await r.arrayBuffer()));
     } catch {
+      if (res.writableEnded || res.destroyed) return;
       if (!res.headersSent) res.writeHead(400, { ...HEADERS, 'content-type': 'application/json; charset=utf-8' });
       res.end('{"error":"request"}');
-    }
+    } finally { clearTimeout(timer); }
   });
+  s.headersTimeout = 10_000; s.requestTimeout = 15_000;
+  return s;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

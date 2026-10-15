@@ -37,6 +37,11 @@ export const BDS_PARTS = ['bench', 'scratch', 'dev', 'play'];
 const TRUSTED = new Set(['push', 'workflow_dispatch', 'schedule']);
 const isBds = (u) => u.startsWith('bds:');
 const isTest = (u) => !isBds(u) && !STEPS.includes(u);
+// Empty or malformed reads do not prove that an unchanged checkout is safe to skip.
+const knownDeps = (d) => !!d && typeof d === 'object' && !Array.isArray(d) && Object.keys(d).length > 0
+  && Object.entries(d).every(([k, v]) => k.length > 0 && typeof v === 'string' && v.length > 0);
+const recordTime = (e, now) => Number.isFinite(Date.parse(e?.at ?? '')) && Date.parse(e.at) <= now + 300_000
+  && Number.isFinite(e.ms) && e.ms >= 0;
 const msg = (e) => String(e?.message ?? e).replace(/\s+/g, ' ').slice(0, 200);
 
 /** the checkout's units: the offline tests `auto gate --all` runs (in its order), the steps, the real server's parts and one
@@ -61,11 +66,11 @@ export function valuesNow(state, root = TOP) {
  *  changed (up to 3 named), or — staleDays — not passed for that long; when the offline job runs at all, the offline tests that
  *  took under cheapMs come along → Map(unit → why) in the units' order */
 export function select(state, units, values, { env = envKey(), now = Date.now(), staleDays = 0, cheapMs = CHEAP_MS } = {}) {
-  const had = state?.units && typeof state.units === 'object' ? state.units : {}, why = new Map();
+  const had = state?.v === STATE_VERSION && state.units && typeof state.units === 'object' && !Array.isArray(state.units) ? state.units : {}, why = new Map();
   for (const u of units) {
     const e = Object.hasOwn(had, u) ? had[u] : null;
     if (!e) { why.set(u, '前に通った記録がない（新しい・前に落ちた）'); continue; }
-    if (typeof e !== 'object' || !e.deps || typeof e.deps !== 'object') { why.set(u, '前の記録が読めない'); continue; }
+    if (typeof e !== 'object' || !knownDeps(e.deps) || !recordTime(e, now)) { why.set(u, '前の記録が読めない'); continue; }
     if (e.env !== env) { why.set(u, `別の環境で通った記録（${e.env ?? '不明'}）`); continue; }
     const changed = Object.keys(e.deps).filter((k) => e.deps[k] !== values[k]);
     if (changed.length) { why.set(u, `変わった: ${changed.slice(0, 3).join('、')}${changed.length > 3 ? ` ほか ${changed.length - 3} 個` : ''}`); continue; }
@@ -207,11 +212,15 @@ export async function loadState({ api, repo, token }, fetchImpl = fetch) {
 }
 
 /** JSON lines → the results in them, a broken line left out (pure) */
-export function parseResults(text) {
+export function parseResults(text, { strict = false } = {}) {
   const rows = [];
   for (const l of String(text).split('\n')) {
     if (!l.trim()) continue;
-    try { const r = JSON.parse(l); if (r && typeof r.unit === 'string' && typeof r.ok === 'boolean') rows.push(r); } catch { /* a line cut short */ }
+    try {
+      const r = JSON.parse(l);
+      if (r && typeof r.unit === 'string' && r.unit && typeof r.ok === 'boolean') rows.push(r);
+      else if (strict) throw new Error('invalid result');
+    } catch { if (strict) throw new Error('verify results contain incomplete or invalid evidence'); }
   }
   return rows;
 }
@@ -221,7 +230,7 @@ export async function runResults({ api, repo, token, runId }, fetchImpl = fetch)
   const j = await getJson(fetchImpl, `${api}/repos/${repo}/actions/runs/${runId}/artifacts?per_page=100`, token);
   const rows = [];
   for (const a of (j?.artifacts ?? []).filter((x) => String(x?.name ?? '').startsWith('verify-results-') && !x.expired)) {
-    for (const f of zipTexts(await getBytes(fetchImpl, a.archive_download_url, token), '.jsonl')) rows.push(...parseResults(f.text));
+    for (const f of zipTexts(await getBytes(fetchImpl, a.archive_download_url, token), '.jsonl')) rows.push(...parseResults(f.text, { strict: true }));
   }
   return rows;
 }
@@ -231,12 +240,14 @@ export async function runResults({ api, repo, token, runId }, fetchImpl = fetch)
 export function mergeState(prev, results, { now = Date.now(), keepDays = KEEP_DAYS } = {}) {
   const at = new Date(now).toISOString(), units = {};
   const before = prev?.v === STATE_VERSION && prev.units && typeof prev.units === 'object' ? prev.units : {};
-  for (const [u, e] of Object.entries(before)) if (e && typeof e === 'object' && now - Date.parse(e.at ?? '') <= keepDays * 864e5) units[u] = e;
+  for (const [u, e] of Object.entries(before)) if (e && typeof e === 'object' && knownDeps(e.deps) && recordTime(e, now) && now - Date.parse(e.at) <= keepDays * 864e5) units[u] = e;
+  const rejected = new Set();
   for (const r of results ?? []) {
     if (!r || typeof r.unit !== 'string') continue;
-    if (r.ok === true && r.deps && typeof r.deps === 'object' && !Array.isArray(r.deps)) units[r.unit] = { deps: r.deps, ms: r.ms, sha: r.sha, at, env: r.env };
-    else delete units[r.unit];
+    if (r.ok === true && knownDeps(r.deps) && Number.isFinite(r.ms) && r.ms >= 0 && typeof r.env === 'string' && r.env) units[r.unit] = { deps: r.deps, ms: r.ms, sha: r.sha, at, env: r.env };
+    else rejected.add(r.unit);
   }
+  for (const u of rejected) delete units[u];
   return { v: STATE_VERSION, at, units };
 }
 

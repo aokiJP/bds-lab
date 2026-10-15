@@ -31,6 +31,7 @@ export function readSchedule(file = path.join(TOP, S.SCHEDULE_FILE)) {
   }
   let j;
   try { j = JSON.parse(text.replace(/^\uFEFF/, '')); } catch (e) { return { found: true, jobs: [], errors: [`${S.SCHEDULE_FILE} が JSON ではありません（${e.message}）`] }; }
+  if (j === null) return { found: true, jobs: [], errors: [`${S.SCHEDULE_FILE} が null です（予約のオブジェクトが必要です）`] };
   return { found: true, ...S.checkSchedule(j) };
 }
 
@@ -48,6 +49,7 @@ async function rest(fetchImpl, { api, token }, method, p, body) {
 function refused(r, wf) {
   if (r.status === 0) return `GitHub につながりません（${r.message}）`;
   if (r.status === 401) return 'トークンが受け付けられません（HTTP 401）';
+  if (r.status === 429 || (r.status === 403 && /rate limit/i.test(r.message))) return 'GitHub の回数制限です。予約は開始できませんでした。制限が解除されたあとで実行してください';
   if (r.status === 403) return `権限がありません（schedule.yml の permissions に actions: write）: ${r.message}`;
   if (r.status === 404) return `${wf} が見つかりません（.github/workflows にあるか・名前を確かめる）`;
   if (r.status === 422) return `GitHub が受け付けません: ${r.message}（workflow_dispatch があるか・入力の名前と値）`;
@@ -58,6 +60,7 @@ function refused(r, wf) {
 export async function scheduleCmd(args = [], { out = console.log, env = process.env, file = path.join(TOP, S.SCHEDULE_FILE), now = new Date(), fetchImpl = (...a) => globalThis.fetch(...a) } = {}) {
   const a = [...args], sub = a.shift(), token = String(env.GITHUB_TOKEN ?? ''), at = new Date(now);
   const say = (s) => out(clean(scrub(s, token), 2000));
+  if (['ci', 'list'].includes(sub) && !Number.isFinite(at.getTime())) { say('ERR schedule: 実行時刻が正しくありません。時計の設定を確かめてください'); return false; }
   const what = (j) => `${j.id} — ${j.workflow}・${S.describe(j)}`;
   const next = (j) => S.nextRuns(j, at, 3).map((d) => S.fmtWhen(d, j.timezone)).join('・');
   const none = () => say(`予約はありません（${S.SCHEDULE_FILE} がありません: 管理パネルの「予約」で作ります）`);

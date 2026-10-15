@@ -730,5 +730,19 @@ await t('unit.yml keeps a unit on its branch — or, when that branch refuses a 
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 
+await t('reloading the units while a read is pending shares one request and re-enables the control', async () => {
+  const { E } = fakeDom(), UI = await imp('panel/ui/units.mjs'), f = fakeGitHub({ files: LAB, releases: RELEASES });
+  let release, reads = 0;
+  const gate = new Promise((r) => { release = r; });
+  const api = { ...f.api, call: async (...args) => { if (args[1].includes('/releases')) { reads++; await gate; } return f.api.call(...args); } };
+  const body = new E('div'), initial = UI.unitsTab(body, ctxOf(api).ctx);
+  const reload = body.button(/^読み直す$/);
+  ok(reload.disabled, 'disabled while loading');
+  const again = reload.click(), twice = reload.click();
+  eq(reads, 1, 'no duplicated releases read');
+  release(); await Promise.all([initial, again, twice]);
+  ok(!reload.disabled && body.all((e) => e.attrs['data-unit']).length > 0, 'usable and loaded again');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
