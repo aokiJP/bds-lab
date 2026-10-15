@@ -16,9 +16,9 @@ export function progressCard(ctx, run) {
   const slug = ctx.lab.slug, now = () => (ctx.now ? ctx.now() : Date.now()), timers = ctx.timers ?? globalThis;
   const list = h('ol', { class: 'plain' }), say = h('div', { class: 'muted', role: 'status' }), more = h('div', {});
   const card = h('div', { class: 'card', 'data-progress': String(run.id) }, h('h3', {}, '💡 AI が作っています'), say, list, more);
-  let cur = run, timer = null, history = null, busy = false, grace = 0;
+  let cur = run, timer = null, history = null, busy = false, grace = 0, disposed = false;
   const stop = () => { if (timer !== null) { timers.clearInterval(timer); timer = null; } };
-  card.stop = stop;
+  card.stop = () => { disposed = true; stop(); };
   // (may this person run the failed jobs again? — and if not, why)
   const no = () => {
     if (ctx.lab?.role === 'read') return 'このラボに書ける人だけが、やり直せます';
@@ -27,9 +27,11 @@ export function progressCard(ctx, run) {
   };
   async function draw() {
     let jobs = [], reasons = [];
-    try { jobs = await ctx.api.jobs(slug, cur.id); } catch (e) { more.replaceChildren(failView(e, refresh)); }
+    try { jobs = await ctx.api.jobs(slug, cur.id); } catch (e) { if (!disposed) { say.replaceChildren('進み具合を読めませんでした'); more.replaceChildren(failView(e, () => refresh(true))); } return; }
+    if (disposed) return;
     const over = cur.status === 'completed', failedRun = over && cur.conclusion !== 'success';
     if (failedRun) { try { reasons = await PG.failReason(ctx.api, slug, cur.id); } catch { /* the stage alone */ } }
+    if (disposed) return;
     const expect = PG.expectedMs(history ?? []);
     const s = PG.stagesOf(jobs, { now: now(), run: cur, expect, hint: reasons.join(' ') });
     list.replaceChildren(...s.stages.map((g, i) => h('li', { 'data-stage': g.key, 'data-state': g.state, class: i === s.index ? 'row' : 'row muted' },
@@ -63,16 +65,17 @@ export function progressCard(ctx, run) {
     if (timer === null) timer = timers.setInterval(refresh, EVERY);
   }
   async function refresh(again = false) {
-    if (busy) return;
+    if (busy || disposed) return;
     busy = true;
     try {
       const r = await ctx.api.call('GET', `/repos/${slug}/actions/runs/${cur.id}`);
+      if (disposed) return;
       if (r) cur = r;
       if (history === null) { try { history = (await ctx.api.runs(slug, { workflow: 'ai-make.yml', per: 20 })).filter((x) => x.id !== cur.id); } catch { history = []; } }
       await draw();
-      if (again && cur.status !== 'completed' && timer === null) timer = timers.setInterval(refresh, EVERY);
-    } catch (e) { more.replaceChildren(failView(e, () => refresh(true))); } finally { busy = false; }
+      if (!disposed && again && cur.status !== 'completed' && timer === null) timer = timers.setInterval(refresh, EVERY);
+    } catch (e) { if (!disposed) more.replaceChildren(failView(e, () => refresh(true))); } finally { busy = false; }
   }
-  refresh(true).then(() => { if (cur.status !== 'completed' && timer === null) timer = timers.setInterval(refresh, EVERY); });
+  refresh(true).then(() => { if (!disposed && cur.status !== 'completed' && timer === null) timer = timers.setInterval(refresh, EVERY); });
   return card;
 }

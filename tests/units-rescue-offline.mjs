@@ -151,8 +151,8 @@ await t('the cards: a lab without unit.yml says how to get it; the wrong input s
   void E;
 });
 
-await t('the editor: a file that is not there offers GitHub, a read that fails offers 「もう一度」, saving unread says what to press, Endstone units get the GitHub page', async () => {
-  const { E, toast } = fakeDom();
+await t('the editor: a file that is not there offers GitHub, a read that fails offers 「もう一度」, an unread file disables saving with recovery instructions, Endstone units get the GitHub page', async () => {
+  const { E } = fakeDom();
   const UW = await imp('panel/ui/workspace.mjs');
   const unit = U.unitSummary({ name: 'coins', manifest: MANIFEST });
   const ed = UW.editorView(ctxOf(fakeApi({ files: { ...LAB, 'bds/addons/coins/TASK.md': undefined } })), unit); await settle();
@@ -163,7 +163,9 @@ await t('the editor: a file that is not there offers GitHub, a read that fails o
   const ed2 = UW.editorView(ctxOf(api), unit); await settle();
   const s2 = ed2.byId('edit-state');
   ok(/GitHub is down/.test(s2.textContent) && s2.button(/もう一度/), s2.textContent);
-  await ed2.button(/^保存$/).click(); ok(/「読み直す」を押してください/.test(toast.textContent), toast.textContent);
+  const save = ed2.button(/^保存$/), writesBefore = api.calls.length;
+  ok(save.disabled && /「読み直す」を押してください/.test(save.title), save.title);
+  await save.click(); ok(api.calls.length === writesBefore, 'an unread file sends no write');
   const n = api.calls.length; await s2.button(/もう一度/).click(); await settle(); ok(api.calls.length > n, 'retry reads again');
   const end = UW.editorView(ctxOf(fakeApi()), U.unitSummary({ kind: 'end', name: 'hub' }));
   ok(end.links().some((l) => l === 'https://github.com/o/lab/tree/main/end/plugins/hub') && /GitHub の画面で直してください/.test(end.textContent), end.textContent);

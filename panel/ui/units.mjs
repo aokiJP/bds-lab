@@ -24,7 +24,10 @@ export function unitsTab(body, ctx) {
   // (the panel's own way to run a unit, else unit.yml here: its button off when the lab has none)
   const run = (x) => (ctx.runUnit ? ctx.runUnit(x) : startUnit(ctx, x)), g = ctx.runUnit ? ctx.gate?.('dispatch') ?? {} : startAttrs(ctx);
   const slot = h('div', { id: 'editor-slot' });
-  const edit = ctx.edit ?? ((u) => { slot.replaceChildren(editorView({ ...ctx, closeEditor: () => slot.replaceChildren() }, u)); slot.scrollIntoView?.({ block: 'start' }); });
+  let activeEditor = null;
+  const closeEditor = () => { activeEditor?.stop?.(); activeEditor = null; slot.replaceChildren(); };
+  const edit = ctx.edit ?? ((u) => { closeEditor(); activeEditor = editorView({ ...ctx, closeEditor }, u); slot.replaceChildren(activeEditor); slot.scrollIntoView?.({ block: 'start' }); });
+  body.stop = closeEditor;
   const made = newUnitCard(ctx), taken = importCard(ctx);
   // (a card's form opened and brought into view: the words shown when there is no unit yet point at them)
   const open = (card) => { const d = card.querySelector?.('details'); if (d) d.open = true; card.scrollIntoView?.({ block: 'start' }); };
@@ -83,25 +86,35 @@ export function unitsTab(body, ctx) {
       h('ul', { class: 'plain' }, names.map((b) => h('li', { class: 'row', 'data-waiting': b }, h('span', { class: 'grow' }, b),
         link(encodeURI(`https://github.com/${slug}/compare/${branch}...${b}?expand=1`), 'PR を作る'), link(encodeURI(`https://github.com/${slug}/tree/${b}`), 'GitHub')))))] : []));
   };
-  let relFail = null, refsFail = null;
-  const load = (fresh = false) => act(async () => {
-    relFail = null; refsFail = null;
-    // (not readable: why, where the list would be — and as a toast)
-    const [us, rs, refs] = await Promise.all([U.listUnits(ctx.api, slug, { fresh }).catch((e) => { list.replaceChildren(wayOut(e, ctx, () => load(true))); throw e; }),
-      // (releases or branches not readable: the list is still shown, but it says what it could not know — not "no release")
-      R.listReleases(ctx.api, slug).catch((e) => { relFail = e; return []; }),
-      ctx.api.call('GET', `/repos/${slug}/git/matching-refs/heads/lab-unit`).catch((e) => { refsFail = e; return []; })]);
-    units = us; latest = R.latestByUnit(rs, us);
-    releasesNote.replaceChildren(...[relFail && ['配布の一覧を読めませんでした（「まだ配布はありません」と出ても、本当は無いとは限りません）', relFail], refsFail && ['PR を待っているユニットを読めませんでした（待っているものが出ていないかもしれません）', refsFail]]
-      .filter(Boolean).map(([say, e]) => h('div', {}, h('p', { class: 'warn' }, say), wayOut(e, ctx, () => load(true)))));
-    drawWaiting(refs);
-    draw();
-    return units;
-  });
+  const reload = h('button', { onclick: () => load(true) }, '読み直す');
+  let loading = null;
+  const load = (fresh = false) => {
+    if (loading) return loading;
+    reload.disabled = true; list.setAttribute('aria-busy', 'true');
+    loading = act(async () => {
+      let relFail = null, refsFail = null;
+      // (not readable: why, where the list would be — and as a toast)
+      const results = await Promise.allSettled([U.listUnits(ctx.api, slug, { fresh }),
+        // (releases or branches not readable: the list is still shown, but it says what it could not know — not "no release")
+        R.listReleases(ctx.api, slug),
+        ctx.api.call('GET', `/repos/${slug}/git/matching-refs/heads/lab-unit`)]);
+      if (results[0].status === 'rejected') { const e = results[0].reason; list.replaceChildren(wayOut(e, ctx, () => load(true))); throw e; }
+      const us = results[0].value, rs = results[1].status === 'fulfilled' ? results[1].value : [], refs = results[2].status === 'fulfilled' ? results[2].value : [];
+      if (results[1].status === 'rejected') relFail = results[1].reason;
+      if (results[2].status === 'rejected') refsFail = results[2].reason;
+      units = us; latest = R.latestByUnit(rs, us);
+      releasesNote.replaceChildren(...[relFail && ['配布の一覧を読めませんでした（「まだ配布はありません」と出ても、本当は無いとは限りません）', relFail], refsFail && ['PR を待っているユニットを読めませんでした（待っているものが出ていないかもしれません）', refsFail]]
+        .filter(Boolean).map(([say, e]) => h('div', {}, h('p', { class: 'warn' }, say), wayOut(e, ctx, () => load(true)))));
+      drawWaiting(refs);
+      draw();
+      return units;
+    }).finally(() => { loading = null; reload.disabled = false; list.setAttribute('aria-busy', 'false'); });
+    return loading;
+  };
   body.append(made, taken, slot,
     h('div', { class: 'card', id: 'units' }, h('h2', {}, `アドオン（${slug}）`),
       h('p', { class: 'muted' }, '「試験」は tests.txt を本物のサーバーとプレイヤーで、「仕上げる」は試験・QA のあと .mcaddon を作ります（unit.yml・「進み具合」で見られます。.mcaddon は実行の成果物に）。'),
-      h('div', { class: 'row' }, q, h('button', { onclick: () => load(true) }, '読み直す'), count)),
+      h('div', { class: 'row' }, q, reload, count)),
     waiting, releasesNote, skippedNote, list);
   return load();
 }

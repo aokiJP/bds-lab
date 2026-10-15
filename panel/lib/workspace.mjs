@@ -154,6 +154,10 @@ const enc = (p) => String(p).split('/').map(encodeURIComponent).join('/');
 const fromB64 = (s) => new TextDecoder().decode(Uint8Array.from(atob(String(s ?? '').replace(/\s/g, '')), (c) => c.charCodeAt(0)));
 /** a pack's branch deleted (best effort: one that cannot be is left for unit.yml or a person) */
 const dropIncoming = (api, slug, branch) => api.call('DELETE', `/repos/${slug}/git/refs/${enc(`heads/${branch}`)}`).catch(() => null);
+// A transport error or 5xx does not prove a write was refused. The workflow may already be reading this branch.
+const refusedWrite = (e) => [400, 401, 403, 404, 409, 413, 422, 429].includes(e?.status) && !e.uncertain;
+const retained = (e, branch) => Object.assign(new Error(`${e.message ?? '送信結果を確認できません'}。取り込み用の枝 ${branch} は残しています。GitHub の実行一覧と枝を確認してから再操作してください`), { status: e.status, uncertain: true, incomingBranch: branch });
+
 /** the pack put on a branch of its own: the default branch's head read (base: its name), lab-incoming/<name> made from it,
  *  incoming/<name> written there — its bytes as base64, the contents API's way — so the default branch never holds it and
  *  nothing of it stays in the lab's history once unit.yml deletes the branch. The file refused: the branch deleted again
@@ -166,14 +170,14 @@ export async function putIncoming(api, slug, { path, message }, content, base = 
   if (!sha) throw new Error(`既定の枝 ${base} の先頭が読めません: 枝が消えていないか GitHub で見て、「読み直す」から、もう一度`);
   // (GitHub's refusal said in words where its own are terse: a branch a ruleset will not let be made, a pack too large)
   const why = (e) => { const r = refusal(e.status, e.message); return r.kind ? Object.assign(new Error(`${r.say}（${String(e.message).replace(/\s+/g, ' ').trim()}）`), { status: e.status }) : e; };
-  try { await api.call('POST', `/repos/${slug}/git/refs`, { ref: `refs/heads/${branch}`, sha }); } catch (e) { throw why(e); }
-  try { return await api.call('PUT', `/repos/${slug}/contents/${enc(path)}`, { message, content, branch }); } catch (e) { await dropIncoming(api, slug, branch); throw why(e); }
+  try { await api.call('POST', `/repos/${slug}/git/refs`, { ref: `refs/heads/${branch}`, sha }); } catch (e) { throw refusedWrite(e) ? why(e) : retained(e, branch); }
+  try { return await api.call('PUT', `/repos/${slug}/contents/${enc(path)}`, { message, content, branch }); } catch (e) { if (!refusedWrite(e)) throw retained(e, branch); await dropIncoming(api, slug, branch); throw why(e); }
 }
 /** a person's pack taken in: put on its branch (putIncoming; base: the default branch), then unit.yml started with it
- *  (dispatch(workflow, inputs): GitHub's call, on the default branch) → its path. unit.yml not started: the branch deleted */
+ *  (dispatch(workflow, inputs): GitHub's call, on the default branch) → its path. unit.yml explicitly refused: the branch deleted; an uncertain result keeps the pack and names its branch */
 export async function importUnit(api, slug, plan, content, dispatch, base = 'main') {
   await putIncoming(api, slug, plan, content, base);
-  try { await dispatch(WORKFLOW, plan.inputs); } catch (e) { await dropIncoming(api, slug, incomingBranch(plan.path)); throw e; }
+  try { await dispatch(WORKFLOW, plan.inputs); } catch (e) { const branch = incomingBranch(plan.path); if (!refusedWrite(e)) throw retained(e, branch); await dropIncoming(api, slug, branch); throw e; }
   return plan.path;
 }
 /** a unit's file as the editor takes it → { text, sha }; null when it is not there. One the contents API gives no text of
@@ -182,6 +186,7 @@ export async function readUnitFile(api, slug, path) {
   let j; try { j = await api.call('GET', `/repos/${slug}/contents/${enc(path)}`); } catch (e) { if (e.status === 404) return null; throw e; }
   if (!j || Array.isArray(j) || j.type !== 'file') throw new Error(`${path} はファイルではありません: 別のファイルを選んでください`);
   if (j.encoding !== 'base64') throw new Error(`${path} は大きすぎて、ここでは直せません（1 MB まで）: GitHub の画面で直してください`);
+  if (typeof j.content !== 'string' || typeof j.sha !== 'string' || !j.sha) throw new Error(`${path} の中身と版を確認できませんでした: 読み直してから編集してください`);
   return { text: fromB64(j.content), sha: j.sha };
 }
 /** a unit's file saved as a commit on the default branch, over the sha it was read at → { sha (the new one), commit (its
@@ -189,7 +194,11 @@ export async function readUnitFile(api, slug, path) {
  *  overwritten: said in words. Any other 409 or 422 (a protected default branch answers so too: a ruleset, a pull request
  *  needed) as GitHub said it */
 export async function saveUnitFile(api, slug, path, text, sha, message) {
-  try { const r = await api.putFile(slug, path, text, sha, message); return { sha: r?.content?.sha ?? null, commit: r?.commit?.html_url ?? null }; }
+  try {
+    const r = await api.putFile(slug, path, text, sha, message);
+    if (typeof r?.content?.sha !== 'string' || !r.content.sha) throw Object.assign(new Error('保存結果の版を確認できませんでした。編集内容を残したまま、GitHub の変更履歴を確認してください'), { uncertain: true });
+    return { sha: r.content.sha, commit: r?.commit?.html_url ?? null };
+  }
   catch (e) {
     if (e.status !== 409 && e.status !== 422) throw e;
     const r = refusal(e.status, e.message);

@@ -386,6 +386,7 @@ const hasWf = (f) => (st.lab?.workflows ?? []).some((w) => String(w.path).endsWi
 const TABS = [['overview', '概要'], ['runs', '進み具合'], ['start', '実行'], ['units', 'アドオン'], ['releases', '配布'], ['files', '成果物'], ['schedule', '予約'], ['stats', '統計'], ['discord', 'Discord'], ['secrets', '秘密'],
   ['live', '端末'], ['hosts', '貸し借り'], ['members', 'メンバー'], ['setup', '準備'], ['connect', '連携'], ['audit', '監査'], ['settings', '設定']];
 function render() {
+  $('tabbody')?.stop?.();   // flush and release the previous editor before replacing the tab
   clearInterval(st.timer);
   // (an AI run's progress cards read GitHub on their own: stopped when the page is drawn anew)
   for (const c of st.progress?.values() ?? []) c.stop();
@@ -422,7 +423,13 @@ function audit(body) { auditTab(body, { api: st.api, lab: st.lab, policy: st.pol
 /** a workflow of the lab started on its default branch — GitHub's call alone: the tab that calls it guards it, once */
 const dispatchRaw = (wf, inputs) => st.api.dispatch(st.lab.slug, wf, st.lab.repo.default_branch, inputs);
 function units(body) {
-  unitsTab(body, { api: st.api, lab: st.lab, me: st.me, policy: st.policy, role: st.role, record, gate, guarded, go, dispatch: dispatchRaw,
+  const api = st.api, lab = st.lab, me = st.me;
+  const isActive = () => st.api === api && st.lab === lab && st.me === me && st.tab === 'units';
+  const dispatch = (wf, inputs) => {
+    if (!isActive()) throw new Error('画面かアカウントが変わりました。もう一度アドオンを開いて操作してください');
+    return api.dispatch(lab.slug, wf, lab.repo.default_branch, inputs);
+  };
+  unitsTab(body, { api, lab, me, policy: st.policy, role: st.role, record, gate, guarded, go, dispatch, isActive,
     // (「AI で変える」 and 「AI で作る」: the 「実行」 tab's idea card, the unit to change filled in)
     aiMake: hasWf('ai-make.yml') ? ({ unit } = {}) => { st.makeUnit = unit ?? ''; go('start'); setTimeout(() => { $('make')?.scrollIntoView({ block: 'start' }); $('idea')?.focus(); }, 50); } : null });
 }
