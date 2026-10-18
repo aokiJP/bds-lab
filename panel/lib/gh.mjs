@@ -21,8 +21,26 @@ export function explain(status, message = '') {
 
 /** → the API's calls. token: the person's; base: GitHub's API (another only for tests); onCall: told of each call when it
  *  ends — { method, path (no query), status, ms } — for the panel's debug view (never the token, a body or an answer) */
-export function gh({ token, base = 'https://api.github.com', fetchImpl = (...a) => globalThis.fetch(...a), onCall = null } = {}) {
+export function gh({ token, base = 'https://api.github.com', fetchImpl = (...a) => globalThis.fetch(...a), onCall = null, timeoutMs = 30_000, readRetries = 1, retryDelayMs = 250 } = {}) {
   const state = { remaining: null, reset: null };
+  const schedule = globalThis.setTimeout.bind(globalThis), unschedule = globalThis.clearTimeout.bind(globalThis);
+  const limit = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 30_000;
+  const retries = Number.isInteger(readRetries) && readRetries >= 0 ? Math.min(readRetries, 2) : 1;
+  const delay = Number.isFinite(retryDelayMs) && retryDelayMs >= 0 ? retryDelayMs : 250;
+  // Deadline covers headers AND the body. Abort the underlying request; a race also bounds a broken transport.
+  async function request(method, path, body, opts) {
+    const control = new AbortController();
+    let timer;
+    try {
+      return await Promise.race([
+        (async () => read(await send(method, path, body, { ...opts, signal: control.signal }), path))(),
+        new Promise((_, reject) => { timer = schedule(() => {
+          const e = new GhError(0, method === 'GET' ? 'GitHub の応答が制限時間内に届きませんでした。時間をおいて読み直してください。' : 'GitHub の応答が制限時間内に届かず、操作が完了したか分かりません。GitHub の実行一覧や変更履歴を確認してから再操作してください。', path);
+          e.timeout = true; reject(e); control.abort();
+        }, limit); timer?.ref?.(); }),
+      ]);
+    } finally { unschedule(timer); }
+  }
   // (anon: asked without the token — a call whose own argument is the proof, the App manifest's code)
   async function call(method, path, body, opts) {
     // (a write GitHub surely refuses — lib/ghrules.mjs's sure rules — is stopped here, never sent: the same 422 GitHub would
@@ -30,23 +48,29 @@ export function gh({ token, base = 'https://api.github.com', fetchImpl = (...a) 
     const k = kindOf(method, path), bad = k ? check(k.kind, { path: k.path, body }, { strictOnly: true }) : [];
     if (bad.length) throw new GhError(422, explain(422, `${bad.join('・')}（送る前に分かったので、GitHub には送っていません）`), path);
     const t0 = Date.now(), tell = (status) => { try { onCall?.({ method, path: String(path).split('?')[0], status, ms: Date.now() - t0 }); } catch { /* a view's trouble is not the call's */ } };
-    // (the network itself failed — offline, refused: status 0, for lib/rescue.mjs to say so)
-    let r; try { r = await send(method, path, body, opts); } catch (e) { tell(0); throw new GhError(0, `GitHub につながりません（${e?.message ?? e}）`, path); }
-    tell(r.status);
-    return read(r, path);
+    for (let attempt = 0; ; attempt++) {
+      try { const r = await request(method, path, body, opts); tell(r.status); return r.value; }
+      catch (error) {
+        const e = error instanceof GhError ? error : new GhError(0, method === 'GET' ? 'GitHub につながりません。接続を確かめて読み直してください。' : 'GitHub につながらず、操作が完了したか分かりません。GitHub の実行一覧や変更履歴を確認してから再操作してください。', path);
+        // Writes may have reached GitHub even when the response was lost. Never repeat them automatically.
+        if (method !== 'GET' || attempt >= retries || ![0, 502, 503, 504].includes(e.status) || e.invalidResponse) { tell(e.status); throw e; }
+        await new Promise((resolve) => { const timer = schedule(resolve, delay * (attempt + 1)); timer?.ref?.(); });
+      }
+    }
   }
-  async function send(method, path, body, { anon = false } = {}) {
-    const r = await fetchImpl(`${base}${path}`, { method, headers: { ...(anon ? {} : { authorization: `Bearer ${token}` }), accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
+  async function send(method, path, body, { anon = false, signal } = {}) {
+    const r = await fetchImpl(`${base}${path}`, { method, headers: { ...(anon ? {} : { authorization: `Bearer ${token}` }), accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined, cache: 'no-store', signal });
     const rem = r.headers?.get?.('x-ratelimit-remaining'); if (rem !== null && rem !== undefined) { state.remaining = Number(rem); state.reset = Number(r.headers.get('x-ratelimit-reset')); }
     return r;
   }
   async function read(r, path) {
-    if (r.status === 204) return null;
+    if (r.status === 204) return { status: r.status, value: null };
     const text = await r.text();
-    let j = null; try { j = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
+    let j = null, invalid = false; try { j = text ? JSON.parse(text) : null; } catch { invalid = true; }
     // (reset: when the rate limit opens again, in seconds — lib/rescue.mjs says how long to wait)
     if (!r.ok) { const e = new GhError(r.status, explain(r.status, j?.message ?? text.slice(0, 120)), path); e.reset = Number(r.headers?.get?.('x-ratelimit-reset')) || null; throw e; }
-    return j;
+    if (invalid) { const e = new GhError(502, 'GitHub の応答を読めませんでした。時間をおいて読み直してください。', path); e.invalidResponse = true; throw e; }
+    return { status: r.status, value: j };
   }
   // (a repository whose variables GitHub refused this token once — 403: the sign-in lacks Variables — is not asked again: the
   // same answer, no request, no error in the browser's console every few seconds)

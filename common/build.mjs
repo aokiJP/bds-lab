@@ -134,7 +134,7 @@ export function writeTsconfig(addon, sdkDir, js) {
 // A check that found nothing is not run again on the same sources (tsconfig, src/ or bp/scripts, the unit's package files):
 // loading TypeScript alone is most of a build's second (a test then a pack; the lab's own runs of a unit that did not change)
 function typeStamp(addon, js) {
-  const h = crypto.createHash('sha1').update(js ? 'js\n' : 'ts\n');
+  const h = crypto.createHash('sha1').update(js ? 'js-config-v2\n' : 'ts-config-v2\n');
   const add = (f) => { const r = path.relative(addon, f); try { h.update(r + '\0').update(fs.readFileSync(f)).update('\0'); } catch { h.update(r + '\0-\0'); } };   // (relative, a missing file too: the same sources elsewhere are the same)
   for (const f of ['tsconfig.json', 'package.json', 'package-lock.json']) add(path.join(addon, f));
   const walk = (d) => { let es = []; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch { return; } for (const e of es.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) { const p = path.join(d, e.name); if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p); } else if (/\.([cm]?[jt]s|json)$/.test(e.name)) add(p); } };
@@ -158,15 +158,17 @@ export function typecheck({ tl, addon, cache, js, max = 12 }) {
 function typecheckNow({ tl, addon, cache, js, max = 12 }) {
   const ts = tl.ts;
   const cfgFile = path.join(addon, 'tsconfig.json');
-  const cfg = ts.getParsedCommandLineOfConfigFile(cfgFile, {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => {} });
-  if (!cfg) return [];
+  const configErrors = [];
+  const cfg = ts.getParsedCommandLineOfConfigFile(cfgFile, {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: (d) => configErrors.push(d) });
+  if (!cfg) return compactDiags((configErrors.length ? configErrors : [{ code: 5083, messageText: 'Cannot read tsconfig.json; type checking did not run' }])
+    .map((d) => ({ code: d.code, msg: ts.flattenDiagnosticMessageText(d.messageText, ' '), at: null })), max);
   if (js) cfg.fileNames = cfg.fileNames.filter((f) => !/[\\/]__lab/.test(f));
   const info = path.join(cache, 'tsinfo', crypto.createHash('sha1').update(addon).digest('hex').slice(0, 10) + '.json');
   fs.mkdirSync(path.dirname(info), { recursive: true });
   const opts = { ...cfg.options, incremental: true, tsBuildInfoFile: info, noEmit: true };
   const host = ts.createIncrementalCompilerHost(opts);
   const prog = ts.createIncrementalProgram({ rootNames: cfg.fileNames, options: opts, host });
-  const diags = [...prog.getConfigFileParsingDiagnostics(), ...prog.getSyntacticDiagnostics(), ...prog.getSemanticDiagnostics()];
+  const diags = [...configErrors, ...(cfg.errors ?? []), ...prog.getConfigFileParsingDiagnostics(), ...prog.getSyntacticDiagnostics(), ...prog.getSemanticDiagnostics()];
   prog.emit();   // writes only the build info (noEmit)
   return compactDiags(diags.map((d) => {
     const msg = ts.flattenDiagnosticMessageText(d.messageText, ' ').replace(/\s+/g, ' ');

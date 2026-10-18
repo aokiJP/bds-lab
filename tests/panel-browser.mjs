@@ -513,6 +513,15 @@ try {
   const fp = G.filesPut.slice(p0).find((x) => x.f === 'bds/addons/coins/src/main.ts');
   check(fp && fp.slug === LAB && fp.body.sha === `sha-${`${LAB}:bds/addons/coins/src/main.ts`.length}` && /changed in the panel/.test(Buffer.from(fp.body.content, 'base64').toString('utf8')),
     'saved as a commit on the default branch, with the sha it was read with (never over another\'s change)', JSON.stringify(G.filesPut.slice(p0).map((x) => ({ f: x.f, sha: x.body.sha }))));
+  // Leave immediately, before the autosave delay: render() must flush and dispose the editor.
+  const unsaved = '// draft survives an immediate tab change\n';
+  await page.fill('#edit-text', unsaved);
+  await tab('概要'); await tab('アドオン'); await waitText(/Coins Shop/);
+  await page.locator('[data-unit="bds/coins"] button', { hasText: 'ファイルを直す' }).click();
+  await page.waitForFunction(() => /下書きがあります/.test(document.querySelector('#edit-draft')?.textContent ?? ''), null, { timeout: 5000 });
+  await page.locator('#edit-draft button', { hasText: /^戻す$/ }).click();
+  check((await page.locator('#edit-text').inputValue()) === unsaved, 'an immediate tab change preserves and restores the unsaved editor draft');
+  await page.fill('#edit-text', "import { world } from '@minecraft/server';\n// changed in the panel\n");
   await page.locator('#newunit summary').click();
   await page.fill('#newunit-name', 'coins');
   d0 = G.dispatched.length;

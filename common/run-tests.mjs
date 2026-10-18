@@ -127,10 +127,19 @@ function dropCopy(c) {
   try { fs.rmSync(c.parent, { recursive: true, force: true }); } catch { /* the temp folder's cleaner takes it */ }
   git(c.top, ['worktree', 'prune']);
 }
+// A test's subprocesses inherit its process group. Kill the group too: killing only node leaves BDS/npm/browser children
+// alive, and their inherited output pipes can keep the runner waiting forever. Windows uses taskkill's tree mode.
+function stopTree(c) {
+  if (!c.pid) return;
+  try {
+    if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(c.pid), '/T', '/F'], { stdio: 'ignore', timeout: 5000 });
+    else process.kill(-c.pid, 'SIGKILL');
+  } catch { try { c.kill('SIGKILL'); } catch { /* already gone */ } }
+}
 // copies still there go however this process ends: done, failed, stopped (Ctrl-C, a cancelled run) — the tests are stopped first
 const copies = new Set(), kids = new Set();
 function guardCopies() {
-  const clean = () => { for (const k of kids) { try { k.kill('SIGKILL'); } catch { /* gone */ } } for (const c of copies) dropCopy(c); copies.clear(); };
+  const clean = () => { for (const k of kids) stopTree(k); for (const c of copies) dropCopy(c); copies.clear(); };
   const sig = Object.fromEntries(['SIGINT', 'SIGTERM', 'SIGHUP'].map((s) => [s, () => { clean(); process.exit(128 + (os.constants.signals[s] ?? 0)); }]));
   process.on('exit', clean);
   for (const [s, f] of Object.entries(sig)) process.on(s, f);
@@ -139,13 +148,13 @@ function guardCopies() {
 
 function one(t, cwd, env, timeout, args = []) {
   return new Promise((res) => {
-    const limit = Math.max(timeout, LONG[t] ?? 0), t0 = Date.now(); let text = '', done = false;
-    const c = spawn(process.execPath, [t, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const limit = Math.max(timeout, LONG[t] ?? 0), t0 = Date.now(); let text = '', done = false, timedOut = false;
+    const c = spawn(process.execPath, [t, ...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
     kids.add(c);
     const add = (d) => { text += d; if (text.length > 64e6) text = text.slice(-32e6); };
     c.stdout.on('data', add); c.stderr.on('data', add);
-    const kill = setTimeout(() => { text += `\n✘ ${t}: no end after ${Math.round(limit / 1000)} s (stopped)`; try { c.kill('SIGKILL'); } catch { /* gone */ } }, limit);
-    const end = (code) => { if (done) return; done = true; kids.delete(c); clearTimeout(kill); res({ t, ok: code === 0, code, ms: Date.now() - t0, lines: text.trim().split('\n') }); };
+    const kill = setTimeout(() => { timedOut = true; text += `\n✘ ${t}: no end after ${Math.round(limit / 1000)} s (stopped)`; stopTree(c); }, limit);
+    const end = (code) => { if (done) return; done = true; if (timedOut) code = -1; stopTree(c); kids.delete(c); clearTimeout(kill); res({ t, ok: code === 0, code, ms: Date.now() - t0, lines: text.trim().split('\n') }); };
     c.on('error', (e) => { text += `\n✘ ${e.message}`; end(-1); });
     c.on('close', (code) => end(code));
   });
@@ -190,7 +199,7 @@ export function runTests(list, { cwd, env = process.env, jobs = defaultJobs(), t
       onDone(res);
       return res;
     };
-    const unguard = top ? guardCopies() : () => {};
+    const unguard = guardCopies();
     try {
       let i = 0;
       const worker = async () => {

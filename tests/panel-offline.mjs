@@ -270,10 +270,12 @@ await t('panel check: a changed file → the checks it needs (ESLint, the offlin
     'tests/failsum-offline.mjs', 'tests/runissue-offline.mjs', 'tests/runcompare-offline.mjs', 'tests/testhist-offline.mjs', 'tests/secretwatch-offline.mjs', 'tests/connectdaily-offline.mjs', 'tests/weekly-offline.mjs', 'tests/notifyprefs-offline.mjs',
     'tests/minutes-offline.mjs', 'tests/lendfc-offline.mjs', 'tests/nlsched-offline.mjs', 'tests/wizard-offline.mjs', 'tests/a11y-offline.mjs', 'tests/inviteqr-offline.mjs', 'tests/undo-offline.mjs'];
   eq(PN.plan(['panel/lib/members.mjs']), { lint: ['panel/lib/members.mjs'], tests: ['tests/panel-offline.mjs', 'tests/governance-offline.mjs', ...LANES, 'tests/panel-browser.mjs'] });
-  eq(PN.plan(['panel/ui/signin.mjs', 'auth/handler.mjs'], { quick: true }).tests, ['tests/panel-offline.mjs', 'tests/session-offline.mjs', 'tests/auth-offline.mjs', ...LANES]);
-  eq(PN.plan(['common/unitci.mjs', 'common/schedule.mjs']), { lint: ['common/unitci.mjs', 'common/schedule.mjs'], tests: ['tests/units-offline.mjs', 'tests/schedule-offline.mjs'] }, 'the CLI side of 「アドオン」 and 「予約」');
+  eq(PN.plan(['panel/ui/signin.mjs', 'auth/handler.mjs'], { quick: true }).tests, ['tests/panel-offline.mjs', 'tests/session-offline.mjs', 'tests/auth-offline.mjs', ...LANES, 'tests/evolve-auth-offline.mjs']);
+  eq(PN.plan(['common/unitci.mjs', 'common/schedule.mjs']), { lint: ['common/unitci.mjs', 'common/schedule.mjs'], tests: ['tests/units-offline.mjs', 'tests/schedule-offline.mjs', 'tests/evolve-schedule-offline.mjs'] }, 'the CLI side of 「アドオン」 and 「予約」');
   eq(PN.plan(['panel/sw.js'], { quick: true }).tests, ['tests/panel-offline.mjs', 'tests/inbox-offline.mjs'], 'the service worker');
   eq(PN.plan(['tests/stats-offline.mjs']).tests, ['tests/stats-offline.mjs'], 'a lane test: itself');
+  ok(PN.plan(['panel/lib/gh.mjs']).tests.includes('tests/evolve-panel-offline.mjs'), 'transport regressions run on GitHub client changes');
+  eq(PN.plan(['tests/evolve-auth-offline.mjs']).tests, ['tests/evolve-auth-offline.mjs'], 'new regression files run directly');
   eq(PN.plan(['README.md', 'bds/lab.mjs']), { lint: [], tests: [] }, 'not the panel: nothing');
   eq(PN.plan(['host/template/.lab-host.json', 'tests/setup-offline.mjs']).tests, ['tests/panel-offline.mjs', 'tests/setup-offline.mjs']);
   eq(PN.failLines('ok a\nFAIL b\n  why\nok c').slice(0, 2), ['FAIL b', '  why']);

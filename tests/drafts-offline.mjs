@@ -145,5 +145,78 @@ await t('a storage that cannot keep it is said, not thrown; no storage at all st
   eq(f.st.files['bds/addons/ruby/src/main.ts'].text, 'v9\n');
 });
 
+const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+const fileReply = (text, sha) => ({ type: 'file', encoding: 'base64', content: b64(text), sha });
+await t('A → B → A: an older read cannot replace the latest file', async () => {
+  fakeDom(); const UI = await imp('panel/ui/workspace.mjs'), store = memStore(), pending = [];
+  const api = { call: async () => { const p = deferred(); pending.push(p); return p.promise; } };
+  const ed = UI.editorView(ctxOf(api, store), 'ruby'), pick = byId(ed, 'edit-file');
+  pick.value = 'tests.txt'; const b = pick.fire('change');
+  pick.value = 'src/main.ts'; const a = pick.fire('change');
+  pending[2].resolve(fileReply('latest', 'a2')); await a;
+  pending[0].resolve(fileReply('stale', 'a0')); pending[1].resolve(fileReply('other', 'b')); await b; await settle();
+  eq(byId(ed, 'edit-text').value, 'latest', 'the newest request wins even for the same path');
+  ed.stop?.();
+});
+await t('typing during a save keeps a draft based on the saved version, and the next save uses its SHA', async () => {
+  fakeDom(); const UI = await imp('panel/ui/workspace.mjs'), store = memStore(), f = fakeApi({ 'bds/addons/ruby/src/main.ts': { text: 'v1', sha: 's1' } }), gate = deferred();
+  let first = true;
+  const api = { ...f.api, putFile: async (...args) => { if (first) { first = false; await gate.promise; } return f.api.putFile(...args); } };
+  const ed = UI.editorView(ctxOf(api, store), 'ruby'); await settle(); const ta = byId(ed, 'edit-text');
+  ta.value = 'v2'; await ta.fire('input'); const saving = btn(ed, /^保存$/).fire('click');
+  ta.value = 'v3'; await ta.fire('input'); gate.resolve(); await saving;
+  eq(f.st.files['bds/addons/ruby/src/main.ts'].text, 'v2');
+  eq(ta.value, 'v3'); eq(D.loadDraft(store, KEY()).text, 'v3'); eq(D.loadDraft(store, KEY()).baseSha, 'sha1');
+  await btn(ed, /^保存$/).fire('click'); eq(f.st.files['bds/addons/ruby/src/main.ts'].text, 'v3'); eq(store.length, 0); ed.stop?.();
+});
+await t('concurrent saves share one write, lock navigation, and a cancelled guard leaves the draft intact', async () => {
+  fakeDom(); const UI = await imp('panel/ui/workspace.mjs'), store = memStore(), f = fakeApi({ 'bds/addons/ruby/src/main.ts': { text: 'v1', sha: 's1' } }), gate = deferred();
+  let writes = 0;
+  const api = { ...f.api, putFile: async (...args) => { writes++; await gate.promise; return f.api.putFile(...args); } };
+  const ed = UI.editorView(ctxOf(api, store), 'ruby'); await settle(); const ta = byId(ed, 'edit-text');
+  ta.value = 'v2'; await ta.fire('input'); const one = btn(ed, /^保存$/).fire('click'), two = btn(ed, /^保存$/).fire('click');
+  ok(byId(ed, 'edit-file').disabled, 'navigation locked until the write finishes'); eq(writes, 1);
+  gate.resolve(); await Promise.all([one, two]); eq(f.st.writes, 1); ok(!byId(ed, 'edit-file').disabled); ed.stop?.();
+  const cancelled = UI.editorView(ctxOf(f.api, store, { guarded: async () => undefined }), 'ruby'); await settle();
+  const text = byId(cancelled, 'edit-text'); text.value = 'not saved'; await text.fire('input');
+  await btn(cancelled, /^保存$/).fire('click');
+  eq(D.loadDraft(store, KEY()).text, 'not saved'); ok(!btn(cancelled, /^保存$/).disabled); cancelled.stop?.();
+});
+await t('save-and-test does not test an older version while new edits are still unsaved', async () => {
+  fakeDom(); const UI = await imp('panel/ui/workspace.mjs'), store = memStore(), f = fakeApi({ 'bds/addons/ruby/src/main.ts': { text: 'v1', sha: 's1' } }), gate = deferred(), ran = [];
+  const api = { ...f.api, putFile: async (...args) => { await gate.promise; return f.api.putFile(...args); } };
+  const ed = UI.editorView(ctxOf(api, store, { runUnit: (x) => ran.push(x) }), 'ruby'); await settle();
+  const ta = byId(ed, 'edit-text'); ta.value = 'v2'; await ta.fire('input'); const saving = btn(ed, /保存して試験/).fire('click');
+  ta.value = 'v3'; await ta.fire('input'); gate.resolve(); await saving;
+  eq(ran, []); ok(/未保存/.test(byId(ed, 'edit-state').textContent)); ed.stop?.();
+});
+await t('closing an editor flushes its draft, ignores late reads and releases lifecycle listeners', async () => {
+  fakeDom(); const UI = await imp('panel/ui/workspace.mjs'), store = memStore(), f = fakeApi({ 'bds/addons/ruby/src/main.ts': { text: 'v1', sha: 's1' } });
+  const listeners = new Set(), oldAdd = globalThis.addEventListener, oldRemove = globalThis.removeEventListener;
+  globalThis.addEventListener = (_k, fn) => listeners.add(fn); globalThis.removeEventListener = (_k, fn) => listeners.delete(fn);
+  try {
+    const ed = UI.editorView(ctxOf(f.api, store, { draftWait: 100000 }), 'ruby'); await settle();
+    const ta = byId(ed, 'edit-text'); ta.value = 'new'; await ta.fire('input');
+    ok(typeof ed.stop === 'function', 'editor has a disposal hook'); ed.stop();
+    eq(D.loadDraft(store, KEY()).text, 'new'); eq(listeners.size, 0);
+    const gate = deferred(), waiting = UI.editorView(ctxOf({ call: () => gate.promise }, store), 'ruby');
+    waiting.stop(); gate.resolve(fileReply('late', 's9')); await settle(); eq(byId(waiting, 'edit-text').value, '');
+  } finally { globalThis.addEventListener = oldAdd; globalThis.removeEventListener = oldRemove; }
+});
+await t('blocked storage and malformed future drafts do not crash the editor or settings', () => {
+  const broken = { getItem() { throw new Error('blocked'); }, get length() { throw new Error('blocked'); } };
+  eq(D.loadDraft(broken, KEY()), null); eq(D.listDrafts(broken), []);
+  const store = memStore(); store.setItem(KEY(), JSON.stringify({ text: 'future', at: Date.now() + 365 * DAY }));
+  eq(D.loadDraft(store, KEY()), null);
+});
+
+await t('leaving the editor while policy confirmation is pending does not send a stale write', async () => {
+  fakeDom(); const UI = await imp('panel/ui/workspace.mjs'), store = memStore(), f = fakeApi({ 'bds/addons/ruby/src/main.ts': { text: 'v1', sha: 's1' } }), gate = deferred();
+  const ed = UI.editorView(ctxOf(f.api, store, { guarded: async (_a, _d, fn) => { await gate.promise; return fn(); } }), 'ruby'); await settle();
+  const ta = byId(ed, 'edit-text'); ta.value = 'kept'; await ta.fire('input');
+  const saving = btn(ed, /^保存$/).fire('click'); ed.stop(); gate.resolve(); await saving;
+  eq(f.st.writes, 0); eq(D.loadDraft(store, KEY()).text, 'kept');
+});
+
 console.log(`\n${pass} ok, ${fail} failed`);
 process.exit(fail ? 1 : 0);

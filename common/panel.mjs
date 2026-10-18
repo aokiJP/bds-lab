@@ -14,6 +14,10 @@ const TOP = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const BROWSER = 'tests/panel-browser.mjs';
 // (a file → the tests that hold it; the first match wins its group, all groups add up)
 const RULES = [
+  [/^panel\/lib\/gh\.mjs$/, ['tests/evolve-panel-offline.mjs']],
+  [/^auth\//, ['tests/evolve-auth-offline.mjs']],
+  [/^common\/schedule\.mjs$/, ['tests/evolve-schedule-offline.mjs']],
+  [/^tests\/evolve-(panel|auth|schedule)-offline\.mjs$/, (f) => [f]],
   [/^panel\/lib\/(policy|audit|members)\.mjs$/, ['tests/governance-offline.mjs']],
   [/^panel\/(lib|ui)\/setup\.mjs$/, ['tests/setup-offline.mjs']],
   [/^panel\/(lib\/session|ui\/signin)\.mjs$/, ['tests/session-offline.mjs']],
@@ -43,7 +47,7 @@ export const ALL = ['tests/panel-offline.mjs', 'tests/governance-offline.mjs', '
   'tests/ghrules-offline.mjs', 'tests/fakes-rules-offline.mjs', 'tests/connect-ui-offline.mjs',
   'tests/qr-offline.mjs', 'tests/playcard-offline.mjs', 'tests/relnotes-offline.mjs', 'tests/packdiff-offline.mjs', 'tests/revert-offline.mjs', 'tests/drafts-offline.mjs', 'tests/tutorial-offline.mjs', 'tests/progress-offline.mjs',
   'tests/failsum-offline.mjs', 'tests/runissue-offline.mjs', 'tests/runcompare-offline.mjs', 'tests/testhist-offline.mjs', 'tests/secretwatch-offline.mjs', 'tests/connectdaily-offline.mjs', 'tests/weekly-offline.mjs', 'tests/notifyprefs-offline.mjs',
-  'tests/minutes-offline.mjs', 'tests/lendfc-offline.mjs', 'tests/nlsched-offline.mjs', 'tests/wizard-offline.mjs', 'tests/a11y-offline.mjs', 'tests/inviteqr-offline.mjs', 'tests/undo-offline.mjs', 'tests/statuspage-offline.mjs', BROWSER];
+  'tests/minutes-offline.mjs', 'tests/lendfc-offline.mjs', 'tests/nlsched-offline.mjs', 'tests/wizard-offline.mjs', 'tests/a11y-offline.mjs', 'tests/inviteqr-offline.mjs', 'tests/undo-offline.mjs', 'tests/statuspage-offline.mjs', 'tests/evolve-panel-offline.mjs', 'tests/evolve-auth-offline.mjs', 'tests/evolve-schedule-offline.mjs', BROWSER];
 const LINTABLE = /^(panel|auth)\/.*\.(m?js)$|^common\/(panel|panel-config|ghapp|hosts|schedule|unitci|connect-daily|weekly|statuspage)\.mjs$|^tests\/(panel|governance|setup|session|auth|appci|host|units|schedule|stats|inbox|rescue|shell|misc|ghrules|fakes|connect|qr|playcard|relnotes|packdiff|revert|drafts|tutorial|progress|failsum|runissue|runcompare|testhist|secretwatch|connectdaily|weekly|notifyprefs|minutes|lendfc|nlsched|wizard|a11y|inviteqr|undo|statuspage)-[a-z-]+\.mjs$/;
 
 /** the changed files → { lint: [files], tests: [files] } (pure); quick leaves the browser out */
