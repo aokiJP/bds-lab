@@ -19,3 +19,6 @@
 
 ## Guessed
 <!-- values decided without asking -->
+
+## Maintenance
+- 2026-10-28 BDS 1.26.60.6: FIXED (autofix: server 2.11.0-beta->2.12.0-beta, server-ui 2.3.0-beta->2.4.0-beta)
